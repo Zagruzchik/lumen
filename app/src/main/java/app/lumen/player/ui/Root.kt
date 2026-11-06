@@ -373,7 +373,14 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
     val p by vm.player.collectAsStateWithLifecycle()
     val hasCurrent = p.currentId != null
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    val bottomPad = navBottom + 68.dp + (if (hasCurrent) 80.dp else 0.dp) + 16.dp
+    // На главной мини-плеер крупнее и с кнопками «назад/вперёд»; в остальных разделах — обычный.
+    val onHome = stack.size == 1 && stack.first() == Dest.Home
+    val miniBig by animateFloatAsState(
+        if (onHome) 1f else 0f,
+        tween(480, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+        label = "miniBig",
+    )
+    val bottomPad = navBottom + 68.dp + (if (hasCurrent) 80.dp + (MINI_EXTRA * miniBig).dp else 0.dp) + 16.dp
 
     Box(
         Modifier
@@ -436,6 +443,7 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                         vm = vm,
                         p = p,
                         haze = haze,
+                        big = miniBig,
                         onOpen = { openPlayer() },
                         onDrag = { dragPlayer(it) },
                         onDragEnd = { settlePlayer(it) },
@@ -538,11 +546,31 @@ fun AmbientBackground(colors: CoverColors, modifier: Modifier = Modifier.fillMax
     }
 }
 
+private const val MINI_EXTRA = 22f
+
+/** Кнопка «назад/вперёд» мини-плеера: плавно раскрывается по ширине на главной. */
+@Composable
+private fun MiniSkip(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, big: Float, onClick: () -> Unit) {
+    if (big <= 0.01f) return
+    Box(
+        Modifier
+            .width((40f * big).dp)
+            .height(40.dp)
+            .graphicsLayer { alpha = big; scaleX = 0.6f + 0.4f * big; scaleY = 0.6f + 0.4f * big }
+            .clip(CircleShape)
+            .clickable(enabled = big > 0.5f, role = Role.Button, onClickLabel = label, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, label, Modifier.size(24.dp), tint = LC.Text)
+    }
+}
+
 @Composable
 private fun MiniPlayer(
     vm: MainViewModel,
     p: PlayerState,
     haze: HazeState,
+    big: Float,
     onOpen: () -> Unit,
     onDrag: (Float) -> Unit,
     onDragEnd: (Float) -> Unit,
@@ -569,7 +597,7 @@ private fun MiniPlayer(
             .padding(horizontal = 10.dp)
             .padding(bottom = 8.dp)
             .fillMaxWidth()
-            .height(66.dp)
+            .height((66f + MINI_EXTRA * big).dp)
             .clip(shape)
             .glassBlur(haze, Color(0x8C281630))
             .border(1.dp, Color(0x2EFFFFFF), shape)
@@ -599,7 +627,7 @@ private fun MiniPlayer(
                     translationX = shownX * 0.5f
                     alpha = 1f - (kotlin.math.abs(shownX) / 600f).coerceAtMost(0.5f)
                 }
-                .padding(start = 9.dp, end = 8.dp),
+                .padding(start = (9f + 3f * big).dp, end = (8f + 2f * big).dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             AnimatedContent(
@@ -621,10 +649,10 @@ private fun MiniPlayer(
                 label = "miniTrack",
             ) { _ ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Cover(id, Modifier.size(48.dp), corner = 13.dp, sizePx = 128)
+                    Cover(id, Modifier.size((48f + 16f * big).dp), corner = (13f + 3f * big).dp, sizePx = 192)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(p.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(p.title, fontSize = (15f + 1f * big).sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(p.artist, fontSize = 13.sp, color = LC.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
@@ -637,9 +665,10 @@ private fun MiniPlayer(
                 tint = if (fav) accent else LC.Dim,
                 iconSize = 22.dp,
             )
+            MiniSkip(LIcons.Prev, "Предыдущий", big) { vm.previous() }
             Box(
                 Modifier
-                    .size(48.dp)
+                    .size((48f + 6f * big).dp)
                     .clip(CircleShape)
                     .background(LC.Text)
                     .clickable(role = Role.Button, onClickLabel = if (p.isPlaying) "Пауза" else "Играть") { vm.toggle() },
@@ -647,6 +676,7 @@ private fun MiniPlayer(
             ) {
                 Icon(if (p.isPlaying) LIcons.Pause else LIcons.Play, null, Modifier.size(22.dp), tint = Color(0xFF0B0B12))
             }
+            MiniSkip(LIcons.Next, "Следующий", big) { vm.next() }
         }
         Box(
             Modifier

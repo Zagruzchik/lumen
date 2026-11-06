@@ -41,6 +41,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
@@ -89,6 +90,8 @@ fun ListenButton(
     val spin by t.animateFloat(0f, 360f, infiniteRepeatable(tween(16000, easing = LinearEasing)), label = "spin")
     val breath by t.animateFloat(0f, 1f, infiniteRepeatable(tween(3400, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "breath")
     val ringPhase by t.animateFloat(0f, 1f, infiniteRepeatable(tween(4200, easing = LinearEasing)), label = "rings")
+    val shimmer by t.animateFloat(0f, (2 * PI).toFloat(), infiniteRepeatable(tween(7000, easing = LinearEasing)), label = "shimmer")
+    val rayPath = remember { Path() }
 
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -116,7 +119,38 @@ fun ListenButton(
         ) {
             Canvas(Modifier.fillMaxSize()) {
                 val cx = center
-                val R = size.minDimension * 0.33f * (1f + 0.02f * breath)
+                val R = size.minDimension * 0.40f * (1f + 0.02f * breath)
+                val lv = beat.level().coerceIn(0f, 1f)
+
+                // 0. Лучи: мягкие клинья света из-за шара. Медленно вращаются, мерцают
+                // каждый в своём ритме и вытягиваются на ударах.
+                val rays = 18
+                val rot = spin * 0.35f
+                val pal = listOf(a, acc, c, b)
+                for (i in 0 until rays) {
+                    val dir = ((i * 360f / rays) + rot) * PI.toFloat() / 180f
+                    val flick = 0.5f + 0.5f * sin(shimmer * (1f + (i % 5) * 0.25f) + i * 2.17f)
+                    val len = R * (1.45f + 0.35f * flick + 0.5f * lv)
+                    val half = (PI.toFloat() / rays) * (0.16f + 0.12f * flick + 0.06f * lv)
+                    rayPath.reset()
+                    rayPath.moveTo(cx.x, cx.y)
+                    rayPath.lineTo(cx.x + cos(dir - half) * len, cx.y + sin(dir - half) * len)
+                    rayPath.lineTo(cx.x + cos(dir + half) * len, cx.y + sin(dir + half) * len)
+                    rayPath.close()
+                    val col = pal[i % pal.size]
+                    val al = (0.16f + 0.16f * flick + 0.3f * lv).coerceAtMost(0.7f)
+                    drawPath(
+                        rayPath,
+                        Brush.radialGradient(
+                            0f to col.copy(alpha = al),
+                            0.55f to col.copy(alpha = al * 0.55f),
+                            1f to Color.Transparent,
+                            center = cx,
+                            radius = len,
+                        ),
+                        blendMode = BlendMode.Plus,
+                    )
+                }
 
                 // 1. Широкая аура из цвета акцента.
                 drawCircle(
@@ -208,7 +242,7 @@ fun ListenButton(
                         if (p) LIcons.Pause else LIcons.Play,
                         null,
                         Modifier
-                            .size(52.dp)
+                            .size(60.dp)
                             .padding(start = if (p) 0.dp else 5.dp),
                         tint = Color.White,
                     )
@@ -216,8 +250,8 @@ fun ListenButton(
                 Spacer(Modifier.height(8.dp))
                 Text(
                     if (playing) "Играет" else "Слушать\nмузыку",
-                    fontSize = 24.sp,
-                    lineHeight = 26.sp,
+                    fontSize = 27.sp,
+                    lineHeight = 29.sp,
                     fontWeight = FontWeight.Black,
                     color = Color.White,
                     textAlign = TextAlign.Center,

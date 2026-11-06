@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.ui.layout.ContentScale
@@ -84,6 +85,8 @@ import app.lumen.player.ui.formatLabel
 import app.lumen.player.ui.theme.LC
 import app.lumen.player.ui.theme.LocalAccent
 import java.util.Calendar
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.gestures.animateScrollBy
 
 @Composable
 private fun topInset(): Dp = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
@@ -124,6 +127,17 @@ fun HomeScreen(vm: MainViewModel, nav: Nav, actions: TrackActions, bottomPad: Dp
     }
 
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val floors = remember(listState) { HomeFloors(listState, scope) }
+    // Страховка: если прокрутка остановилась между этажами — доводим до ближайшего.
+    androidx.compose.runtime.LaunchedEffect(listState) {
+        androidx.compose.runtime.snapshotFlow { listState.isScrollInProgress }.collect { moving ->
+            if (!moving && listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset > 0) {
+                val h = listState.layoutInfo.viewportSize.height
+                floors.goTo(if (listState.firstVisibleItemScrollOffset > h / 2) 1 else 0)
+            }
+        }
+    }
 
     Column(Modifier.fillMaxSize().padding(top = topInset() + 12.dp)) {
         Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -183,7 +197,9 @@ fun HomeScreen(vm: MainViewModel, nav: Nav, actions: TrackActions, bottomPad: Dp
                     EmptyLibrary(scanning, onRescan = { vm.rescan() }, onSettings = { nav.tab(Dest.Settings, null) })
                 }
                 else -> LazyColumn(
-                    Modifier.fillMaxSize(),
+                    Modifier
+                        .fillMaxSize()
+                        .nestedScroll(floors.connection),
                     state = listState,
                     contentPadding = PaddingValues(bottom = bottomPad + 8.dp),
                 ) {
@@ -202,17 +218,18 @@ fun HomeScreen(vm: MainViewModel, nav: Nav, actions: TrackActions, bottomPad: Dp
                                 onClick = {
                                     if (p.queue.isNotEmpty()) vm.toggle() else vm.playLoved(true)
                                 },
-                                modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
+                                modifier = Modifier.fillMaxSize(),
                             )
                             ScrollHint(
                                 visible = listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset < 24,
+                                onClick = { floors.goTo(1) },
                                 modifier = Modifier.align(Alignment.BottomCenter),
                             )
                         }
                     }
                     item(key = "quick") {
                         Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp),
+                            Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 6.dp),
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
                             PillButton("Перемешать всё", LIcons.Shuffle, { vm.shuffle(tracks) }, Modifier.weight(1f))
@@ -283,7 +300,7 @@ fun HomeScreen(vm: MainViewModel, nav: Nav, actions: TrackActions, bottomPad: Dp
 
 /** Мягкая подсказка «листай вниз»: стрелка плавно покачивается и гаснет при прокрутке. */
 @Composable
-private fun ScrollHint(visible: Boolean, modifier: Modifier = Modifier) {
+private fun ScrollHint(visible: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val alpha by androidx.compose.animation.core.animateFloatAsState(
         if (visible) 1f else 0f,
         androidx.compose.animation.core.tween(500),
@@ -301,7 +318,10 @@ private fun ScrollHint(visible: Boolean, modifier: Modifier = Modifier) {
     )
     Column(
         modifier
-            .padding(bottom = 4.dp)
+            .padding(bottom = 2.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(enabled = visible, onClickLabel = "Листать вниз", onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 4.dp)
             .graphicsLayer {
                 this.alpha = alpha
                 translationY = bob * 6.dp.toPx()
@@ -801,3 +821,78 @@ private fun CollectionScreen(
 
 @Suppress("unused")
 private fun durationLabel(ms: Long) = formatMs(ms)
+
+
+/**
+ * Главная из двух «этажей»: верхний — кнопка, нижний — всё остальное.
+ * Любое движение на верхнем этаже плавно довозит до нужного этажа целиком,
+ * промежуточных положений нет. Снизу, упёршись в верх нижнего этажа и потянув ещё,
+ * так же плавно возвращаемся к кнопке. Внутри нижнего этажа — обычная прокрутка.
+ */
+private class HomeFloors(
+    private val list: androidx.compose.foundation.lazy.LazyListState,
+    private val scope: kotlinx.coroutines.CoroutineScope,
+) {
+    private var animating = false
+
+    fun goTo(floor: Int) {
+        if (animating) return
+        val h = list.layoutInfo.viewportSize.height.toFloat()
+        if (h <= 0f) return
+        val idx = list.firstVisibleItemIndex
+        val off = list.firstVisibleItemScrollOffset.toFloat()
+        if (idx > 1) return
+        // Верхний этаж ровно в высоту экрана, значит нижний начинается на h.
+        val pos = if (idx == 0) off else h + off
+        val dist = (if (floor == 0) 0f else h) - pos
+        if (kotlin.math.abs(dist) < 1f) return
+        animating = true
+        scope.launch {
+            try {
+                list.animateScrollBy(
+                    dist,
+                    androidx.compose.animation.core.tween(
+                        if (floor == 1) 720 else 680,
+                        easing = androidx.compose.animation.core.CubicBezierEasing(0.22f, 1f, 0.36f, 1f),
+                    ),
+                )
+                list.scrollToItem(floor, 0)
+            } finally {
+                animating = false
+            }
+        }
+    }
+
+    val connection = object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
+        override fun onPreScroll(
+            available: androidx.compose.ui.geometry.Offset,
+            source: androidx.compose.ui.input.nestedscroll.NestedScrollSource,
+        ): androidx.compose.ui.geometry.Offset {
+            if (animating) return available
+            val idx = list.firstVisibleItemIndex
+            val off = list.firstVisibleItemScrollOffset
+            val user = source == androidx.compose.ui.input.nestedscroll.NestedScrollSource.UserInput
+            if (idx == 0) {
+                // Верхний этаж: вручную не двигаем — только доводка.
+                if (user) {
+                    if (available.y < -1.5f) goTo(1)
+                    else if (available.y > 1.5f && off > 0) goTo(0)
+                }
+                return available
+            }
+            if (idx == 1 && available.y > 0f) {
+                if (off == 0) {
+                    if (user && available.y > 1.5f) goTo(0)
+                    return available
+                }
+                // Прокрутка вверх не проскакивает на верхний этаж — упирается в начало нижнего.
+                if (available.y > off) return androidx.compose.ui.geometry.Offset(0f, available.y - off)
+            }
+            return androidx.compose.ui.geometry.Offset.Zero
+        }
+
+        override suspend fun onPreFling(available: androidx.compose.ui.unit.Velocity): androidx.compose.ui.unit.Velocity {
+            return if (animating || list.firstVisibleItemIndex == 0) available else androidx.compose.ui.unit.Velocity.Zero
+        }
+    }
+}
