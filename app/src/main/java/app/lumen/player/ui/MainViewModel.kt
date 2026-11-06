@@ -117,8 +117,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------- воспроизведение ----------
 
-    fun play(list: List<TrackEntity>, index: Int) = conn.playTracks(list, index)
-    fun shuffle(list: List<TrackEntity>) = conn.playTracks(list, 0, shuffle = true)
+    fun play(list: List<TrackEntity>, index: Int) {
+        lovedMode.value = 0
+        conn.playTracks(list, index)
+    }
+
+    fun shuffle(list: List<TrackEntity>) {
+        lovedMode.value = 0
+        conn.playTracks(list, 0, shuffle = true)
+    }
     fun playNext(t: TrackEntity) = conn.playNext(t)
     fun enqueue(t: TrackEntity) = conn.enqueue(t)
     fun toggle() = conn.toggle()
@@ -491,7 +498,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Играет сразу, без открытия плеера: от любимых к забытым (или наоборот). */
+    /** 0 — сейчас играет не «Самое любимое», 1 — от любимых к забытым, 2 — наоборот. */
+    val lovedMode = MutableStateFlow(0)
+
     fun playLoved(mostFirst: Boolean) {
+        val mode = if (mostFirst) 1 else 2
+        if (lovedMode.value == mode && player.value.queue.isNotEmpty()) {
+            conn.toggle()
+            return
+        }
+        lovedMode.value = mode
         viewModelScope.launch {
             val list = if (mostFirst) dao.mostLoved() else dao.leastLoved()
             if (list.isNotEmpty()) conn.playTracks(list, 0, shuffle = false)

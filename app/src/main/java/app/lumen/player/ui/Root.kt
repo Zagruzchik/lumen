@@ -321,7 +321,7 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
         if (backTarget != BACK_NONE) snap() else spring(dampingRatio = 0.8f, stiffness = 500f),
         label = "back",
     )
-    PredictiveBackHandler(enabled = timerOpen || queueOpen || playerExpanded || stack.size > 1) { events ->
+    PredictiveBackHandler(enabled = timerOpen || queueOpen || playerExpanded || stack.size > 1 || stack.first() != Dest.Home) { events ->
         val target = when {
             timerOpen || queueOpen -> BACK_SHEET
             lyricsFull -> BACK_LYRICS
@@ -342,7 +342,8 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                 BACK_SHEET -> if (timerOpen) timerOpen = false else queueOpen = false
                 BACK_LYRICS -> lyricsFull = false
                 BACK_PLAYER -> closePlayer()
-                else -> nav.back()
+                // С любой вкладки «назад» сначала ведёт на главную, и только оттуда приложение сворачивается.
+                else -> if (stack.size > 1) nav.back() else nav.tab(Dest.Home, null)
             }
         } catch (e: CancellationException) {
             backTarget = BACK_NONE

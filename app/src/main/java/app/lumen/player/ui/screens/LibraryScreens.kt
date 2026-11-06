@@ -37,6 +37,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
@@ -95,8 +98,6 @@ private fun greeting(): String = when (Calendar.getInstance().get(Calendar.HOUR_
 fun HomeScreen(vm: MainViewModel, nav: Nav, actions: TrackActions, bottomPad: Dp, onOpenPlayer: () -> Unit) {
     val tracks by vm.tracks.collectAsStateWithLifecycle()
     val albums by vm.albums.collectAsStateWithLifecycle()
-    val recent by vm.recentAlbums.collectAsStateWithLifecycle()
-    val frequent by vm.frequent.collectAsStateWithLifecycle()
     val last by vm.lastPlayed.collectAsStateWithLifecycle()
     val query by vm.query.collectAsStateWithLifecycle()
     val results by vm.searchResults.collectAsStateWithLifecycle()
@@ -104,101 +105,81 @@ fun HomeScreen(vm: MainViewModel, nav: Nav, actions: TrackActions, bottomPad: Dp
     val p by vm.player.collectAsStateWithLifecycle()
     val scanning by vm.scanning.collectAsStateWithLifecycle()
     val moon by vm.moonSide.collectAsStateWithLifecycle()
+    val colors by vm.coverColors.collectAsStateWithLifecycle()
+    val lovedMode by vm.lovedMode.collectAsStateWithLifecycle()
+    var searchOpen by rememberSaveable { mutableStateOf(false) }
 
-    LazyColumn(
-        Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(top = topInset() + 16.dp, bottom = bottomPad),
+    androidx.activity.compose.BackHandler(enabled = searchOpen) {
+        searchOpen = false
+        vm.query.value = ""
+    }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(top = topInset() + 12.dp, bottom = bottomPad - 8.dp)
     ) {
-        item {
-            Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        "${pluralRu(tracks.size, "трек", "трека", "треков")} · ${pluralRu(albums.size, "альбом", "альбома", "альбомов")}",
-                        fontSize = 13.sp,
-                        color = LC.Dim,
-                    )
-                    Text(greeting(), fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
-                }
-                IconBtn(LIcons.Sliders, "Настройки", { nav.tab(Dest.Settings, null) })
-            }
-        }
-        item {
-            SearchField(
-                query,
-                { vm.query.value = it },
-                Modifier.padding(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 14.dp),
-            )
-        }
-        if (query.isNotBlank()) {
-            if (results.isEmpty()) {
-                item {
-                    Text(
-                        "Ничего не нашлось",
-                        color = LC.Dim,
-                        modifier = Modifier.fillMaxWidth().padding(32.dp),
-                        textAlign = TextAlign.Center,
-                    )
-                }
-            }
-            itemsIndexed(results, key = { _, t -> "s:" + t.uri }) { i, t ->
-                TrackRow(t, t.uri == p.currentId, t.uri in favs, actions, onClick = { vm.play(results, i) })
-            }
-            return@LazyColumn
-        }
-        if (tracks.isNotEmpty()) {
-            item {
-                LovedCard(
-                    moon = moon,
-                    trackCount = tracks.size,
-                    onFlip = { vm.setMoonSide(it) },
-                    onPlay = { most -> vm.playLoved(most) },
+        Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "${pluralRu(tracks.size, "трек", "трека", "треков")} · ${pluralRu(albums.size, "альбом", "альбома", "альбомов")}",
+                    fontSize = 13.sp,
+                    color = LC.Dim,
                 )
+                Text(greeting(), fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
             }
-            item { ContinueCard(vm, p, last, onOpenPlayer) }
+            IconBtn(if (searchOpen) LIcons.Close else LIcons.Search, if (searchOpen) "Закрыть поиск" else "Поиск", {
+                searchOpen = !searchOpen
+                if (!searchOpen) vm.query.value = ""
+            })
+            Spacer(Modifier.width(8.dp))
+            IconBtn(LIcons.Sliders, "Настройки", { nav.tab(Dest.Settings, null) })
         }
-        item {
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                item { LChip("Треки", false) { nav.tab(Dest.Library, 0) } }
-                item { LChip("Альбомы", false) { nav.tab(Dest.Library, 1) } }
-                item { LChip("Исполнители", false) { nav.tab(Dest.Library, 2) } }
-                item { LChip("Папки", false) { nav.tab(Dest.Library, 3) } }
-                item { LChip("Любимое", false) { nav.tab(Dest.Favorites, null) } }
-            }
-        }
-        if (tracks.isEmpty()) {
-            item { EmptyLibrary(scanning, onRescan = { vm.rescan() }, onSettings = { nav.tab(Dest.Settings, null) }) }
-            return@LazyColumn
-        }
-        if (recent.isNotEmpty()) {
-            item { SectionHeader("Недавно добавленные", "Все") { nav.tab(Dest.Library, 1) } }
-            item {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 20.dp),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                ) {
-                    items(recent, key = { it.albumKey }) { a ->
-                        AlbumTile(a, { nav.open(Dest.Album(a.albumKey)) }, Modifier.width(132.dp), coverSize = 132.dp)
+
+        when {
+            searchOpen -> {
+                SearchField(
+                    query,
+                    { vm.query.value = it },
+                    Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 8.dp),
+                )
+                LazyColumn(Modifier.weight(1f)) {
+                    if (query.isNotBlank() && results.isEmpty()) {
+                        item {
+                            Text(
+                                "Ничего не нашлось",
+                                color = LC.Dim,
+                                modifier = Modifier.fillMaxWidth().padding(32.dp),
+                                textAlign = TextAlign.Center,
+                            )
+                        }
+                    }
+                    itemsIndexed(results, key = { _, t -> "s:" + t.uri }) { i, t ->
+                        TrackRow(t, t.uri == p.currentId, t.uri in favs, actions, onClick = { vm.play(results, i) })
                     }
                 }
             }
-        }
-        if (frequent.isNotEmpty()) {
-            item { SectionHeader("Часто слушаю") }
-            itemsIndexed(frequent, key = { _, t -> "f:" + t.uri }) { i, t ->
-                TrackRow(t, t.uri == p.currentId, t.uri in favs, actions, onClick = { vm.play(frequent, i) })
+            tracks.isEmpty() -> {
+                Spacer(Modifier.height(12.dp))
+                EmptyLibrary(scanning, onRescan = { vm.rescan() }, onSettings = { nav.tab(Dest.Settings, null) })
             }
-        } else {
-            item {
-                Row(
-                    Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    PillButton("Перемешать всё", LIcons.Shuffle, { vm.shuffle(tracks) }, Modifier.weight(1f))
-                    PillButton("Все треки", null, { nav.tab(Dest.Library, 0) }, Modifier.weight(1f), primary = false)
-                }
+            else -> {
+                Spacer(Modifier.height(4.dp))
+                LovedHero(
+                    vm = vm,
+                    moon = moon,
+                    trackCount = tracks.size,
+                    colors = colors,
+                    active = lovedMode == (if (moon) 2 else 1),
+                    playing = p.isPlaying,
+                    onFlip = { vm.setMoonSide(it) },
+                    onPlay = { most -> vm.playLoved(most) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp),
+                )
+                ContinueCard(vm, p, last, onOpenPlayer)
             }
         }
     }
@@ -214,7 +195,7 @@ private fun ContinueCard(vm: MainViewModel, p: PlayerState, last: TrackEntity?, 
     val shape = RoundedCornerShape(22.dp)
     Row(
         Modifier
-            .padding(horizontal = 20.dp, vertical = 14.dp)
+            .padding(horizontal = 20.dp, vertical = 6.dp)
             .fillMaxWidth()
             .glass(shape)
             .clickable { if (hasCurrent) onOpen() else vm.resume() }

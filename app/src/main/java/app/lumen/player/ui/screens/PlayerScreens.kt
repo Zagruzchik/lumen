@@ -102,6 +102,7 @@ import app.lumen.player.ui.components.PillButton
 import app.lumen.player.ui.components.TrackActions
 import app.lumen.player.ui.components.TrackMenu
 import app.lumen.player.ui.components.WavySlider
+import app.lumen.player.ui.components.rememberBeatLevel
 import app.lumen.player.ui.components.formatMs
 import app.lumen.player.ui.components.glass
 import app.lumen.player.ui.components.pluralRu
@@ -300,38 +301,7 @@ fun PlayerScreen(
     val lyricsRes by vm.lyrics.collectAsStateWithLifecycle()
     val accent = LocalAccent.current
 
-    // Уровень «вспышки» 0..1: обновляется каждый кадр по заранее найденным ударам.
-    val beatLevel = remember { mutableFloatStateOf(0f) }
-    val beats by vm.beats.collectAsStateWithLifecycle()
-    val flashesOn by vm.beatFlashes.collectAsStateWithLifecycle()
-    LaunchedEffect(beats, p.isPlaying, flashesOn) {
-        val b = beats
-        if (b == null || !flashesOn || b.size == 0) {
-            beatLevel.floatValue = 0f
-            return@LaunchedEffect
-        }
-        val playing = p.isPlaying
-        var basePos = vm.position()
-        var baseT = withFrameMillis { it }
-        var lastPoll = baseT
-        while (true) {
-            withFrameMillis { t ->
-                if (t - lastPoll > 300) {
-                    basePos = vm.position()
-                    baseT = t
-                    lastPoll = t
-                }
-                val pos = if (playing) basePos + (t - baseT) + 30 else basePos
-                val i = b.lastAtOrBefore(pos)
-                var lvl = 0f
-                if (i >= 0) {
-                    val dt = (pos - b.times[i]).toFloat()
-                    if (dt < 700f) lvl = b.strengths[i] * kotlin.math.exp(-dt / 170f)
-                }
-                beatLevel.floatValue = if (playing) lvl else beatLevel.floatValue * 0.85f
-            }
-        }
-    }
+    val beatLevel = rememberBeatLevel(vm)
 
     val found = lyricsRes as? LyricsResult.Found
     LaunchedEffect(found == null) { if (found == null && lyricsFull) onLyricsFull(false) }
