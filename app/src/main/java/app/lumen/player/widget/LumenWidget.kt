@@ -184,7 +184,7 @@ object WidgetUpdater {
         val big = Bitmap.createScaledBitmap(Bitmap.createScaledBitmap(tiny, 40, 40, true), 320, 320, true)
         val bg = big.copy(Bitmap.Config.ARGB_8888, true)
         val cv = android.graphics.Canvas(bg)
-        cv.drawColor(0xB30C0A12.toInt())
+        cv.drawColor(0xC70C0A12.toInt())
         val shade = android.graphics.Paint().apply {
             shader = android.graphics.LinearGradient(
                 0f, 0f, 320f, 320f,
@@ -241,18 +241,12 @@ class LumenWidget : GlanceAppWidget() {
 @Composable
 private fun Content(st: WidgetState, cover: Bitmap?, bg: Bitmap?) {
     val size = LocalSize.current
-    val ctx = LocalContext.current
-    val open = actionStartActivity(
-        Intent(ctx, MainActivity::class.java)
-            .putExtra(MainActivity.EXTRA_OPEN_PLAYER, true)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-    )
+    // Без общего нажатия на весь виджет: никакой ряби по всей площади.
     Box(
         GlanceModifier
             .fillMaxSize()
             .cornerRadius(28.dp)
-            .background(Color(0xFF16121E))
-            .clickable(open),
+            .background(Color(0xFF16121E)),
     ) {
         if (bg != null) {
             Image(ImageProvider(bg), null, GlanceModifier.fillMaxSize(), contentScale = ContentScale.Crop)
@@ -273,11 +267,43 @@ private fun Content(st: WidgetState, cover: Bitmap?, bg: Bitmap?) {
 // ---------- детали ----------
 
 @Composable
+private fun openApp(): androidx.glance.action.Action {
+    val ctx = LocalContext.current
+    return actionStartActivity(
+        Intent(ctx, MainActivity::class.java)
+            .putExtra(MainActivity.EXTRA_OPEN_PLAYER, true)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+    )
+}
+
+/**
+ * Стандартная «медиа-кнопка» Android (как на наушниках): система сама поднимет плеер,
+ * даже если приложение закрыто, и продолжит последнюю очередь.
+ */
+@Composable
+private fun mediaKey(code: Int): androidx.glance.action.Action {
+    val ctx = LocalContext.current
+    val i = Intent(Intent.ACTION_MEDIA_BUTTON)
+        .setComponent(ComponentName(ctx, androidx.media3.session.MediaButtonReceiver::class.java))
+        .setData(android.net.Uri.parse("lumen-widget://key/$code"))
+        .putExtra(Intent.EXTRA_KEY_EVENT, android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, code))
+    return androidx.glance.appwidget.action.actionSendBroadcast(i)
+}
+
+@Composable
+private fun widgetAction(action: String): androidx.glance.action.Action {
+    val ctx = LocalContext.current
+    return androidx.glance.appwidget.action.actionSendBroadcast(
+        Intent(ctx, WidgetActionReceiver::class.java).setAction(action)
+    )
+}
+
+@Composable
 private fun CoverImg(cover: Bitmap?, side: Dp, radius: Dp) {
     if (cover != null) {
-        Image(ImageProvider(cover), "Обложка", GlanceModifier.size(side).cornerRadius(radius), contentScale = ContentScale.Crop)
+        Image(ImageProvider(cover), "Обложка", GlanceModifier.size(side).cornerRadius(radius).clickable(openApp()), contentScale = ContentScale.Crop)
     } else {
-        Box(GlanceModifier.size(side).cornerRadius(radius)) {
+        Box(GlanceModifier.size(side).cornerRadius(radius).clickable(openApp())) {
             Image(ImageProvider(R.drawable.widget_preview_cover), null, GlanceModifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
         }
     }
@@ -310,7 +336,7 @@ private fun PlayBtn(playing: Boolean, side: Dp) {
             .size(side)
             .cornerRadius(side / 2)
             .background(Color.White)
-            .clickable(actionRunCallback<WidgetPlayPause>()),
+            .clickable(mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)),
         contentAlignment = Alignment.Center,
     ) {
         Image(
@@ -339,7 +365,7 @@ private fun LikeBtn(st: WidgetState, icon: Dp) = IconAct(
     if (st.fav) "Убрать из любимого" else "В любимое",
     icon,
     if (st.fav) ColorProvider(Color(st.accent)) else White,
-    actionRunCallback<WidgetFav>(),
+    widgetAction(PlaybackService.WIDGET_FAV),
 )
 
 @Composable
@@ -348,7 +374,7 @@ private fun ShuffleBtn(st: WidgetState, icon: Dp) = IconAct(
     if (st.shuffle) "Перемешивание включено" else "Перемешать",
     icon,
     if (st.shuffle) ColorProvider(Color(st.accent)) else White,
-    actionRunCallback<WidgetShuffle>(),
+    widgetAction(PlaybackService.WIDGET_SHUFFLE),
 )
 
 @Composable
@@ -386,11 +412,11 @@ private fun ControlsRow(st: WidgetState, play: Dp, icon: Dp, full: Boolean) {
         } else {
             Spacer(GlanceModifier.defaultWeight())
         }
-        IconAct(R.drawable.ic_w_prev, "Предыдущий", icon, White, actionRunCallback<WidgetPrev>())
+        IconAct(R.drawable.ic_w_prev, "Предыдущий", icon, White, mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS))
         Spacer(GlanceModifier.defaultWeight())
         PlayBtn(st.playing, play)
         Spacer(GlanceModifier.defaultWeight())
-        IconAct(R.drawable.ic_w_next, "Следующий", icon, White, actionRunCallback<WidgetNext>())
+        IconAct(R.drawable.ic_w_next, "Следующий", icon, White, mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_NEXT))
         Spacer(GlanceModifier.defaultWeight())
         if (full) ShuffleBtn(st, icon)
     }
@@ -406,19 +432,19 @@ private fun Strip(st: WidgetState, cover: Bitmap?) {
     Row(GlanceModifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
         CoverImg(cover, side, 14.dp)
         Spacer(GlanceModifier.width(10.dp))
-        Box(GlanceModifier.defaultWeight()) { Titles(st, 14, 12, 1) }
+        Box(GlanceModifier.defaultWeight().clickable(openApp())) { Titles(st, 16, 13, 1) }
         if (size.width >= 330.dp) {
             Spacer(GlanceModifier.width(4.dp))
-            LikeBtn(st, 20.dp)
+            LikeBtn(st, 22.dp)
         }
         if (size.width >= 250.dp) {
-            IconAct(R.drawable.ic_w_prev, "Предыдущий", 20.dp, White, actionRunCallback<WidgetPrev>())
+            IconAct(R.drawable.ic_w_prev, "Предыдущий", 22.dp, White, mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS))
         }
         Spacer(GlanceModifier.width(4.dp))
-        PlayBtn(st.playing, side.coerceAtMost(44.dp))
+        PlayBtn(st.playing, side.coerceAtMost(48.dp))
         if (size.width >= 250.dp) {
             Spacer(GlanceModifier.width(4.dp))
-            IconAct(R.drawable.ic_w_next, "Следующий", 20.dp, White, actionRunCallback<WidgetNext>())
+            IconAct(R.drawable.ic_w_next, "Следующий", 22.dp, White, mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_NEXT))
         }
     }
 }
@@ -434,7 +460,7 @@ private fun Narrow(st: WidgetState, cover: Bitmap?) {
         }
         Spacer(GlanceModifier.height(8.dp))
         Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Box(GlanceModifier.defaultWeight()) { Titles(st, 13, 11, 1) }
+            Box(GlanceModifier.defaultWeight().clickable(openApp())) { Titles(st, 15, 12, 1) }
             Spacer(GlanceModifier.width(6.dp))
             PlayBtn(st.playing, 42.dp)
         }
@@ -442,32 +468,58 @@ private fun Narrow(st: WidgetState, cover: Bitmap?) {
 }
 
 /**
- * Карточка (2 ряда и выше, широкая): сверху обложка, название, исполнитель и эквалайзер,
- * снизу на всю ширину — лайк, назад, плей, вперёд, перемешать.
+ * Карточка (2 ряда, широкая): обложка во всю высоту слева плавно растворяется в фон,
+ * справа крупно название, исполнитель и живой эквалайзер, снизу — кнопки.
  */
 @Composable
 private fun Card(st: WidgetState, cover: Bitmap?) {
     val size = LocalSize.current
-    val pad = 14.dp
-    val controlsH = if (size.height >= 170.dp) 56.dp else 48.dp
-    val side = (size.height - pad * 2 - controlsH - 8.dp).coerceIn(44.dp, 150.dp)
-    val full = size.width >= 250.dp
-    Column(GlanceModifier.fillMaxSize().padding(horizontal = pad, vertical = pad)) {
-        Row(GlanceModifier.fillMaxWidth().defaultWeight(), verticalAlignment = Alignment.CenterVertically) {
-            CoverImg(cover, side, if (side > 90.dp) 20.dp else 14.dp)
-            Spacer(GlanceModifier.width(14.dp))
-            Column(GlanceModifier.defaultWeight()) {
-                Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("LUMEN", style = TextStyle(color = Faint, fontSize = 10.sp, fontWeight = FontWeight.Bold))
-                    Spacer(GlanceModifier.defaultWeight())
-                    Visualizer(st, 22.dp, 16.dp)
-                }
-                Spacer(GlanceModifier.height(4.dp))
-                Titles(st, if (side >= 90.dp) 17 else 15, if (side >= 90.dp) 13 else 12, if (side >= 80.dp) 2 else 1)
+    val h = size.height
+    val panel = h
+    val textX = panel * 0.8f
+    val contentW = size.width - textX - 16.dp
+    val full = contentW >= 205.dp
+    val play = if (h >= 150.dp) 54.dp else 48.dp
+    val icon = if (h >= 150.dp) 24.dp else 22.dp
+    Box(GlanceModifier.fillMaxSize()) {
+        // Обложка-панель.
+        Box(GlanceModifier.size(panel, h).clickable(openApp())) {
+            if (cover != null) {
+                Image(ImageProvider(cover), "Обложка", GlanceModifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            } else {
+                Image(ImageProvider(R.drawable.widget_preview_cover), null, GlanceModifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
             }
         }
-        Spacer(GlanceModifier.height(8.dp))
-        ControlsRow(st, play = controlsH - 4.dp, icon = if (controlsH > 50.dp) 22.dp else 20.dp, full = full)
+        // Растворение обложки в фон.
+        Row(GlanceModifier.fillMaxSize()) {
+            Spacer(GlanceModifier.width(panel * 0.35f))
+            Image(ImageProvider(R.drawable.widget_fade), null, GlanceModifier.width(panel * 0.66f).fillMaxHeight(), contentScale = ContentScale.FillBounds)
+        }
+        // Содержимое.
+        Row(GlanceModifier.fillMaxSize()) {
+            Spacer(GlanceModifier.width(textX))
+            Column(GlanceModifier.defaultWeight().fillMaxHeight().padding(top = 14.dp, end = 16.dp, bottom = 10.dp)) {
+                Row(GlanceModifier.fillMaxWidth().clickable(openApp()), verticalAlignment = Alignment.Top) {
+                    Box(GlanceModifier.defaultWeight()) {
+                        Titles(st, if (h >= 150.dp) 19 else 17, if (h >= 150.dp) 15 else 14, if (h >= 160.dp) 2 else 1)
+                    }
+                    Spacer(GlanceModifier.width(10.dp))
+                    Visualizer(st, 26.dp, 20.dp)
+                }
+                Spacer(GlanceModifier.defaultWeight())
+                if (full) {
+                    ControlsRow(st, play = play, icon = icon, full = true)
+                } else {
+                    Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        IconAct(R.drawable.ic_w_prev, "Предыдущий", icon, White, mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS))
+                        Spacer(GlanceModifier.defaultWeight())
+                        PlayBtn(st.playing, play)
+                        Spacer(GlanceModifier.defaultWeight())
+                        IconAct(R.drawable.ic_w_next, "Следующий", icon, White, mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_NEXT))
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -484,88 +536,22 @@ private fun Poster(st: WidgetState, cover: Bitmap?) {
             CoverImg(cover, side, 24.dp)
         }
         Spacer(GlanceModifier.height(12.dp))
-        Visualizer(st, 26.dp, 18.dp)
+        Visualizer(st, 30.dp, 22.dp)
         Spacer(GlanceModifier.height(6.dp))
-        Titles(st, 18, 14, 2, center = true)
+        Titles(st, 20, 15, 2, center = true)
         Spacer(GlanceModifier.height(10.dp))
-        ControlsRow(st, play = 56.dp, icon = 24.dp, full = size.width >= 220.dp)
+        ControlsRow(st, play = 60.dp, icon = 26.dp, full = size.width >= 220.dp)
     }
 }
 
 // ======================= действия =======================
 
-/** Подключается к сессии плеера, выполняет команду и отпускает соединение. */
-private suspend fun withController(context: Context, block: suspend (MediaController) -> Unit) {
-    withContext(Dispatchers.Main) {
-        val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
-        val c = MediaController.Builder(context, token).buildAsync().await()
-        try {
-            block(c)
-            delay(400)
-        } finally {
-            c.release()
-        }
-    }
-}
-
-/** Если плеер пуст (приложение было закрыто) — восстанавливаем последнюю очередь. */
-private suspend fun ensureQueue(context: Context, c: MediaController): Boolean {
-    if (c.mediaItemCount > 0) return true
-    val g = context.graph
-    val uris = g.prefs.queue
-    val tracks = withContext(Dispatchers.IO) {
-        if (uris.isNotEmpty()) {
-            val found = uris.chunked(500).flatMap { g.dao.byUris(it) }.associateBy { it.uri }
-            uris.mapNotNull { found[it] }
-        } else {
-            g.dao.mostLoved()
-        }
-    }
-    if (tracks.isEmpty()) return false
-    val saved = uris.getOrNull(g.prefs.queueIndex)
-    val idx = tracks.indexOfFirst { it.uri == saved }.coerceAtLeast(0)
-    c.setMediaItems(tracks.map { it.toMediaItem() }, idx, if (saved != null) g.prefs.queuePosition else 0L)
-    c.prepare()
-    return true
-}
-
-class WidgetPlayPause : ActionCallback {
-    override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
-        withController(context) { c ->
-            if (!ensureQueue(context, c)) return@withController
-            if (c.isPlaying) {
-                c.pause()
-            } else {
-                if (c.playbackState == Player.STATE_IDLE) c.prepare()
-                if (c.playbackState == Player.STATE_ENDED) c.seekToDefaultPosition(0)
-                c.play()
-            }
-        }
-    }
-}
-
-class WidgetNext : ActionCallback {
-    override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
-        withController(context) { c -> if (ensureQueue(context, c)) c.seekToNextMediaItem() }
-    }
-}
-
-class WidgetPrev : ActionCallback {
-    override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
-        withController(context) { c -> if (ensureQueue(context, c)) c.seekToPrevious() }
-    }
-}
-
-class WidgetShuffle : ActionCallback {
-    override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
-        withController(context) { c -> if (c.mediaItemCount > 0) c.shuffleModeEnabled = !c.shuffleModeEnabled }
-    }
-}
-
-class WidgetFav : ActionCallback {
-    override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
-        withController(context) { c ->
-            if (c.mediaItemCount > 0) c.sendCustomCommand(SessionCommand(ACTION_FAVORITE, Bundle.EMPTY), Bundle.EMPTY)
+/** Лайк и перемешивание с виджета: передаём живому сервису плеера. */
+class WidgetActionReceiver : android.content.BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val action = intent.action ?: return
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            PlaybackService.instance?.handleWidgetAction(action)
         }
     }
 }

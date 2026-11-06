@@ -34,6 +34,7 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.ListeningExecutorService
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -55,6 +56,7 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         val renderers = DefaultRenderersFactory(this)
             .setEnableAudioFloatOutput(true)
         val player = ExoPlayer.Builder(this, renderers)
@@ -165,6 +167,32 @@ class PlaybackService : MediaSessionService() {
             .setSessionActivity(openApp)
             .setBitmapLoader(ArtworkBitmapLoader(applicationContext))
             .setCallback(object : MediaSession.Callback {
+                // Кнопка «играть» с виджета/гарнитуры, когда приложение было закрыто:
+                // поднимаем последнюю очередь (или «Самое любимое») и продолжаем.
+                override fun onPlaybackResumption(
+                    mediaSession: MediaSession,
+                    controller: MediaSession.ControllerInfo,
+                ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = scope.future {
+                    val g = applicationContext.graph
+                    val uris = g.prefs.queue
+                    val tracks = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                        if (uris.isNotEmpty()) {
+                            val found = uris.chunked(500).flatMap { g.dao.byUris(it) }.associateBy { it.uri }
+                            uris.mapNotNull { found[it] }
+                        } else {
+                            g.dao.mostLoved()
+                        }
+                    }
+                    if (tracks.isEmpty()) throw IllegalStateException("Нечего играть")
+                    val saved = uris.getOrNull(g.prefs.queueIndex)
+                    val idx = tracks.indexOfFirst { it.uri == saved }
+                    MediaSession.MediaItemsWithStartPosition(
+                        tracks.map { it.toMediaItem() },
+                        idx.coerceAtLeast(0),
+                        if (idx >= 0) g.prefs.queuePosition else 0L,
+                    )
+                }
+
                 override fun onConnect(
                     session: MediaSession,
                     controller: MediaSession.ControllerInfo,
@@ -380,6 +408,24 @@ class PlaybackService : MediaSessionService() {
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
 
+    /** Лайк и перемешивание с виджета — напрямую, без лишних подключений. */
+    fun handleWidgetAction(action: String) {
+        val p = session?.player ?: return
+        when (action) {
+            WIDGET_FAV -> if (p.mediaItemCount > 0) toggleFavorite()
+            WIDGET_SHUFFLE -> if (p.mediaItemCount > 0) p.shuffleModeEnabled = !p.shuffleModeEnabled
+        }
+    }
+
+    companion object {
+        const val WIDGET_FAV = "app.lumen.player.widget.FAV"
+        const val WIDGET_SHUFFLE = "app.lumen.player.widget.SHUFFLE"
+
+        @Volatile
+        var instance: PlaybackService? = null
+            private set
+    }
+
     override fun onTaskRemoved(rootIntent: Intent?) {
         val p = session?.player
         if (p == null || !p.playWhenReady || p.mediaItemCount == 0) {
@@ -388,6 +434,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        instance = null
         finishListen(completedByAuto = false)
         app.lumen.player.widget.WidgetUpdater.stopped(this)
         crossfader?.release()

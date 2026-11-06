@@ -57,6 +57,18 @@
                 android:resource="@xml/lumen_widget_info" />
         </receiver>
 
+        <receiver
+            android:name=".widget.WidgetActionReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name="androidx.media3.session.MediaButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
+
         <service
             android:name=".playback.PlaybackService"
             android:exported="true"

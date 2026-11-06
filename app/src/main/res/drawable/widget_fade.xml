@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Обложка слева плавно растворяется в фон виджета. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <gradient
+        android:angle="0"
+        android:startColor="#000C0A12"
+        android:centerColor="#8C0C0A12"
+        android:endColor="#E60C0A12" />
+</shape>
