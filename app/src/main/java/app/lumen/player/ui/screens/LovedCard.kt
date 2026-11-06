@@ -36,6 +36,13 @@ import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.animation.core.Animatable
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.input.pointer.util.addPointerInputChange
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -98,38 +105,64 @@ fun LovedHero(
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
     val beat = rememberBeatLevel(vm)
-    val rotation by animateFloatAsState(
-        if (moon) 180f else 0f,
-        spring(dampingRatio = 0.72f, stiffness = 200f),
-        label = "flip",
-    )
-    var drag by remember { mutableFloatStateOf(0f) }
-    val tilt by animateFloatAsState(drag / 16f, spring(dampingRatio = 0.6f), label = "tilt")
+    val scope = rememberCoroutineScope()
+    // Угол поворота ведёт палец; «база» — угол текущей стороны (кратен 180°).
+    val rot = remember { Animatable(if (moon) 180f else 0f) }
+    var base by remember { mutableFloatStateOf(if (moon) 180f else 0f) }
+    var width by remember { mutableFloatStateOf(1f) }
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val press by animateFloatAsState(if (pressed) 0.97f else 1f, spring(dampingRatio = 0.45f, stiffness = 600f), label = "press")
 
+    fun settle(velocity: Float) {
+        val delta = rot.value - base
+        val dir = when {
+            abs(velocity) > 900f -> if (velocity > 0f) 1f else -1f
+            abs(delta) > 60f -> if (delta > 0f) 1f else -1f
+            else -> 0f
+        }
+        val target = base + dir * 180f
+        base = target
+        scope.launch {
+            rot.animateTo(target, spring(dampingRatio = 0.78f, stiffness = 260f), initialVelocity = velocity / width * 180f)
+        }
+        if (dir != 0f) {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            val back = (((target / 180f).roundToInt() % 2) + 2) % 2 == 1
+            onFlip(back)
+        }
+    }
+
     Box(
         modifier
+            .onSizeChanged { width = it.width.toFloat().coerceAtLeast(1f) }
             .graphicsLayer {
-                rotationY = rotation + tilt
-                cameraDistance = 18f * density.density
-                scaleX = press
-                scaleY = press
+                val r = rot.value
+                rotationY = r
+                cameraDistance = 48f * density.density
+                // В середине поворота карточка чуть «уходит вглубь» — так переворот выглядит естественно.
+                val depth = abs(sin(r * PI.toFloat() / 180f))
+                val sc = press * (1f - 0.08f * depth)
+                scaleX = sc
+                scaleY = sc
             }
-            .pointerInput(moon) {
+            .pointerInput(Unit) {
+                val tracker = VelocityTracker()
+                var angle = 0f
                 detectHorizontalDragGestures(
-                    onDragEnd = {
-                        if (abs(drag) > 70f) {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onFlip(!moon)
-                        }
-                        drag = 0f
+                    onDragStart = {
+                        tracker.resetTracking()
+                        angle = rot.value
+                        scope.launch { rot.stop() }
                     },
-                    onDragCancel = { drag = 0f },
+                    onDragEnd = { settle(tracker.calculateVelocity().x) },
+                    onDragCancel = { settle(0f) },
                 ) { change, d ->
                     change.consume()
-                    drag = (drag + d).coerceIn(-260f, 260f)
+                    tracker.addPointerInputChange(change)
+                    angle = (angle + d / width * 180f).coerceIn(base - 180f, base + 180f)
+                    val next = angle
+                    scope.launch { rot.snapTo(next) }
                 }
             }
             .clickable(
@@ -142,7 +175,8 @@ fun LovedHero(
                 onPlay(!moon)
             }
     ) {
-        val showBack = rotation > 90f
+        val norm = ((rot.value % 360f) + 360f) % 360f
+        val showBack = norm > 90f && norm < 270f
         val face: @Composable () -> Unit = {
             NeonFace(
                 colors = if (showBack) MoonColors else colors,
