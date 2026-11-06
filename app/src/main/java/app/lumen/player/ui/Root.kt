@@ -80,6 +80,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -731,22 +732,51 @@ private fun MiniPlayer(
                     .weight(1f)
                     .fillMaxHeight()
                     .onSizeChanged { areaW = it.width.toFloat().coerceAtLeast(1f) }
-                    .clipToBounds(),
+                    // Края области мягко растворяются, пока карточки едут, — никакой «обрезанной» линии.
+                    .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+                    .drawWithContent {
+                        drawContent()
+                        val m = (kotlin.math.abs(shownOff()) / areaW * 5f).coerceIn(0f, 1f)
+                        if (m > 0.001f) {
+                            val fl = 18.dp.toPx() / size.width
+                            val fr = 36.dp.toPx() / size.width
+                            val edge = Color.Black.copy(alpha = 1f - m)
+                            drawRect(
+                                Brush.horizontalGradient(
+                                    0f to edge,
+                                    fl to Color.Black,
+                                    1f - fr to Color.Black,
+                                    1f to edge,
+                                ),
+                                blendMode = androidx.compose.ui.graphics.BlendMode.DstIn,
+                            )
+                        }
+                    },
                 contentAlignment = Alignment.CenterStart,
             ) {
+                val curEntry = p.queue.getOrNull(p.index)?.takeIf { it.mediaId == id }
+                    ?.let { if (it.title.isBlank()) it.copy(title = p.title, artist = p.artist) else it }
+                    ?: app.lumen.player.playback.QueueEntry(id, p.title, p.artist)
                 val o = shownOff()
-                MiniInfo(id, p.title, p.artist, big, Modifier.graphicsLayer {
-                    val v = shownOff()
-                    translationX = v
-                    alpha = 1f - (kotlin.math.abs(v) / areaW).coerceIn(0f, 1f) * 0.6f
-                })
-                val nb = if (o < 0f) nextE else if (o > 0f) prevE else null
-                if (nb != null) {
-                    MiniInfo(nb.mediaId, nb.title, nb.artist, big, Modifier.graphicsLayer {
-                        val v = shownOff()
-                        translationX = if (v < 0f) v + areaW else v - areaW
-                        alpha = 0.4f + 0.6f * (kotlin.math.abs(v) / areaW).coerceIn(0f, 1f)
-                    })
+                // Три карточки — предыдущая, текущая, следующая — каждая со своим ключом:
+                // после переключения «следующая» просто становится текущей, ничего не перерисовывается.
+                val slots = buildList {
+                    if (prevE != null && (o >= 0f || prevE.mediaId != nextE?.mediaId) && prevE.mediaId != id) add(-1 to prevE)
+                    add(0 to curEntry)
+                    if (nextE != null && (o < 0f || prevE?.mediaId != nextE.mediaId) && nextE.mediaId != id) add(1 to nextE)
+                }
+                slots.forEach { (slot, e) ->
+                    androidx.compose.runtime.key(e.mediaId) {
+                        MiniInfo(e.mediaId, e.title, e.artist, big, Modifier.graphicsLayer {
+                            val x = shownOff() + slot * areaW
+                            val d = (kotlin.math.abs(x) / areaW).coerceIn(0f, 1f)
+                            translationX = x
+                            val sc = 1f - 0.07f * d
+                            scaleX = sc
+                            scaleY = sc
+                            alpha = 1f - 0.75f * d
+                        })
+                    }
                 }
             }
             IconBtn(

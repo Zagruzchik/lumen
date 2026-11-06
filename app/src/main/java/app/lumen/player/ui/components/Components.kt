@@ -194,8 +194,12 @@ fun SectionHeader(title: String, action: String? = null, onAction: (() -> Unit)?
 @Composable
 fun rememberArtwork(uri: String?, sizePx: Int): ImageBitmap? {
     val ctx = LocalContext.current.applicationContext
-    val state = produceState(Artwork.peek(uri, sizePx)?.asImageBitmap(), uri, sizePx) {
-        value = if (uri == null) null else Artwork.load(ctx, uri, sizePx)?.asImageBitmap()
+    // Новый адрес — сразу берём из кэша (или пусто), а не показываем прошлую картинку, пока грузится новая.
+    val state = androidx.compose.runtime.remember(uri, sizePx) {
+        androidx.compose.runtime.mutableStateOf(Artwork.peek(uri, sizePx)?.asImageBitmap())
+    }
+    androidx.compose.runtime.LaunchedEffect(uri, sizePx) {
+        if (state.value == null && uri != null) state.value = Artwork.load(ctx, uri, sizePx)?.asImageBitmap()
     }
     return state.value
 }
