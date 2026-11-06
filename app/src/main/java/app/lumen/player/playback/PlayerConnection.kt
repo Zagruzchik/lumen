@@ -225,13 +225,15 @@ class SleepTimer(private val scope: CoroutineScope, private val player: PlayerCo
     val endsAt: StateFlow<Long?> = _endsAt
     private var job: Job? = null
 
-    fun set(minutes: Int?) {
+    fun set(minutes: Int?) = setMillis(minutes?.let { it * 60_000L })
+
+    fun setMillis(ms: Long?) {
         job?.cancel()
-        if (minutes == null) {
+        if (ms == null || ms <= 0) {
             _endsAt.value = null
             return
         }
-        val end = System.currentTimeMillis() + minutes * 60_000L
+        val end = System.currentTimeMillis() + ms
         _endsAt.value = end
         job = scope.launch {
             val fadeMs = 30_000L

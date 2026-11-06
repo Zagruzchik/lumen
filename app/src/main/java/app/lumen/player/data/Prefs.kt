@@ -43,6 +43,15 @@ class Prefs(context: Context) {
         get() = sp.getInt("bassStrength", 0)
         set(v) = sp.edit().putInt("bassStrength", v).apply()
 
+    /** Сколько раз запускалась музыка (старт после паузы дольше минуты или с нуля). */
+    var playStarts: Int
+        get() = sp.getInt("playStarts", 0)
+        set(v) = sp.edit().putInt("playStarts", v).apply()
+
+    var beatFlashes: Boolean
+        get() = sp.getBoolean("beatFlashes", true)
+        set(v) = sp.edit().putBoolean("beatFlashes", v).apply()
+
     var queue: List<String>
         get() = sp.getString("queue", "").orEmpty().split('\n').filter { it.isNotBlank() }
         set(v) = sp.edit().putString("queue", v.joinToString("\n")).apply()

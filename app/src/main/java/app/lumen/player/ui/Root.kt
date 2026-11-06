@@ -126,6 +126,7 @@ sealed interface Dest {
     data class Album(val key: String) : Dest
     data class Artist(val name: String) : Dest
     data class Folder(val path: String, val name: String) : Dest
+    data object Stats : Dest
 }
 
 class Nav(
@@ -138,7 +139,10 @@ class Nav(
 @Composable
 fun LumenRoot(vm: MainViewModel) {
     val colors by vm.coverColors.collectAsStateWithLifecycle()
-    val accent by animateColorAsState(colors.accent, tween(700), label = "accent")
+    val moon by vm.moonSide.collectAsStateWithLifecycle()
+    val coverAccent by animateColorAsState(colors.accent, tween(700), label = "accent")
+    // «Обратная сторона луны» меняет акцент всего приложения резко, без плавного перехода.
+    val accent = if (moon) app.lumen.player.ui.screens.MoonAccent else coverAccent
     LumenTheme(accent) {
         PermissionGate(vm) { MainScaffold(vm, colors) }
     }
@@ -414,7 +418,8 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                         Dest.Home -> HomeScreen(vm, nav, actions, bottomPad, onOpenPlayer = { openPlayer() })
                         Dest.Library -> LibraryScreen(vm, nav, actions, libTab, { libTab = it }, bottomPad)
                         Dest.Favorites -> FavoritesScreen(vm, nav, actions, bottomPad)
-                        Dest.Settings -> SettingsScreen(vm, bottomPad)
+                        Dest.Settings -> SettingsScreen(vm, bottomPad, onOpenStats = { nav.open(Dest.Stats) })
+                        Dest.Stats -> app.lumen.player.ui.screens.StatsScreen(vm, nav, bottomPad)
                         is Dest.Album -> AlbumScreen(vm, d.key, nav, actions, bottomPad)
                         is Dest.Artist -> ArtistScreen(vm, d.name, nav, actions, bottomPad)
                         is Dest.Folder -> FolderScreen(vm, d.path, d.name, nav, actions, bottomPad)

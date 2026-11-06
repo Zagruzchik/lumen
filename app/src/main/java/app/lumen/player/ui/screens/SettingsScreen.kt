@@ -90,7 +90,7 @@ private fun folderPath(f: FolderRow): String = when {
 }
 
 @Composable
-fun SettingsScreen(vm: MainViewModel, bottomPad: Dp) {
+fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
     val ctx = LocalContext.current
     val folders by vm.folderList.collectAsStateWithLifecycle()
     val skipShort by vm.skipShort.collectAsStateWithLifecycle()
@@ -103,6 +103,21 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp) {
     var showAllFolders by remember { mutableStateOf(false) }
     var exporting by remember { mutableStateOf(false) }
     val bulk by vm.lyricsBulk.collectAsStateWithLifecycle()
+    val flashes by vm.beatFlashes.collectAsStateWithLifecycle()
+    var importing by remember { mutableStateOf(false) }
+    val importFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            importing = true
+            vm.importLibrary(uri) { ok, matched, total ->
+                importing = false
+                Toast.makeText(
+                    ctx,
+                    if (ok) "Импорт готов: найдено $matched из $total треков" else "Это не файл медиатеки Lumen",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
+    }
 
     val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
@@ -141,6 +156,35 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp) {
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item { Text("Настройки", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold) }
+
+        // ---------- статистика ----------
+        item {
+            Card(Modifier.clickable(onClick = onOpenStats)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Статистика", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            "Сколько часов прослушано, запуски, топ треков и исполнителей, время суток",
+                            fontSize = 13.sp,
+                            color = LC.Dim,
+                        )
+                    }
+                    Icon(LIcons.Back, null, Modifier.size(20.dp).graphicsLayer { rotationZ = 180f }, tint = LC.Dim)
+                }
+            }
+        }
+
+        // ---------- вспышки ----------
+        item {
+            Card {
+                Text("Вспышки под бит", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                ToggleRow(
+                    "Вспышки в плеере",
+                    "Подсветка и обложка пульсируют в такт ударам. Ритм считается один раз и сохраняется — дальше вспышки начинаются мгновенно",
+                    flashes,
+                ) { vm.setBeatFlashes(it) }
+            }
+        }
 
         // ---------- эквалайзер ----------
         item {
@@ -379,15 +423,33 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp) {
                     },
                     Modifier.fillMaxWidth(),
                 )
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    PillButton(
+                        "Импортировать из файла",
+                        LIcons.Refresh,
+                        { importFile.launch(arrayOf("application/json", "application/octet-stream", "text/plain", "*/*")) },
+                        Modifier.weight(1f),
+                        primary = false,
+                    )
+                    if (importing) {
+                        Spacer(Modifier.width(10.dp))
+                        CircularProgressIndicator(color = LocalAccent.current, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    }
+                }
                 Spacer(Modifier.height(6.dp))
-                Text("Программа для ПК — в разработке.", fontSize = 12.sp, color = LC.Faint)
+                Text(
+                    "Импорт вернёт любимое, статистику и историю прослушиваний, исключённые папки и настройки. Треки сопоставляются по пути, а если его нет — по названию, исполнителю и длительности.",
+                    fontSize = 12.sp,
+                    color = LC.Faint,
+                )
             }
         }
 
         item {
             Card {
                 Text("О приложении", fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                Text("Lumen 0.3.0", fontSize = 14.sp, color = LC.Dim)
+                Text("Lumen 0.4.0", fontSize = 14.sp, color = LC.Dim)
                 Text("Тексты песен: lrclib.net", fontSize = 14.sp, color = LC.Dim)
                 Text("Никакой рекламы и слежки — всё работает на телефоне.", fontSize = 14.sp, color = LC.Dim)
             }

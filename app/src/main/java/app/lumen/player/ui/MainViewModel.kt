@@ -106,19 +106,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         g.prefs.showLyrics = v
     }
 
-    init {
-        viewModelScope.launch {
-            conn.connect()
-            restoreQueue()
-        }
-        viewModelScope.launch {
-            player.map { it.currentId }.distinctUntilChanged().collect { id -> onTrackChanged(id) }
-        }
-        viewModelScope.launch {
-            player.map { it.currentId to it.queue.size }.distinctUntilChanged().collect { saveQueue() }
-        }
-    }
-
     fun onPermission(granted: Boolean) {
         val was = hasPermission.value
         hasPermission.value = granted
@@ -247,6 +234,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // Текст ищем сразу при старте трека — неважно, открыт он или нет.
         loadLyrics()
         prefetchNextLyrics()
+        startBeats(id)
     }
 
     /** Заранее готовим текст следующего трека, чтобы он был и без сети. */
@@ -398,7 +386,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     val root = org.json.JSONObject()
                     root.put("app", "Lumen")
                     root.put("format", 1)
-                    root.put("appVersion", "0.2.0")
+                    root.put("appVersion", "0.4.0")
                     root.put("exportedAt", System.currentTimeMillis())
                     root.put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
                     val arr = org.json.JSONArray()
@@ -427,6 +415,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         arr.put(o)
                     }
                     root.put("tracks", arr)
+                    val index = HashMap<String, Int>()
+                    tracksAll.forEachIndexed { i, t -> index[t.uri] = i }
+                    val ls = org.json.JSONArray()
+                    dao.allListens().forEach { l ->
+                        val ti = index[l.uri] ?: return@forEach
+                        ls.put(
+                            org.json.JSONObject()
+                                .put("t", ti)
+                                .put("s", l.startedAt)
+                                .put("l", l.listenedMs)
+                                .put("d", l.trackDurationMs)
+                                .put("c", l.completed)
+                        )
+                    }
+                    root.put("listens", ls)
                     root.put("excludedFolders", org.json.JSONArray(dao.excludedOnce()))
                     root.put(
                         "settings",
@@ -435,7 +438,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             .put("skipShort", g.prefs.skipShort)
                             .put("eqEnabled", g.prefs.eqEnabled)
                             .put("eqLevels", org.json.JSONArray(g.prefs.eqLevels))
-                            .put("bassStrength", g.prefs.bassStrength),
+                            .put("bassStrength", g.prefs.bassStrength)
+                            .put("beatFlashes", g.prefs.beatFlashes)
+                            .put("playStarts", g.prefs.playStarts),
                     )
                     getApplication<Application>().contentResolver.openOutputStream(target)?.use { out ->
                         out.write(root.toString(2).toByteArray(Charsets.UTF_8))
@@ -444,6 +449,220 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             onDone(result.isSuccess, result.getOrDefault(0))
+        }
+    }
+
+    // ---------- вспышки под бит ----------
+
+    val beats = MutableStateFlow<app.lumen.player.playback.Beats?>(null)
+    val beatFlashes = MutableStateFlow(g.prefs.beatFlashes)
+    private var beatsJob: Job? = null
+    private var beatsPrefetch: Job? = null
+
+    fun setBeatFlashes(v: Boolean) {
+        g.prefs.beatFlashes = v
+        beatFlashes.value = v
+    }
+
+    private fun startBeats(id: String) {
+        beatsJob?.cancel()
+        beatsPrefetch?.cancel()
+        beats.value = null
+        beatsJob = viewModelScope.launch {
+            g.beats.analyze(id).collect { beats.value = it }
+            // Текущий готов — заранее считаем следующий, чтобы вспышки начались с первой секунды.
+            val c = conn.controller ?: return@launch
+            val next = c.nextMediaItemIndex
+            if (next in 0 until c.mediaItemCount) {
+                val nextId = c.getMediaItemAt(next).mediaId
+                if (!g.beats.hasCache(nextId)) {
+                    beatsPrefetch = g.appScope.launch { g.beats.analyze(nextId).collect { } }
+                }
+            }
+        }
+    }
+
+    // ---------- «Самое любимое» и обратная сторона ----------
+
+    /** true — карточка перевёрнута на «обратную сторону луны». */
+    val moonSide = MutableStateFlow(false)
+    fun setMoonSide(v: Boolean) {
+        moonSide.value = v
+    }
+
+    /** Играет сразу, без открытия плеера: от любимых к забытым (или наоборот). */
+    fun playLoved(mostFirst: Boolean) {
+        viewModelScope.launch {
+            val list = if (mostFirst) dao.mostLoved() else dao.leastLoved()
+            if (list.isNotEmpty()) conn.playTracks(list, 0, shuffle = false)
+        }
+    }
+
+    fun seekAndPlay(ms: Long) {
+        conn.seekTo(ms)
+        conn.play()
+    }
+
+    fun setSleepMillis(ms: Long?) = g.sleepTimer.setMillis(ms)
+
+    // ---------- статистика ----------
+
+    suspend fun loadStats(): ListenStats = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        val cal = java.util.Calendar.getInstance()
+        cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+        cal.set(java.util.Calendar.MINUTE, 0)
+        cal.set(java.util.Calendar.SECOND, 0)
+        cal.set(java.util.Calendar.MILLISECOND, 0)
+        val todayStart = cal.timeInMillis
+        val times = dao.listenTimes()
+        val byHour = LongArray(24)
+        val byWeekday = LongArray(7)
+        val days = java.util.TreeSet<Long>()
+        val c2 = java.util.Calendar.getInstance()
+        for (t in times) {
+            c2.timeInMillis = t.startedAt
+            byHour[c2.get(java.util.Calendar.HOUR_OF_DAY)] += t.listenedMs
+            // Понедельник = 0 … воскресенье = 6
+            val wd = (c2.get(java.util.Calendar.DAY_OF_WEEK) + 5) % 7
+            byWeekday[wd] += t.listenedMs
+            c2.set(java.util.Calendar.HOUR_OF_DAY, 0)
+            c2.set(java.util.Calendar.MINUTE, 0)
+            c2.set(java.util.Calendar.SECOND, 0)
+            c2.set(java.util.Calendar.MILLISECOND, 0)
+            days += c2.timeInMillis
+        }
+        // Серии дней подряд с музыкой.
+        val dayMs = 24L * 3600 * 1000
+        var longest = 0
+        var run = 0
+        var prev = Long.MIN_VALUE
+        for (d in days) {
+            run = if (prev != Long.MIN_VALUE && kotlin.math.abs(d - prev - dayMs) < 3 * 3600 * 1000) run + 1 else 1
+            longest = maxOf(longest, run)
+            prev = d
+        }
+        var current = 0
+        var probe = todayStart
+        if (probe !in days) probe -= dayMs
+        while (days.any { kotlin.math.abs(it - probe) < 3 * 3600 * 1000 }) {
+            current++
+            probe -= dayMs
+        }
+        ListenStats(
+            all = dao.listenSummary(0),
+            today = dao.listenSummary(todayStart),
+            week = dao.listenSummary(now - 7 * dayMs),
+            month = dao.listenSummary(now - 30 * dayMs),
+            playStarts = g.prefs.playStarts,
+            topTracks = dao.topTracks(10),
+            topArtists = dao.topArtists(8),
+            byHour = byHour,
+            byWeekday = byWeekday,
+            activeDays = days.size,
+            currentStreak = current,
+            longestStreak = longest,
+            firstListen = times.firstOrNull()?.startedAt,
+            libraryTracks = tracks.value.size,
+            favorites = dao.favoriteCountAll(),
+        )
+    }
+
+    // ---------- импорт медиатеки ----------
+
+    /** Импорт из файла экспорта: любимое, статистика, история, исключённые папки, настройки. */
+    fun importLibrary(source: Uri, onDone: (ok: Boolean, matched: Int, total: Int) -> Unit) {
+        viewModelScope.launch {
+            val res = withContext(Dispatchers.IO) {
+                runCatching {
+                    val text = getApplication<Application>().contentResolver.openInputStream(source)
+                        ?.bufferedReader()?.use { it.readText() } ?: error("no stream")
+                    val root = org.json.JSONObject(text)
+                    require(root.optString("app") == "Lumen") { "not a Lumen file" }
+                    val local = dao.allTracksOnce()
+                    val byPath = local.filter { it.path.isNotEmpty() }.associateBy { it.path }
+                    val byUri = local.associateBy { it.uri }
+                    fun keyOf(title: String, artist: String, dur: Long) =
+                        "${normalize(title)}|${normalize(artist)}|${dur / 2000}"
+                    val byKey = local.associateBy { keyOf(it.title, it.artist, it.durationMs) }
+
+                    val arr = root.optJSONArray("tracks") ?: org.json.JSONArray()
+                    val mapped = arrayOfNulls<String>(arr.length())
+                    var matched = 0
+                    val favs = ArrayList<FavoriteEntity>()
+                    for (i in 0 until arr.length()) {
+                        val o = arr.getJSONObject(i)
+                        val t = byPath[o.optString("path")]
+                            ?: byUri[o.optString("uri")]
+                            ?: byKey[keyOf(o.optString("title"), o.optString("artist"), o.optLong("durationMs"))]
+                            ?: continue
+                        mapped[i] = t.uri
+                        matched++
+                        if (o.has("favoriteAt")) favs += FavoriteEntity(t.uri, o.optLong("favoriteAt"))
+                        if (o.has("playCount")) {
+                            val old = dao.playStat(t.uri)
+                            dao.putPlayStat(
+                                app.lumen.player.data.PlayStatEntity(
+                                    t.uri,
+                                    maxOf(old?.count ?: 0, o.optInt("playCount")),
+                                    maxOf(old?.lastPlayed ?: 0L, o.optLong("lastPlayed")),
+                                )
+                            )
+                        }
+                    }
+                    favs.forEach { dao.addFavorite(it) }
+
+                    root.optJSONArray("listens")?.let { ls ->
+                        val existing = dao.allListens().map { "${it.uri}|${it.startedAt}" }.toHashSet()
+                        val toInsert = ArrayList<app.lumen.player.data.ListenEntity>()
+                        for (i in 0 until ls.length()) {
+                            val o = ls.getJSONObject(i)
+                            val uri = mapped.getOrNull(o.optInt("t", -1)) ?: continue
+                            val started = o.optLong("s")
+                            if ("$uri|$started" in existing) continue
+                            toInsert += app.lumen.player.data.ListenEntity(
+                                uri = uri,
+                                startedAt = started,
+                                listenedMs = o.optLong("l"),
+                                trackDurationMs = o.optLong("d"),
+                                completed = o.optBoolean("c"),
+                            )
+                        }
+                        toInsert.chunked(500).forEach { dao.insertListens(it) }
+                    }
+
+                    root.optJSONArray("excludedFolders")?.let { ex ->
+                        val list = (0 until ex.length()).map { app.lumen.player.data.ExcludedFolder(ex.getString(it)) }
+                        if (list.isNotEmpty()) dao.addExcluded(list)
+                    }
+                    root.optJSONObject("settings")?.let { st ->
+                        if (st.has("onlineLyrics")) g.prefs.onlineLyrics = st.optBoolean("onlineLyrics")
+                        if (st.has("skipShort")) g.prefs.skipShort = st.optBoolean("skipShort")
+                        if (st.has("beatFlashes")) g.prefs.beatFlashes = st.optBoolean("beatFlashes")
+                        if (st.has("playStarts")) g.prefs.playStarts = maxOf(g.prefs.playStarts, st.optInt("playStarts"))
+                    }
+                    matched to arr.length()
+                }
+            }
+            onlineLyrics.value = g.prefs.onlineLyrics
+            skipShort.value = g.prefs.skipShort
+            beatFlashes.value = g.prefs.beatFlashes
+            val (m, t) = res.getOrDefault(0 to 0)
+            onDone(res.isSuccess, m, t)
+        }
+    }
+
+    // init в конце: к этому моменту все свойства уже созданы.
+    init {
+        viewModelScope.launch {
+            conn.connect()
+            restoreQueue()
+        }
+        viewModelScope.launch {
+            player.map { it.currentId }.distinctUntilChanged().collect { id -> onTrackChanged(id) }
+        }
+        viewModelScope.launch {
+            player.map { it.currentId to it.queue.size }.distinctUntilChanged().collect { saveQueue() }
         }
     }
 
@@ -491,3 +710,21 @@ fun formatLabel(mime: String, uri: String = ""): String {
         else -> uri.substringAfterLast('.', "").uppercase().takeIf { it.length in 2..4 } ?: "AUDIO"
     }
 }
+
+data class ListenStats(
+    val all: app.lumen.player.data.ListenSummary,
+    val today: app.lumen.player.data.ListenSummary,
+    val week: app.lumen.player.data.ListenSummary,
+    val month: app.lumen.player.data.ListenSummary,
+    val playStarts: Int,
+    val topTracks: List<app.lumen.player.data.TopTrack>,
+    val topArtists: List<app.lumen.player.data.TopName>,
+    val byHour: LongArray,
+    val byWeekday: LongArray,
+    val activeDays: Int,
+    val currentStreak: Int,
+    val longestStreak: Int,
+    val firstListen: Long?,
+    val libraryTracks: Int,
+    val favorites: Int,
+)

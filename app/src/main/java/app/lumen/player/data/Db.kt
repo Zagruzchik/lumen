@@ -58,6 +58,31 @@ data class LyricsEntity(
     val fetchedAt: Long,
 )
 
+/** Одно прослушивание трека: сколько реально играло, дослушано ли до конца. */
+@Entity(tableName = "listens", indices = [Index("uri"), Index("startedAt")])
+data class ListenEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val uri: String,
+    val startedAt: Long,
+    val listenedMs: Long,
+    val trackDurationMs: Long,
+    val completed: Boolean,
+)
+
+data class ListenSummary(
+    val count: Int,
+    val total: Long,
+    val minMs: Long,
+    val avgMs: Double,
+    val maxMs: Long,
+    val completedCount: Int,
+    val uniqueTracks: Int,
+)
+
+data class TopTrack(val uri: String, val title: String, val artist: String, val totalMs: Long, val plays: Int)
+data class TopName(val name: String, val totalMs: Long, val plays: Int)
+data class ListenTime(val startedAt: Long, val listenedMs: Long)
+
 @Entity(tableName = "excluded")
 data class ExcludedFolder(@PrimaryKey val folder: String)
 
@@ -228,6 +253,70 @@ abstract class LibraryDao {
         putPlayStat(PlayStatEntity(uri, (old?.count ?: 0) + 1, System.currentTimeMillis()))
     }
 
+    // ---------- статистика ----------
+
+    @Insert
+    abstract suspend fun insertListen(l: ListenEntity)
+
+    @Insert
+    abstract suspend fun insertListens(l: List<ListenEntity>)
+
+    @Query(
+        """SELECT COUNT(*) AS count, COALESCE(SUM(listenedMs), 0) AS total,
+           COALESCE(MIN(listenedMs), 0) AS minMs, COALESCE(AVG(listenedMs), 0) AS avgMs,
+           COALESCE(MAX(listenedMs), 0) AS maxMs, COALESCE(SUM(completed), 0) AS completedCount,
+           COUNT(DISTINCT uri) AS uniqueTracks
+           FROM listens WHERE startedAt >= :since"""
+    )
+    abstract suspend fun listenSummary(since: Long): ListenSummary
+
+    @Query(
+        """SELECT l.uri AS uri, t.title AS title, t.artist AS artist,
+           SUM(l.listenedMs) AS totalMs, COUNT(*) AS plays
+           FROM listens l INNER JOIN tracks t ON t.uri = l.uri
+           GROUP BY l.uri ORDER BY totalMs DESC LIMIT :n"""
+    )
+    abstract suspend fun topTracks(n: Int): List<TopTrack>
+
+    @Query(
+        """SELECT t.artist AS name, SUM(l.listenedMs) AS totalMs, COUNT(*) AS plays
+           FROM listens l INNER JOIN tracks t ON t.uri = l.uri
+           GROUP BY t.artist ORDER BY totalMs DESC LIMIT :n"""
+    )
+    abstract suspend fun topArtists(n: Int): List<TopName>
+
+    @Query("SELECT startedAt, listenedMs FROM listens ORDER BY startedAt")
+    abstract suspend fun listenTimes(): List<ListenTime>
+
+    @Query("SELECT * FROM listens")
+    abstract suspend fun allListens(): List<ListenEntity>
+
+    @Query("SELECT COUNT(*) FROM favorites")
+    abstract suspend fun favoriteCountAll(): Int
+
+    @Query("SELECT * FROM tracks")
+    abstract suspend fun allTracksOnce(): List<TrackEntity>
+
+    /** «Самое любимое»: сначала самые часто и долго слушаемые. */
+    @Query(
+        """SELECT t.* FROM tracks t
+           LEFT JOIN plays p ON p.uri = t.uri
+           LEFT JOIN (SELECT uri, SUM(listenedMs) AS ms FROM listens GROUP BY uri) l ON l.uri = t.uri
+           WHERE $VISIBLE_T
+           ORDER BY COALESCE(p.count, 0) DESC, COALESCE(l.ms, 0) DESC, t.title COLLATE NOCASE"""
+    )
+    abstract suspend fun mostLoved(): List<TrackEntity>
+
+    /** «Обратная сторона»: от забытых к любимым. */
+    @Query(
+        """SELECT t.* FROM tracks t
+           LEFT JOIN plays p ON p.uri = t.uri
+           LEFT JOIN (SELECT uri, SUM(listenedMs) AS ms FROM listens GROUP BY uri) l ON l.uri = t.uri
+           WHERE $VISIBLE_T
+           ORDER BY COALESCE(p.count, 0) ASC, COALESCE(l.ms, 0) ASC, RANDOM()"""
+    )
+    abstract suspend fun leastLoved(): List<TrackEntity>
+
     @Query("SELECT * FROM lyrics WHERE `key` = :key")
     abstract suspend fun lyrics(key: String): LyricsEntity?
 
@@ -236,12 +325,28 @@ abstract class LibraryDao {
 }
 
 @Database(
-    entities = [TrackEntity::class, FavoriteEntity::class, PlayStatEntity::class, LyricsEntity::class, ExcludedFolder::class],
-    version = 2,
+    entities = [
+        TrackEntity::class, FavoriteEntity::class, PlayStatEntity::class, LyricsEntity::class,
+        ExcludedFolder::class, ListenEntity::class,
+    ],
+    version = 3,
     exportSchema = false,
 )
 abstract class LumenDb : RoomDatabase() {
     abstract fun dao(): LibraryDao
+}
+
+/** 2 → 3: история прослушиваний для статистики. */
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `listens` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "`uri` TEXT NOT NULL, `startedAt` INTEGER NOT NULL, `listenedMs` INTEGER NOT NULL, " +
+                "`trackDurationMs` INTEGER NOT NULL, `completed` INTEGER NOT NULL)"
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_listens_uri` ON `listens` (`uri`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_listens_startedAt` ON `listens` (`startedAt`)")
+    }
 }
 
 /** 1 → 2: таблица исключённых папок. Любимое и статистика сохраняются. */

@@ -110,6 +110,12 @@ import app.lumen.player.ui.theme.CoverColors
 import app.lumen.player.ui.theme.LC
 import app.lumen.player.ui.theme.LocalAccent
 import kotlinx.coroutines.delay
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import kotlin.math.roundToInt
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -157,6 +163,34 @@ private fun CoverBackdrop(uri: String?, colors: CoverColors) {
                 .background(
                     Brush.verticalGradient(listOf(Color(0x330A0610), Color(0x8C0A0610), Color(0xE00A0610)))
                 )
+        )
+    }
+}
+
+/** Вспышки под бит: свет из центра и подсветка краёв экрана цветом акцента. */
+@Composable
+private fun BeatFlashLayer(level: androidx.compose.runtime.MutableFloatState, accent: Color) {
+    androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+        val l = level.floatValue
+        if (l < 0.01f) return@Canvas
+        val w = size.width
+        val h = size.height
+        val burstC = Offset(w / 2f, h * 0.36f)
+        drawCircle(
+            Brush.radialGradient(listOf(accent.copy(alpha = 0.5f * l), Color.Transparent), burstC, w * (0.75f + 0.25f * l)),
+            radius = w * (0.75f + 0.25f * l),
+            center = burstC,
+            blendMode = BlendMode.Plus,
+        )
+        drawRect(
+            Brush.radialGradient(
+                0f to Color.Transparent,
+                0.62f to Color.Transparent,
+                1f to accent.copy(alpha = 0.55f * l),
+                center = Offset(w / 2f, h / 2f),
+                radius = kotlin.math.max(w, h) * 0.72f,
+            ),
+            blendMode = BlendMode.Plus,
         )
     }
 }
@@ -265,6 +299,39 @@ fun PlayerScreen(
     val lyricsRes by vm.lyrics.collectAsStateWithLifecycle()
     val accent = LocalAccent.current
 
+    // Уровень «вспышки» 0..1: обновляется каждый кадр по заранее найденным ударам.
+    val beatLevel = remember { mutableFloatStateOf(0f) }
+    val beats by vm.beats.collectAsStateWithLifecycle()
+    val flashesOn by vm.beatFlashes.collectAsStateWithLifecycle()
+    LaunchedEffect(beats, p.isPlaying, flashesOn) {
+        val b = beats
+        if (b == null || !flashesOn || b.size == 0) {
+            beatLevel.floatValue = 0f
+            return@LaunchedEffect
+        }
+        val playing = p.isPlaying
+        var basePos = vm.position()
+        var baseT = withFrameMillis { it }
+        var lastPoll = baseT
+        while (true) {
+            withFrameMillis { t ->
+                if (t - lastPoll > 300) {
+                    basePos = vm.position()
+                    baseT = t
+                    lastPoll = t
+                }
+                val pos = if (playing) basePos + (t - baseT) + 30 else basePos
+                val i = b.lastAtOrBefore(pos)
+                var lvl = 0f
+                if (i >= 0) {
+                    val dt = (pos - b.times[i]).toFloat()
+                    if (dt < 700f) lvl = b.strengths[i] * kotlin.math.exp(-dt / 170f)
+                }
+                beatLevel.floatValue = if (playing) lvl else beatLevel.floatValue * 0.85f
+            }
+        }
+    }
+
     val found = lyricsRes as? LyricsResult.Found
     LaunchedEffect(found == null) { if (found == null && lyricsFull) onLyricsFull(false) }
     val stage: Stage = when {
@@ -297,6 +364,7 @@ fun PlayerScreen(
             )
     ) {
         CoverBackdrop(p.currentId, colors)
+        BeatFlashLayer(beatLevel, accent)
 
         Column(
             Modifier
@@ -342,13 +410,13 @@ fun PlayerScreen(
                 label = "stage",
             ) { s ->
                 when (s) {
-                    is Stage.CoverStage -> CoverArea(vm, p, accent, s.note)
+                    is Stage.CoverStage -> CoverArea(vm, p, accent, s.note, beatLevel)
                     is Stage.Inline -> InlineLyrics(s.lines, s.synced, position) { onLyricsFull(true) }
                     is Stage.Full -> LyricsList(
                         lines = s.lines,
                         synced = s.synced,
                         position = position,
-                        onSeek = { vm.seekTo(it) },
+                        onSeek = { vm.seekAndPlay(it) },
                         big = true,
                         contentPadding = PaddingValues(start = 6.dp, end = 6.dp, top = 40.dp, bottom = 160.dp),
                         modifier = Modifier.fillMaxSize().fadeEdges(40.dp, 90.dp),
@@ -425,7 +493,13 @@ private fun PlayerTopBar(
 }
 
 @Composable
-private fun CoverArea(vm: MainViewModel, p: PlayerState, accent: Color, note: String?) {
+private fun CoverArea(
+    vm: MainViewModel,
+    p: PlayerState,
+    accent: Color,
+    note: String?,
+    beatLevel: androidx.compose.runtime.MutableFloatState,
+) {
     val density = LocalDensity.current
     BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         val side = min(maxWidth.value, maxHeight.value).dp
@@ -451,7 +525,11 @@ private fun CoverArea(vm: MainViewModel, p: PlayerState, accent: Color, note: St
                     val c = center + Offset(0f, 26.dp.toPx())
                     val r = size.minDimension * 0.78f
                     drawCircle(
-                        Brush.radialGradient(listOf(accent.copy(alpha = glow), Color.Transparent), c, r),
+                        Brush.radialGradient(
+                            listOf(accent.copy(alpha = (glow + 0.55f * beatLevel.floatValue).coerceAtMost(1f)), Color.Transparent),
+                            c,
+                            r * (1f + 0.12f * beatLevel.floatValue),
+                        ),
                         radius = r,
                         center = c,
                     )
@@ -463,6 +541,9 @@ private fun CoverArea(vm: MainViewModel, p: PlayerState, accent: Color, note: St
                     .fillMaxSize()
                     .graphicsLayer {
                         translationX = coverX
+                        val beat = 1f + 0.035f * beatLevel.floatValue
+                        scaleX = beat
+                        scaleY = beat
                         rotationZ = coverX / 40f
                         alpha = 1f - min(0.4f, abs(coverX) / 1200f)
                     }
@@ -944,6 +1025,7 @@ fun QueueSheet(vm: MainViewModel, onClose: () -> Unit, sheetModifier: Modifier =
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                 .navigationBarsPadding()
         ) {
+            val listState = rememberLazyListState(initialFirstVisibleItemIndex = (p.index - 2).coerceAtLeast(0))
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -976,11 +1058,25 @@ fun QueueSheet(vm: MainViewModel, onClose: () -> Unit, sheetModifier: Modifier =
                         { vm.toggleShuffle() },
                         tint = if (p.shuffle) accent else LC.Text,
                     )
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(6.dp))
+                    IconBtn(LIcons.ArrowUp, "В начало очереди", {
+                        scope.launch {
+                            if (listState.firstVisibleItemIndex > 25) listState.scrollToItem(8)
+                            listState.animateScrollToItem(0)
+                        }
+                    })
+                    Spacer(Modifier.width(6.dp))
+                    IconBtn(LIcons.ArrowDown, "В конец очереди", {
+                        scope.launch {
+                            val last = (p.queue.size - 1).coerceAtLeast(0)
+                            if (last - listState.firstVisibleItemIndex > 25) listState.scrollToItem((last - 8).coerceAtLeast(0))
+                            listState.animateScrollToItem(last)
+                        }
+                    })
+                    Spacer(Modifier.width(6.dp))
                     IconBtn(LIcons.Close, "Закрыть очередь", onClose)
                 }
             }
-            val listState = rememberLazyListState(initialFirstVisibleItemIndex = (p.index - 2).coerceAtLeast(0))
             LaunchedEffect(p.shuffle) {
                 // После перемешивания текущий трек наверху — показываем начало списка.
                 listState.scrollToItem((p.index - 2).coerceAtLeast(0))
@@ -1244,6 +1340,13 @@ private fun QueueList(
 @Composable
 fun TimerSheet(vm: MainViewModel, onClose: () -> Unit, sheetModifier: Modifier = Modifier) {
     val sleepAt by vm.sleepEndsAt.collectAsStateWithLifecycle()
+    val p by vm.player.collectAsStateWithLifecycle()
+    val accent = LocalAccent.current
+    var minutes by remember {
+        mutableIntStateOf(
+            sleepAt?.let { ((it - System.currentTimeMillis()) / 60_000L).toInt().coerceIn(1, MAX_SLEEP_MIN) } ?: 30
+        )
+    }
     Box(
         Modifier
             .fillMaxSize()
@@ -1258,32 +1361,240 @@ fun TimerSheet(vm: MainViewModel, onClose: () -> Unit, sheetModifier: Modifier =
                 .background(Color(0xF5141019))
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                 .navigationBarsPadding()
-                .padding(20.dp)
+                .padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text("Таймер сна", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
-            Text(
-                "За 30 секунд до конца музыка плавно затихнет.",
-                fontSize = 14.sp,
-                color = LC.Dim,
-                modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),
-            )
-            listOf(15, 30, 45, 60, 90).chunked(3).forEach { row ->
-                Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    row.forEach { m ->
-                        PillButton("$m мин", null, {
-                            vm.setSleep(m)
-                            onClose()
-                        }, Modifier.weight(1f), primary = false)
-                    }
-                    repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Таймер сна", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+                    Text(
+                        sleepAt?.let {
+                            "Сработает в " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(it))
+                        } ?: "Крути по кругу — каждый оборот это час",
+                        fontSize = 13.sp,
+                        color = if (sleepAt != null) accent else LC.Dim,
+                    )
                 }
+                IconBtn(LIcons.Close, "Закрыть", onClose)
+            }
+            Spacer(Modifier.height(14.dp))
+            SleepDial(minutes, accent) { minutes = it }
+            Spacer(Modifier.height(16.dp))
+            LazyRowChips(
+                listOf(
+                    "15 мин" to 15, "30 мин" to 30, "45 мин" to 45, "1 ч" to 60, "1,5 ч" to 90, "2 ч" to 120,
+                ),
+                selected = minutes,
+            ) { minutes = it }
+            Spacer(Modifier.height(14.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (p.durationMs > 0 && p.currentId != null) {
+                    PillButton("До конца трека", null, {
+                        val left = (p.durationMs - vm.position()).coerceAtLeast(5_000L)
+                        vm.setSleepMillis(left + 1_000L)
+                        onClose()
+                    }, Modifier.weight(1f), primary = false)
+                }
+                PillButton(
+                    if (minutes > 0) "Запустить" else "Выбери время",
+                    LIcons.Moon,
+                    {
+                        if (minutes > 0) {
+                            vm.setSleep(minutes)
+                            onClose()
+                        }
+                    },
+                    Modifier.weight(1f),
+                )
             }
             if (sleepAt != null) {
+                Spacer(Modifier.height(10.dp))
                 PillButton("Выключить таймер", LIcons.Close, {
                     vm.setSleep(null)
                     onClose()
-                }, Modifier.fillMaxWidth())
+                }, Modifier.fillMaxWidth(), primary = false)
             }
+        }
+    }
+}
+
+private const val MAX_SLEEP_MIN = 12 * 60
+
+@Composable
+private fun LazyRowChips(options: List<Pair<String, Int>>, selected: Int, onPick: (Int) -> Unit) {
+    androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(options.size) { i ->
+            val (label, value) = options[i]
+            app.lumen.player.ui.components.LChip(label, selected == value) { onPick(value) }
+        }
+    }
+}
+
+/**
+ * Круговой таймер: тяни точку по кругу, один оборот = 60 минут, можно крутить
+ * несколько оборотов (до 12 часов). В центре — поля «часы : минуты», их можно ввести вручную.
+ */
+@Composable
+private fun SleepDial(minutes: Int, accent: Color, onMinutes: (Int) -> Unit) {
+    val haptic = LocalHapticFeedback.current
+    val current by rememberUpdatedState(minutes)
+    val change by rememberUpdatedState(onMinutes)
+    var degrees by remember { mutableFloatStateOf(minutes * 6f) }
+    var dragging by remember { mutableStateOf(false) }
+    LaunchedEffect(minutes) {
+        if (!dragging && kotlin.math.abs(degrees / 6f - minutes) >= 1f) degrees = minutes * 6f
+    }
+    val shownDeg by animateFloatAsState(degrees, if (dragging) snap() else spring(dampingRatio = 0.8f, stiffness = 300f), label = "dial")
+
+    Box(Modifier.size(270.dp), contentAlignment = Alignment.Center) {
+        androidx.compose.foundation.Canvas(
+            Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    var last = 0f
+                    fun angleAt(o: Offset): Float {
+                        val dx = o.x - size.width / 2f
+                        val dy = o.y - size.height / 2f
+                        return (Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat() + 90f + 360f) % 360f
+                    }
+                    androidx.compose.foundation.gestures.detectDragGestures(
+                        onDragStart = { o ->
+                            dragging = true
+                            last = angleAt(o)
+                        },
+                        onDragEnd = { dragging = false },
+                        onDragCancel = { dragging = false },
+                    ) { ch, _ ->
+                        ch.consume()
+                        val a = angleAt(ch.position)
+                        var d = a - last
+                        if (d > 180f) d -= 360f
+                        if (d < -180f) d += 360f
+                        last = a
+                        degrees = (degrees + d).coerceIn(0f, MAX_SLEEP_MIN * 6f)
+                        val m = (degrees / 6f).roundToInt()
+                        if (m != current) {
+                            if (m / 5 != current / 5) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            change(m)
+                        }
+                    }
+                }
+        ) {
+            val stroke = 22.dp.toPx()
+            val r = size.minDimension / 2f - stroke
+            val c = center
+            val arcSize = Size(r * 2, r * 2)
+            val tl = Offset(c.x - r, c.y - r)
+            // Деления каждые 5 минут.
+            for (i in 0 until 12) {
+                val ang = Math.toRadians(i * 30.0 - 90.0)
+                val outer = r + stroke * 0.9f
+                val inner = outer - (if (i % 3 == 0) 10.dp.toPx() else 5.dp.toPx())
+                drawLine(
+                    Color(0x40FFFFFF),
+                    Offset(c.x + inner * kotlin.math.cos(ang).toFloat(), c.y + inner * kotlin.math.sin(ang).toFloat()),
+                    Offset(c.x + outer * kotlin.math.cos(ang).toFloat(), c.y + outer * kotlin.math.sin(ang).toFloat()),
+                    2.dp.toPx(),
+                    StrokeCap.Round,
+                )
+            }
+            drawArc(Color(0x1FFFFFFF), 0f, 360f, false, tl, arcSize, style = Stroke(stroke))
+            val total = shownDeg
+            val laps = (total / 360f).toInt()
+            // Полные обороты — кольцо всё ярче с каждым часом.
+            if (laps > 0) {
+                drawArc(
+                    accent.copy(alpha = (0.28f + 0.14f * laps).coerceAtMost(0.75f)),
+                    0f, 360f, false, tl, arcSize, style = Stroke(stroke),
+                )
+            }
+            val part = total - laps * 360f
+            if (part > 0.5f) {
+                drawArc(
+                    Brush.sweepGradient(listOf(accent.copy(alpha = 0.6f), accent, accent), c),
+                    -90f, part, false, tl, arcSize,
+                    style = Stroke(stroke, cap = StrokeCap.Round),
+                )
+            }
+            val ka = Math.toRadians((total % 360f) - 90.0)
+            val kp = Offset(c.x + r * kotlin.math.cos(ka).toFloat(), c.y + r * kotlin.math.sin(ka).toFloat())
+            drawCircle(accent.copy(alpha = 0.35f), stroke * 0.95f, kp)
+            drawCircle(Color.White, stroke * 0.62f, kp)
+        }
+        TimeFields(minutes, accent, onMinutes)
+    }
+}
+
+@Composable
+private fun TimeFields(minutes: Int, accent: Color, onMinutes: (Int) -> Unit) {
+    var hText by remember { mutableStateOf("%02d".format(minutes / 60)) }
+    var mText by remember { mutableStateOf("%02d".format(minutes % 60)) }
+    var editing by remember { mutableStateOf(false) }
+    LaunchedEffect(minutes) {
+        if (!editing) {
+            hText = "%02d".format(minutes / 60)
+            mText = "%02d".format(minutes % 60)
+        }
+    }
+    fun commit(h: String, m: String) {
+        val hh = (h.toIntOrNull() ?: 0).coerceIn(0, 12)
+        val mm = (m.toIntOrNull() ?: 0).coerceIn(0, 59)
+        onMinutes((hh * 60 + mm).coerceAtMost(MAX_SLEEP_MIN))
+    }
+    val style = androidx.compose.ui.text.TextStyle(
+        color = LC.Text,
+        fontSize = 46.sp,
+        fontWeight = FontWeight.Black,
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+    )
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.foundation.text.BasicTextField(
+                value = hText,
+                onValueChange = { v ->
+                    val d = v.filter { it.isDigit() }.takeLast(2)
+                    hText = d
+                    commit(d, mText)
+                },
+                singleLine = true,
+                textStyle = style,
+                cursorBrush = androidx.compose.ui.graphics.SolidColor(accent),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
+                ),
+                modifier = Modifier
+                    .width(70.dp)
+                    .onFocusChanged {
+                        editing = it.isFocused
+                        if (!it.isFocused) hText = "%02d".format(hText.toIntOrNull() ?: 0)
+                    },
+            )
+            Text(":", fontSize = 40.sp, fontWeight = FontWeight.Black, color = LC.Dim, modifier = Modifier.padding(horizontal = 2.dp))
+            androidx.compose.foundation.text.BasicTextField(
+                value = mText,
+                onValueChange = { v ->
+                    val d = v.filter { it.isDigit() }.takeLast(2)
+                    mText = d
+                    commit(hText, d)
+                },
+                singleLine = true,
+                textStyle = style,
+                cursorBrush = androidx.compose.ui.graphics.SolidColor(accent),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
+                ),
+                modifier = Modifier
+                    .width(70.dp)
+                    .onFocusChanged {
+                        editing = it.isFocused
+                        if (!it.isFocused) mText = "%02d".format((mText.toIntOrNull() ?: 0).coerceIn(0, 59))
+                    },
+            )
+        }
+        Row {
+            Text("часы", fontSize = 12.sp, color = LC.Dim, modifier = Modifier.width(70.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            Spacer(Modifier.width(18.dp))
+            Text("минуты", fontSize = 12.sp, color = LC.Dim, modifier = Modifier.width(70.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         }
     }
 }

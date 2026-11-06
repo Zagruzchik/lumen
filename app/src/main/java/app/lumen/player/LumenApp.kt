@@ -10,6 +10,7 @@ import androidx.room.Room
 import app.lumen.player.data.LibraryDao
 import app.lumen.player.data.LumenDb
 import app.lumen.player.data.MIGRATION_1_2
+import app.lumen.player.data.MIGRATION_2_3
 import app.lumen.player.data.LyricsBulkDownloader
 import app.lumen.player.data.LyricsRepository
 import app.lumen.player.data.MediaScanner
@@ -38,7 +39,7 @@ class LumenApp : Application() {
 class AppGraph(val context: Context) {
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val db: LumenDb = Room.databaseBuilder(context, LumenDb::class.java, "lumen.db")
-        .addMigrations(MIGRATION_1_2)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
         .fallbackToDestructiveMigration()
         .build()
     val dao: LibraryDao get() = db.dao()
@@ -49,6 +50,7 @@ class AppGraph(val context: Context) {
     val player = PlayerConnection(context)
     val sleepTimer = SleepTimer(appScope, player)
     val eq = EqController(prefs)
+    val beats = app.lumen.player.playback.BeatAnalyzer(context)
 
     private var observerRegistered = false
     private var rescanJob: Job? = null

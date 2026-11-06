@@ -103,6 +103,7 @@ fun HomeScreen(vm: MainViewModel, nav: Nav, actions: TrackActions, bottomPad: Dp
     val favs by vm.favoriteUris.collectAsStateWithLifecycle()
     val p by vm.player.collectAsStateWithLifecycle()
     val scanning by vm.scanning.collectAsStateWithLifecycle()
+    val moon by vm.moonSide.collectAsStateWithLifecycle()
 
     LazyColumn(
         Modifier.fillMaxSize(),
@@ -144,6 +145,17 @@ fun HomeScreen(vm: MainViewModel, nav: Nav, actions: TrackActions, bottomPad: Dp
             }
             return@LazyColumn
         }
+        if (tracks.isNotEmpty()) {
+            item {
+                LovedCard(
+                    moon = moon,
+                    trackCount = tracks.size,
+                    onFlip = { vm.setMoonSide(it) },
+                    onPlay = { most -> vm.playLoved(most) },
+                )
+            }
+            item { ContinueCard(vm, p, last, onOpenPlayer) }
+        }
         item {
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 20.dp),
@@ -160,7 +172,6 @@ fun HomeScreen(vm: MainViewModel, nav: Nav, actions: TrackActions, bottomPad: Dp
             item { EmptyLibrary(scanning, onRescan = { vm.rescan() }, onSettings = { nav.tab(Dest.Settings, null) }) }
             return@LazyColumn
         }
-        item { ContinueCard(vm, p, last, onOpenPlayer) }
         if (recent.isNotEmpty()) {
             item { SectionHeader("Недавно добавленные", "Все") { nav.tab(Dest.Library, 1) } }
             item {

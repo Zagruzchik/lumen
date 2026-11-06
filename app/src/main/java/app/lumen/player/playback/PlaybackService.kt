@@ -25,6 +25,7 @@ import androidx.media3.session.MediaSessionService
 import app.lumen.player.R
 import app.lumen.player.data.Artwork
 import app.lumen.player.data.FavoriteEntity
+import app.lumen.player.data.ListenEntity
 import app.lumen.player.graph
 import app.lumen.player.ui.MainActivity
 import com.google.common.collect.ImmutableList
@@ -84,20 +85,51 @@ class PlaybackService : MediaSessionService() {
                             originalOrder = null
                         }
                     }
+                    // После перестановки система могла перестроить уведомление — возвращаем свои кнопки.
+                    updateNotificationButtons()
+                    mainHandler.postDelayed({ updateNotificationButtons() }, 300)
                 }
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                finishListen(completedByAuto = reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO)
+                beginListen(player)
                 val id = mediaItem?.mediaId ?: return
                 if (player.isPlaying) record(id) else pendingPlayCount = id
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
-                if (isPlaying) pendingPlayCount?.let { record(it) }
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (isPlaying) {
+                    pendingPlayCount?.let { record(it) }
+                    if (listenUri == null) beginListen(player)
+                    segmentStart = now
+                    // «Запуск музыки»: старт с нуля или после паузы дольше минуты.
+                    if (lastStoppedAt == 0L || now - lastStoppedAt > 60_000) {
+                        val prefs = applicationContext.graph.prefs
+                        prefs.playStarts = prefs.playStarts + 1
+                    }
+                } else {
+                    if (segmentStart > 0) listenAccum += now - segmentStart
+                    segmentStart = 0
+                    lastStoppedAt = now
+                }
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED) finishListen(completedByAuto = true)
+                val d = player.duration
+                if (d != C.TIME_UNSET && d > 0) listenDuration = d
             }
 
             override fun onEvents(player: Player, events: Player.Events) {
-                if (events.containsAny(Player.EVENT_MEDIA_ITEM_TRANSITION, Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED)) {
+                if (events.containsAny(
+                        Player.EVENT_MEDIA_ITEM_TRANSITION,
+                        Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED,
+                        Player.EVENT_TIMELINE_CHANGED,
+                        Player.EVENT_AVAILABLE_COMMANDS_CHANGED,
+                    )
+                ) {
                     updateNotificationButtons()
                 }
             }
@@ -259,6 +291,43 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    // ---------- учёт прослушиваний ----------
+    private var listenUri: String? = null
+    private var listenStartedAt = 0L
+    private var listenAccum = 0L
+    private var segmentStart = 0L
+    private var listenDuration = 0L
+    private var lastStoppedAt = 0L
+
+    private fun beginListen(p: Player) {
+        listenUri = p.currentMediaItem?.mediaId
+        listenStartedAt = System.currentTimeMillis()
+        listenAccum = 0L
+        listenDuration = p.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: 0L
+        segmentStart = if (p.isPlaying) android.os.SystemClock.elapsedRealtime() else 0L
+    }
+
+    private fun finishListen(completedByAuto: Boolean) {
+        val uri = listenUri ?: return
+        val now = android.os.SystemClock.elapsedRealtime()
+        val total = listenAccum + if (segmentStart > 0) now - segmentStart else 0L
+        listenUri = null
+        listenAccum = 0L
+        segmentStart = 0L
+        if (total < 3_000) return
+        val dur = listenDuration
+        val completed = completedByAuto || (dur > 0 && total >= dur * 0.9)
+        val entity = ListenEntity(
+            uri = uri,
+            startedAt = listenStartedAt,
+            listenedMs = total,
+            trackDurationMs = dur,
+            completed = completed,
+        )
+        val g = applicationContext.graph
+        g.appScope.launch { runCatching { g.dao.insertListen(entity) } }
+    }
+
     private fun record(id: String) {
         pendingPlayCount = null
         val dao = applicationContext.graph.dao
@@ -305,6 +374,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        finishListen(completedByAuto = false)
         applicationContext.graph.eq.release()
         session?.run {
             player.release()
