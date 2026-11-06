@@ -623,22 +623,34 @@ private fun MiniPlayer(
     val prevE = neighbor(-1)
     val nextE = neighbor(1)
 
+    fun dirFrom(oldIdx: Int): Int = when {
+        p.index == oldIdx + 1 || (oldIdx == qs - 1 && p.index == 0) -> 1
+        p.index == oldIdx - 1 || (oldIdx == 0 && p.index == qs - 1) -> -1
+        p.index > oldIdx -> 1
+        else -> -1
+    }
+
+    // Смещение, которое реально рисуем. В первый кадр после смены трека Animatable ещё
+    // относится к старому треку — поэтому сразу подставляем правильное значение,
+    // иначе на мгновение мелькает трек «через один».
+    val idNow = id
+    fun shownOff(): Float {
+        val (sid, sidx) = shown
+        if (sid == idNow) return off.value
+        return if (committed) 0f else dirFrom(sidx) * areaW
+    }
+
     LaunchedEffect(id) {
         val (oldId, oldIdx) = shown
         if (oldId == id) return@LaunchedEffect
-        shown = id to p.index
         if (committed) {
-            committed = false
             off.snapTo(0f)
+            shown = id to p.index
+            committed = false
         } else {
             // Трек сменился кнопкой/из уведомления — показываем ту же карусель.
-            val d = when {
-                p.index == oldIdx + 1 || (oldIdx == qs - 1 && p.index == 0) -> 1
-                p.index == oldIdx - 1 || (oldIdx == 0 && p.index == qs - 1) -> -1
-                p.index > oldIdx -> 1
-                else -> -1
-            }
-            off.snapTo(d * areaW)
+            off.snapTo(dirFrom(oldIdx) * areaW)
+            shown = id to p.index
             off.animateTo(0f, spring(dampingRatio = 0.86f, stiffness = 260f))
         }
     }
@@ -722,15 +734,16 @@ private fun MiniPlayer(
                     .clipToBounds(),
                 contentAlignment = Alignment.CenterStart,
             ) {
-                val o = off.value
+                val o = shownOff()
                 MiniInfo(id, p.title, p.artist, big, Modifier.graphicsLayer {
-                    translationX = off.value
-                    alpha = 1f - (kotlin.math.abs(off.value) / areaW).coerceIn(0f, 1f) * 0.6f
+                    val v = shownOff()
+                    translationX = v
+                    alpha = 1f - (kotlin.math.abs(v) / areaW).coerceIn(0f, 1f) * 0.6f
                 })
                 val nb = if (o < 0f) nextE else if (o > 0f) prevE else null
                 if (nb != null) {
                     MiniInfo(nb.mediaId, nb.title, nb.artist, big, Modifier.graphicsLayer {
-                        val v = off.value
+                        val v = shownOff()
                         translationX = if (v < 0f) v + areaW else v - areaW
                         alpha = 0.4f + 0.6f * (kotlin.math.abs(v) / areaW).coerceIn(0f, 1f)
                     })
