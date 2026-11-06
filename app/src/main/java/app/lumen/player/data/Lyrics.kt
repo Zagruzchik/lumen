@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -60,48 +62,127 @@ class LyricsRepository(
     private val dao: LibraryDao,
     private val prefs: Prefs,
 ) {
-    private val userAgent = "Lumen/0.1.0 (https://github.com/Zagruzchik/lumen-player)"
+    private val userAgent = "Lumen/0.2 (https://github.com/Zagruzchik/lumen)"
+    private val dir: File by lazy { File(context.filesDir, "lyrics").apply { mkdirs() } }
+    private val locks = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.sync.Mutex>()
 
-    suspend fun load(t: TrackEntity, force: Boolean = false): LyricsResult = withContext(Dispatchers.IO) {
+    /** Файл с текстом в памяти приложения — доступен офлайн. */
+    fun fileFor(t: TrackEntity): File {
+        val safe = "${t.artist} - ${t.title}".replace(Regex("""[\\/:*?"<>|\u0000-\u001f]"""), "_").take(80).trim()
+        val hash = Integer.toHexString(t.uri.hashCode())
+        return File(dir, "$safe [$hash].lrc")
+    }
+
+    fun hasSaved(t: TrackEntity): Boolean = fileFor(t).exists()
+
+    private fun parseAny(text: String): Pair<List<LyricLine>, Boolean> {
+        val synced = LrcParser.parse(text)
+        if (synced.isNotEmpty()) return synced to true
+        val plain = text.lines().filterNot { it.trim().startsWith("[") && it.trim().endsWith("]") }
+        return LrcParser.plain(plain.joinToString("\n").trim()) to false
+    }
+
+    private fun header(t: TrackEntity): String = buildString {
+        append("[ar:${t.artist}]\n")
+        append("[ti:${t.title}]\n")
+        if (t.album.isNotBlank()) append("[al:${t.album}]\n")
+        if (t.durationMs > 0) append("[length:${t.durationMs / 60000}:${"%02d".format((t.durationMs / 1000) % 60)}]\n")
+        append("[re:Lumen]\n")
+    }
+
+    /** Сохраняем текст файлом: в памяти приложения и, если можно, рядом с треком. */
+    private fun saveFile(t: TrackEntity, text: String, synced: Boolean) {
+        val content = header(t) + "\n" + text.trim() + "\n"
+        runCatching { fileFor(t).writeText(content) }
+        writeSibling(t, content)
+    }
+
+    private fun writeSibling(t: TrackEntity, content: String) {
+        if (t.source != SOURCE_FOLDER) return
+        runCatching {
+            val single = DocumentFile.fromSingleUri(context, Uri.parse(t.uri)) ?: return
+            val base = single.name?.substringBeforeLast('.') ?: return
+            val folder = DocumentFile.fromTreeUri(context, Uri.parse(t.folder)) ?: return
+            if (!folder.canWrite() || folder.findFile("$base.lrc") != null) return
+            val f = folder.createFile("application/octet-stream", "$base.lrc") ?: return
+            context.contentResolver.openOutputStream(f.uri)?.use { it.write(content.toByteArray()) }
+        }
+    }
+
+    private fun found(text: String, source: String): LyricsResult? {
+        val (lines, synced) = parseAny(text)
+        if (lines.isEmpty() || lines.all { it.text.isBlank() }) return null
+        return LyricsResult.Found(lines, synced, source)
+    }
+
+    suspend fun load(t: TrackEntity, force: Boolean = false): LyricsResult {
+        val lock = locks.getOrPut(t.uri) { kotlinx.coroutines.sync.Mutex() }
+        return lock.withLock { withContext(Dispatchers.IO) { loadLocked(t, force) } }
+    }
+
+    private suspend fun loadLocked(t: TrackEntity, force: Boolean): LyricsResult {
+        // 1. .lrc рядом с треком
+        localLrc(t)?.let { text ->
+            found(text, ".lrc")?.let { return it }
+        }
+        // 2. сохранённый файл (работает офлайн)
+        val saved = fileFor(t)
+        if (!force && saved.exists()) {
+            runCatching { saved.readText() }.getOrNull()?.let { text ->
+                val src = dao.lyrics(t.uri)?.source ?: "LRCLIB"
+                found(text, src)?.let { return it }
+            }
+        }
+        // 3. запись в базе (старые версии хранили текст только там) — переносим в файл
         val cached = dao.lyrics(t.uri)
         if (cached != null && !force) {
             val fresh = System.currentTimeMillis() - cached.fetchedAt < 3L * 24 * 3600 * 1000
             when {
-                cached.instrumental -> return@withContext LyricsResult.Instrumental
-                !cached.synced.isNullOrBlank() ->
-                    return@withContext LyricsResult.Found(LrcParser.parse(cached.synced), true, cached.source)
-                !cached.plain.isNullOrBlank() ->
-                    return@withContext LyricsResult.Found(LrcParser.plain(cached.plain), false, cached.source)
-                fresh -> return@withContext LyricsResult.NotFound
+                cached.instrumental -> return LyricsResult.Instrumental
+                !cached.synced.isNullOrBlank() -> {
+                    saveFile(t, cached.synced, true)
+                    return LyricsResult.Found(LrcParser.parse(cached.synced), true, cached.source)
+                }
+                !cached.plain.isNullOrBlank() -> {
+                    saveFile(t, cached.plain, false)
+                    return LyricsResult.Found(LrcParser.plain(cached.plain), false, cached.source)
+                }
+                fresh -> return LyricsResult.NotFound
             }
         }
-
-        localLrc(t)?.let { text ->
-            val lines = LrcParser.parse(text)
-            if (lines.isNotEmpty()) {
-                dao.putLyrics(LyricsEntity(t.uri, text, null, false, ".lrc", System.currentTimeMillis()))
-                return@withContext LyricsResult.Found(lines, true, ".lrc")
-            }
-        }
-
-        if (!prefs.onlineLyrics) return@withContext LyricsResult.Disabled
-
+        // 4. интернет
+        if (!prefs.onlineLyrics) return LyricsResult.Disabled
         val remote = try {
             fetchLrclib(t)
         } catch (e: Exception) {
-            return@withContext LyricsResult.Offline
+            return LyricsResult.Offline
         }
         if (remote == null) {
             dao.putLyrics(LyricsEntity(t.uri, null, null, false, "LRCLIB", System.currentTimeMillis()))
-            return@withContext LyricsResult.NotFound
+            return LyricsResult.NotFound
         }
         dao.putLyrics(remote.copy(key = t.uri))
-        when {
+        return when {
             remote.instrumental -> LyricsResult.Instrumental
-            !remote.synced.isNullOrBlank() -> LyricsResult.Found(LrcParser.parse(remote.synced), true, "LRCLIB")
-            !remote.plain.isNullOrBlank() -> LyricsResult.Found(LrcParser.plain(remote.plain), false, "LRCLIB")
+            !remote.synced.isNullOrBlank() -> {
+                saveFile(t, remote.synced, true)
+                LyricsResult.Found(LrcParser.parse(remote.synced), true, "LRCLIB")
+            }
+            !remote.plain.isNullOrBlank() -> {
+                saveFile(t, remote.plain, false)
+                LyricsResult.Found(LrcParser.plain(remote.plain), false, "LRCLIB")
+            }
             else -> LyricsResult.NotFound
         }
+    }
+
+    /** Нужно ли ещё что-то качать для этого трека (для массовой загрузки). */
+    suspend fun needsFetch(t: TrackEntity): Boolean = withContext(Dispatchers.IO) {
+        if (fileFor(t).exists()) return@withContext false
+        val c = dao.lyrics(t.uri) ?: return@withContext true
+        if (c.instrumental) return@withContext false
+        if (!c.synced.isNullOrBlank() || !c.plain.isNullOrBlank()) return@withContext true
+        System.currentTimeMillis() - c.fetchedAt >= 3L * 24 * 3600 * 1000
     }
 
     /** .lrc рядом с файлом: в папке, добавленной вручную, или по прямому пути (если доступен). */
@@ -110,8 +191,8 @@ class LyricsRepository(
             return runCatching {
                 val single = DocumentFile.fromSingleUri(context, Uri.parse(t.uri)) ?: return null
                 val base = single.name?.substringBeforeLast('.') ?: return null
-                val dir = DocumentFile.fromTreeUri(context, Uri.parse(t.folder)) ?: return null
-                val lrc = dir.findFile("$base.lrc") ?: return null
+                val folder = DocumentFile.fromTreeUri(context, Uri.parse(t.folder)) ?: return null
+                val lrc = folder.findFile("$base.lrc") ?: return null
                 context.contentResolver.openInputStream(lrc.uri)?.bufferedReader()?.use { it.readText() }
             }.getOrNull()
         }
@@ -185,5 +266,50 @@ class LyricsRepository(
         } finally {
             c.disconnect()
         }
+    }
+}
+
+data class BulkProgress(
+    val done: Int,
+    val total: Int,
+    val found: Int,
+    val running: Boolean,
+    val offline: Boolean = false,
+)
+
+/** Массовая загрузка текстов для всей библиотеки — чтобы всё было доступно офлайн. */
+class LyricsBulkDownloader(
+    private val scope: kotlinx.coroutines.CoroutineScope,
+    private val dao: LibraryDao,
+    private val repo: LyricsRepository,
+) {
+    private val _state = kotlinx.coroutines.flow.MutableStateFlow<BulkProgress?>(null)
+    val state: kotlinx.coroutines.flow.StateFlow<BulkProgress?> = _state
+    private var job: kotlinx.coroutines.Job? = null
+
+    fun start() {
+        if (job?.isActive == true) return
+        job = scope.launch(Dispatchers.IO) {
+            _state.value = BulkProgress(0, 0, 0, true)
+            val todo = dao.visibleTracksOnce().filter { repo.needsFetch(it) }
+            var found = 0
+            _state.value = BulkProgress(0, todo.size, 0, true)
+            for ((i, t) in todo.withIndex()) {
+                val r = runCatching { repo.load(t) }.getOrNull()
+                if (r is LyricsResult.Offline) {
+                    _state.value = BulkProgress(i, todo.size, found, running = false, offline = true)
+                    return@launch
+                }
+                if (r is LyricsResult.Found || r is LyricsResult.Instrumental) found++
+                _state.value = BulkProgress(i + 1, todo.size, found, true)
+                kotlinx.coroutines.delay(120)
+            }
+            _state.value = BulkProgress(todo.size, todo.size, found, false)
+        }
+    }
+
+    fun stop() {
+        job?.cancel()
+        _state.value = _state.value?.copy(running = false)
     }
 }

@@ -6,7 +6,8 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
-import androidx.activity.compose.BackHandler
+import androidx.activity.BackEventCompat
+import androidx.activity.compose.PredictiveBackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -15,6 +16,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -114,6 +116,7 @@ import app.lumen.player.ui.theme.LumenTheme
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.coroutines.cancellation.CancellationException
 
 sealed interface Dest {
     data object Home : Dest
@@ -224,6 +227,12 @@ private fun PermissionScreen(onGrant: () -> Unit, toSettings: Boolean) {
 
 // ---------- основной каркас ----------
 
+private const val BACK_NONE = 0
+private const val BACK_SHEET = 1
+private const val BACK_LYRICS = 2
+private const val BACK_PLAYER = 3
+private const val BACK_NAV = 4
+
 private val TAB_ORDER = listOf(Dest.Home, Dest.Library, Dest.Favorites, Dest.Settings)
 
 @Composable
@@ -298,13 +307,43 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
         )
     }
 
-    BackHandler(enabled = timerOpen || queueOpen || playerExpanded || stack.size > 1) {
-        when {
-            timerOpen -> timerOpen = false
-            queueOpen -> queueOpen = false
-            lyricsFull -> lyricsFull = false
-            playerExpanded -> closePlayer()
-            else -> nav.back()
+    // Предиктивный жест «назад» (Android 14+): пока палец тянет от края, видно, куда вернёшься.
+    var backProgress by remember { mutableFloatStateOf(0f) }
+    var backTarget by remember { mutableIntStateOf(BACK_NONE) }
+    var backFromLeft by remember { mutableStateOf(true) }
+    var backKind by remember { mutableIntStateOf(BACK_NONE) }
+    val backShown by animateFloatAsState(
+        backProgress,
+        if (backTarget != BACK_NONE) snap() else spring(dampingRatio = 0.8f, stiffness = 500f),
+        label = "back",
+    )
+    PredictiveBackHandler(enabled = timerOpen || queueOpen || playerExpanded || stack.size > 1) { events ->
+        val target = when {
+            timerOpen || queueOpen -> BACK_SHEET
+            lyricsFull -> BACK_LYRICS
+            playerExpanded -> BACK_PLAYER
+            else -> BACK_NAV
+        }
+        backTarget = target
+        backKind = target
+        try {
+            events.collect { e ->
+                backFromLeft = e.swipeEdge == BackEventCompat.EDGE_LEFT
+                backProgress = e.progress
+                if (target == BACK_PLAYER) expand.snapTo(1f - 0.35f * e.progress)
+            }
+            backTarget = BACK_NONE
+            backProgress = 0f
+            when (target) {
+                BACK_SHEET -> if (timerOpen) timerOpen = false else queueOpen = false
+                BACK_LYRICS -> lyricsFull = false
+                BACK_PLAYER -> closePlayer()
+                else -> nav.back()
+            }
+        } catch (e: CancellationException) {
+            backTarget = BACK_NONE
+            backProgress = 0f
+            if (target == BACK_PLAYER) expand.animateTo(1f, openSpring)
         }
     }
 
@@ -354,6 +393,15 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
             Box(Modifier.fillMaxSize().glassSource(haze)) {
                 AmbientBackground(colors)
                 AnimatedContent(
+                    modifier = Modifier.graphicsLayer {
+                        val pr = if (backKind == BACK_NAV) backShown else 0f
+                        val s = 1f - 0.1f * pr
+                        scaleX = s
+                        scaleY = s
+                        translationX = (if (backFromLeft) 1f else -1f) * pr * size.width * 0.08f
+                        shape = RoundedCornerShape((pr * 32f).coerceAtLeast(0f).dp)
+                        clip = pr > 0.001f
+                    },
                     targetState = stack.last(),
                     transitionSpec = {
                         val dir = navDir
@@ -425,20 +473,36 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
             QueueSheet(
                 vm,
                 onClose = { queueOpen = false },
-                sheetModifier = Modifier.animateEnterExit(
-                    enter = slideInVertically(spring(dampingRatio = 0.85f, stiffness = 420f)) { it },
-                    exit = slideOutVertically(tween(220)) { it },
-                ),
+                sheetModifier = Modifier
+                    .animateEnterExit(
+                        enter = slideInVertically(spring(dampingRatio = 0.85f, stiffness = 420f)) { it },
+                        exit = slideOutVertically(tween(220)) { it },
+                    )
+                    .graphicsLayer {
+                        val pr = if (backKind == BACK_SHEET) backShown else 0f
+                        translationY = pr * size.height * 0.35f
+                        val sc = 1f - 0.05f * pr
+                        scaleX = sc
+                        scaleY = sc
+                    },
             )
         }
         AnimatedVisibility(timerOpen, enter = fadeIn(tween(220)), exit = fadeOut(tween(220))) {
             TimerSheet(
                 vm,
                 onClose = { timerOpen = false },
-                sheetModifier = Modifier.animateEnterExit(
-                    enter = slideInVertically(spring(dampingRatio = 0.85f, stiffness = 420f)) { it },
-                    exit = slideOutVertically(tween(220)) { it },
-                ),
+                sheetModifier = Modifier
+                    .animateEnterExit(
+                        enter = slideInVertically(spring(dampingRatio = 0.85f, stiffness = 420f)) { it },
+                        exit = slideOutVertically(tween(220)) { it },
+                    )
+                    .graphicsLayer {
+                        val pr = if (backKind == BACK_SHEET) backShown else 0f
+                        translationY = pr * size.height * 0.35f
+                        val sc = 1f - 0.05f * pr
+                        scaleX = sc
+                        scaleY = sc
+                    },
             )
         }
     }

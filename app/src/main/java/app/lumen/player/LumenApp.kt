@@ -10,6 +10,7 @@ import androidx.room.Room
 import app.lumen.player.data.LibraryDao
 import app.lumen.player.data.LumenDb
 import app.lumen.player.data.MIGRATION_1_2
+import app.lumen.player.data.LyricsBulkDownloader
 import app.lumen.player.data.LyricsRepository
 import app.lumen.player.data.MediaScanner
 import app.lumen.player.data.Prefs
@@ -44,6 +45,7 @@ class AppGraph(val context: Context) {
     val prefs = Prefs(context)
     val scanner = MediaScanner(context, db.dao(), prefs)
     val lyrics = LyricsRepository(context, db.dao(), prefs)
+    val lyricsBulk = LyricsBulkDownloader(appScope, db.dao(), lyrics)
     val player = PlayerConnection(context)
     val sleepTimer = SleepTimer(appScope, player)
     val eq = EqController(prefs)

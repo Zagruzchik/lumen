@@ -102,11 +102,20 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp) {
     val excluded by vm.excludedFolders.collectAsStateWithLifecycle()
     var showAllFolders by remember { mutableStateOf(false) }
     var exporting by remember { mutableStateOf(false) }
+    val bulk by vm.lyricsBulk.collectAsStateWithLifecycle()
 
     val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
+            // Чтение + запись: запись нужна, чтобы класть .lrc с текстом рядом с треками.
             runCatching {
-                ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                ctx.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                )
+            }.onFailure {
+                runCatching {
+                    ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
             }
             vm.addFolder(uri.toString())
         }
@@ -298,9 +307,52 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp) {
                 Text("Тексты песен", fontSize = 17.sp, fontWeight = FontWeight.Bold)
                 ToggleRow(
                     "Искать тексты онлайн",
-                    "Если рядом с треком нет .lrc, текст подтянется из LRCLIB (бесплатно, без регистрации)",
+                    "Текст ищется сразу при запуске трека: сначала .lrc рядом с файлом, потом LRCLIB. Найденное сохраняется файлом и доступно офлайн",
                     online,
                 ) { vm.setOnlineLyrics(it) }
+                Spacer(Modifier.height(8.dp))
+                val b = bulk
+                when {
+                    b != null && b.running -> {
+                        Text(
+                            if (b.total == 0) "Проверяю библиотеку…" else "Скачиваю тексты: ${b.done} из ${b.total} · найдено ${b.found}",
+                            fontSize = 13.sp,
+                            color = LC.Dim,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        androidx.compose.material3.LinearProgressIndicator(
+                            progress = { if (b.total > 0) b.done.toFloat() / b.total else 0f },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = LocalAccent.current,
+                            trackColor = Color(0x26FFFFFF),
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        PillButton("Остановить", LIcons.Close, { vm.stopLyricsDownload() }, Modifier.fillMaxWidth(), primary = false)
+                    }
+                    else -> {
+                        if (b != null) {
+                            Text(
+                                when {
+                                    b.offline -> "Остановлено: нет сети. Скачано ${b.done} из ${b.total}."
+                                    b.total == 0 -> "Все тексты уже скачаны."
+                                    else -> "Готово: найдено ${b.found} из ${b.total}."
+                                },
+                                fontSize = 13.sp,
+                                color = LC.Dim,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                        }
+                        PillButton(
+                            "Скачать тексты для всей библиотеки",
+                            LIcons.Lyrics,
+                            { if (online) vm.startLyricsDownload() },
+                            Modifier
+                                .fillMaxWidth()
+                                .graphicsLayer { alpha = if (online) 1f else 0.4f },
+                            primary = false,
+                        )
+                    }
+                }
             }
         }
 
@@ -335,7 +387,7 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp) {
         item {
             Card {
                 Text("О приложении", fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                Text("Lumen 0.2.0", fontSize = 14.sp, color = LC.Dim)
+                Text("Lumen 0.3.0", fontSize = 14.sp, color = LC.Dim)
                 Text("Тексты песен: lrclib.net", fontSize = 14.sp, color = LC.Dim)
                 Text("Никакой рекламы и слежки — всё работает на телефоне.", fontSize = 14.sp, color = LC.Dim)
             }

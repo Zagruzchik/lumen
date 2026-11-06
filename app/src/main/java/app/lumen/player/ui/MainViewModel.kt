@@ -244,7 +244,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val t = dao.byUri(id)
             quality.value = withContext(Dispatchers.IO) { readQuality(id, t) }
         }
-        if (lyricsVisible) loadLyrics()
+        // Текст ищем сразу при старте трека — неважно, открыт он или нет.
+        loadLyrics()
+        prefetchNextLyrics()
+    }
+
+    /** Заранее готовим текст следующего трека, чтобы он был и без сети. */
+    private fun prefetchNextLyrics() {
+        val c = conn.controller ?: return
+        val next = c.nextMediaItemIndex
+        if (next < 0 || next >= c.mediaItemCount) return
+        val id = c.getMediaItemAt(next).mediaId
+        g.appScope.launch {
+            val t = dao.byUri(id) ?: return@launch
+            if (g.lyrics.needsFetch(t)) runCatching { g.lyrics.load(t) }
+        }
     }
 
     private fun colorsFrom(bmp: Bitmap): CoverColors {
@@ -338,6 +352,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         skipShort.value = v
         g.rescan()
     }
+
+    val lyricsBulk = g.lyricsBulk.state
+    fun startLyricsDownload() = g.lyricsBulk.start()
+    fun stopLyricsDownload() = g.lyricsBulk.stop()
 
     fun setOnlineLyrics(v: Boolean) {
         g.prefs.onlineLyrics = v
