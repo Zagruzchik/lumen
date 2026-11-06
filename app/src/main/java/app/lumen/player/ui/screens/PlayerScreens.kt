@@ -374,8 +374,10 @@ fun PlayerScreen(
             ) { s ->
                 when (s) {
                     is Stage.CoverStage -> CoverArea(vm, p, accent, s.note, beat)
-                    is Stage.Inline -> InlineLyrics(s.lines, s.synced, position) { onLyricsFull(true) }
-                    is Stage.Full -> LyricsList(
+                    is Stage.Inline -> LyricsBeatFrame(vm, beat, corner = 30.dp) {
+                        InlineLyrics(s.lines, s.synced, position) { onLyricsFull(true) }
+                    }
+                    is Stage.Full -> LyricsBeatFrame(vm, beat, corner = 34.dp) { LyricsList(
                         lines = s.lines,
                         synced = s.synced,
                         position = position,
@@ -383,7 +385,7 @@ fun PlayerScreen(
                         big = true,
                         contentPadding = PaddingValues(start = 6.dp, end = 6.dp, top = 40.dp, bottom = 160.dp),
                         modifier = Modifier.fillMaxSize().fadeEdges(40.dp, 90.dp),
-                    )
+                    ) }
                 }
             }
 
@@ -551,6 +553,64 @@ private fun CoverArea(
             }
         }
     }
+}
+
+/**
+ * Рамка под бит для режима текста: мягкое свечение снизу и сверху, которое
+ * вздрагивает на ударах, и тонкие неоновые волны по контуру области текста.
+ * Слабее, чем вокруг обложки, чтобы не мешать читать.
+ */
+@Composable
+private fun LyricsBeatFrame(
+    vm: MainViewModel,
+    beat: BeatSignal,
+    corner: androidx.compose.ui.unit.Dp,
+    content: @Composable () -> Unit,
+) {
+    val cc by vm.coverColors.collectAsStateWithLifecycle()
+    val spin by rememberInfiniteTransition(label = "lyrSpin").animateFloat(
+        0f, 360f, infiniteRepeatable(tween(16000, easing = androidx.compose.animation.core.LinearEasing)), label = "spin",
+    )
+    Box(
+        Modifier
+            .fillMaxSize()
+            .drawBehind {
+                val lv = beat.level().coerceIn(0f, 1f)
+                // Свечение, «дышащее» от ударов: снизу — тёплым, сверху — акцентом.
+                val r = size.width * 0.75f
+                drawCircle(
+                    Brush.radialGradient(
+                        listOf(cc.accent.copy(alpha = 0.10f + 0.22f * lv), Color.Transparent),
+                        Offset(size.width / 2f, size.height + r * 0.15f),
+                        r,
+                    ),
+                    radius = r,
+                    center = Offset(size.width / 2f, size.height + r * 0.15f),
+                )
+                drawCircle(
+                    Brush.radialGradient(
+                        listOf(cc.a.copy(alpha = 0.06f + 0.14f * lv), Color.Transparent),
+                        Offset(size.width / 2f, -r * 0.2f),
+                        r * 0.8f,
+                    ),
+                    radius = r * 0.8f,
+                    center = Offset(size.width / 2f, -r * 0.2f),
+                )
+                val pad = 2.dp.toPx()
+                drawBeatContour(
+                    contour = RoundRectContour(pad, pad, size.width - pad, size.height - pad, corner.toPx()),
+                    sig = beat,
+                    palette = listOf(cc.a, cc.accent, cc.c, cc.b).map { it.copy(alpha = 0.75f) },
+                    spinDeg = spin,
+                    strokeWidth = 1.8.dp.toPx(),
+                    baseAmp = 0.8.dp.toPx(),
+                    beatAmp = 4.dp.toPx(),
+                    rippleAmp = 6.dp.toPx(),
+                    shockGap = 18.dp.toPx(),
+                )
+            }
+            .padding(6.dp)
+    ) { content() }
 }
 
 private data class TrackKey(val id: String?, val index: Int, val size: Int)
