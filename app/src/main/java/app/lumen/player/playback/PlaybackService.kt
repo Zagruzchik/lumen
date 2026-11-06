@@ -41,7 +41,7 @@ import kotlinx.coroutines.launch
 import java.io.IOException
 import java.util.concurrent.Executors
 
-private const val ACTION_FAVORITE = "lumen.FAVORITE"
+internal const val ACTION_FAVORITE = "lumen.FAVORITE"
 private const val ACTION_SHUFFLE = "lumen.SHUFFLE"
 private val CMD_FAVORITE = SessionCommand(ACTION_FAVORITE, Bundle.EMPTY)
 private val CMD_SHUFFLE = SessionCommand(ACTION_SHUFFLE, Bundle.EMPTY)
@@ -123,6 +123,16 @@ class PlaybackService : MediaSessionService() {
             }
 
             override fun onEvents(player: Player, events: Player.Events) {
+                if (events.containsAny(
+                        Player.EVENT_MEDIA_ITEM_TRANSITION,
+                        Player.EVENT_IS_PLAYING_CHANGED,
+                        Player.EVENT_PLAY_WHEN_READY_CHANGED,
+                        Player.EVENT_MEDIA_METADATA_CHANGED,
+                        Player.EVENT_PLAYBACK_STATE_CHANGED,
+                    )
+                ) {
+                    app.lumen.player.widget.WidgetUpdater.push(this@PlaybackService, player, favorites)
+                }
                 if (events.containsAny(
                         Player.EVENT_MEDIA_ITEM_TRANSITION,
                         Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED,
@@ -220,6 +230,7 @@ class PlaybackService : MediaSessionService() {
             applicationContext.graph.dao.favoriteUris().collect {
                 favorites = it.toHashSet()
                 updateNotificationButtons()
+                exo?.let { p -> app.lumen.player.widget.WidgetUpdater.push(this@PlaybackService, p, favorites) }
             }
         }
     }
@@ -377,6 +388,7 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         finishListen(completedByAuto = false)
+        app.lumen.player.widget.WidgetUpdater.stopped(this)
         crossfader?.release()
         crossfader = null
         applicationContext.graph.eq.release()
