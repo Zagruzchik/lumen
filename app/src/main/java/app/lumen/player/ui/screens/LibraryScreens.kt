@@ -48,6 +48,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -98,27 +101,31 @@ private fun greeting(): String = when (Calendar.getInstance().get(Calendar.HOUR_
 fun HomeScreen(vm: MainViewModel, nav: Nav, actions: TrackActions, bottomPad: Dp, onOpenPlayer: () -> Unit) {
     val tracks by vm.tracks.collectAsStateWithLifecycle()
     val albums by vm.albums.collectAsStateWithLifecycle()
-    val last by vm.lastPlayed.collectAsStateWithLifecycle()
+    val recent by vm.recentAlbums.collectAsStateWithLifecycle()
+    val frequent by vm.frequent.collectAsStateWithLifecycle()
+    val artists by vm.artists.collectAsStateWithLifecycle()
     val query by vm.query.collectAsStateWithLifecycle()
     val results by vm.searchResults.collectAsStateWithLifecycle()
     val favs by vm.favoriteUris.collectAsStateWithLifecycle()
     val p by vm.player.collectAsStateWithLifecycle()
     val scanning by vm.scanning.collectAsStateWithLifecycle()
-    val moon by vm.moonSide.collectAsStateWithLifecycle()
     val colors by vm.coverColors.collectAsStateWithLifecycle()
-    val lovedMode by vm.lovedMode.collectAsStateWithLifecycle()
     var searchOpen by rememberSaveable { mutableStateOf(false) }
+    val forgotten by androidx.compose.runtime.produceState(emptyList<TrackEntity>(), tracks.size) {
+        value = runCatching { vm.forgottenTracks() }.getOrDefault(emptyList())
+    }
+
+    // Обратная сторона луны больше не используется на главной — не даём акценту залипнуть.
+    androidx.compose.runtime.LaunchedEffect(Unit) { vm.setMoonSide(false) }
 
     androidx.activity.compose.BackHandler(enabled = searchOpen) {
         searchOpen = false
         vm.query.value = ""
     }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .padding(top = topInset() + 12.dp, bottom = bottomPad - 8.dp)
-    ) {
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+
+    Column(Modifier.fillMaxSize().padding(top = topInset() + 12.dp)) {
         Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(
@@ -136,51 +143,173 @@ fun HomeScreen(vm: MainViewModel, nav: Nav, actions: TrackActions, bottomPad: Dp
             IconBtn(LIcons.Sliders, "Настройки", { nav.tab(Dest.Settings, null) })
         }
 
-        when {
-            searchOpen -> {
-                SearchField(
-                    query,
-                    { vm.query.value = it },
-                    Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 8.dp),
-                )
-                LazyColumn(Modifier.weight(1f)) {
-                    if (query.isNotBlank() && results.isEmpty()) {
-                        item {
-                            Text(
-                                "Ничего не нашлось",
-                                color = LC.Dim,
-                                modifier = Modifier.fillMaxWidth().padding(32.dp),
-                                textAlign = TextAlign.Center,
+        androidx.compose.animation.AnimatedContent(
+            targetState = when {
+                searchOpen -> 1
+                tracks.isEmpty() -> 2
+                else -> 0
+            },
+            transitionSpec = {
+                androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(320)) togetherWith
+                    androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(220))
+            },
+            label = "homeMode",
+            modifier = Modifier.weight(1f),
+        ) { mode ->
+            when (mode) {
+                1 -> Column(Modifier.fillMaxSize()) {
+                    SearchField(
+                        query,
+                        { vm.query.value = it },
+                        Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 8.dp),
+                    )
+                    LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(bottom = bottomPad)) {
+                        if (query.isNotBlank() && results.isEmpty()) {
+                            item {
+                                Text(
+                                    "Ничего не нашлось",
+                                    color = LC.Dim,
+                                    modifier = Modifier.fillMaxWidth().padding(32.dp),
+                                    textAlign = TextAlign.Center,
+                                )
+                            }
+                        }
+                        itemsIndexed(results, key = { _, t -> "s:" + t.uri }) { i, t ->
+                            TrackRow(t, t.uri == p.currentId, t.uri in favs, actions, onClick = { vm.play(results, i) })
+                        }
+                    }
+                }
+                2 -> Column(Modifier.fillMaxSize().padding(top = 12.dp)) {
+                    EmptyLibrary(scanning, onRescan = { vm.rescan() }, onSettings = { nav.tab(Dest.Settings, null) })
+                }
+                else -> LazyColumn(
+                    Modifier.fillMaxSize(),
+                    state = listState,
+                    contentPadding = PaddingValues(bottom = bottomPad + 8.dp),
+                ) {
+                    // Первый экран: только большая кнопка (и мини-плеер снизу).
+                    item(key = "hero") {
+                        Box(
+                            Modifier
+                                .fillParentMaxHeight()
+                                .fillMaxWidth()
+                                .padding(bottom = bottomPad - 8.dp)
+                        ) {
+                            ListenButton(
+                                vm = vm,
+                                colors = colors,
+                                playing = p.isPlaying,
+                                onClick = {
+                                    if (p.queue.isNotEmpty()) vm.toggle() else vm.playLoved(true)
+                                },
+                                modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
+                            )
+                            ScrollHint(
+                                visible = listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset < 24,
+                                modifier = Modifier.align(Alignment.BottomCenter),
                             )
                         }
                     }
-                    itemsIndexed(results, key = { _, t -> "s:" + t.uri }) { i, t ->
-                        TrackRow(t, t.uri == p.currentId, t.uri in favs, actions, onClick = { vm.play(results, i) })
+                    item(key = "quick") {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            PillButton("Перемешать всё", LIcons.Shuffle, { vm.shuffle(tracks) }, Modifier.weight(1f))
+                            PillButton("Забытое", LIcons.Moon, { vm.playLoved(false) }, Modifier.weight(1f), primary = false)
+                        }
+                    }
+                    if (recent.isNotEmpty()) {
+                        item(key = "recentH") { SectionHeader("Недавно добавленные", "Все") { nav.tab(Dest.Library, 1) } }
+                        item(key = "recent") {
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 20.dp),
+                                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                            ) {
+                                items(recent, key = { "r:" + it.albumKey }) { a ->
+                                    AlbumTile(a, { nav.open(Dest.Album(a.albumKey)) }, Modifier.width(148.dp), coverSize = 148.dp)
+                                }
+                            }
+                        }
+                    }
+                    if (frequent.isNotEmpty()) {
+                        item(key = "freqH") { SectionHeader("Часто слушаю") }
+                        itemsIndexed(frequent.take(6), key = { _, t -> "f:" + t.uri }) { i, t ->
+                            TrackRow(t, t.uri == p.currentId, t.uri in favs, actions, onClick = { vm.play(frequent, i) })
+                        }
+                    }
+                    if (artists.isNotEmpty()) {
+                        item(key = "artH") { SectionHeader("Исполнители", "Все") { nav.tab(Dest.Library, 2) } }
+                        item(key = "art") {
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 20.dp),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            ) {
+                                items(artists.sortedByDescending { it.trackCount }.take(14), key = { "a:" + it.name }) { ar ->
+                                    Column(
+                                        Modifier
+                                            .width(92.dp)
+                                            .clip(RoundedCornerShape(16.dp))
+                                            .clickable { nav.open(Dest.Artist(ar.name)) }
+                                            .padding(vertical = 6.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                    ) {
+                                        Cover(ar.coverUri, Modifier.size(84.dp), corner = 999.dp, sizePx = 192, seed = ar.name)
+                                        Spacer(Modifier.height(8.dp))
+                                        Text(
+                                            ar.name,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            textAlign = TextAlign.Center,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (forgotten.isNotEmpty()) {
+                        item(key = "forgH") { SectionHeader("Давно не слушал") }
+                        itemsIndexed(forgotten, key = { _, t -> "g:" + t.uri }) { i, t ->
+                            TrackRow(t, t.uri == p.currentId, t.uri in favs, actions, onClick = { vm.play(forgotten, i) })
+                        }
                     }
                 }
             }
-            tracks.isEmpty() -> {
-                Spacer(Modifier.height(12.dp))
-                EmptyLibrary(scanning, onRescan = { vm.rescan() }, onSettings = { nav.tab(Dest.Settings, null) })
-            }
-            else -> {
-                Spacer(Modifier.height(4.dp))
-                LovedHero(
-                    vm = vm,
-                    moon = moon,
-                    trackCount = tracks.size,
-                    colors = colors,
-                    active = lovedMode == (if (moon) 2 else 1),
-                    playing = p.isPlaying,
-                    onFlip = { vm.setMoonSide(it) },
-                    onPlay = { most -> vm.playLoved(most) },
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .padding(horizontal = 4.dp),
-                )
-            }
         }
+    }
+}
+
+/** Мягкая подсказка «листай вниз»: стрелка плавно покачивается и гаснет при прокрутке. */
+@Composable
+private fun ScrollHint(visible: Boolean, modifier: Modifier = Modifier) {
+    val alpha by androidx.compose.animation.core.animateFloatAsState(
+        if (visible) 1f else 0f,
+        androidx.compose.animation.core.tween(500),
+        label = "hintA",
+    )
+    val t = androidx.compose.animation.core.rememberInfiniteTransition(label = "hint")
+    val bob by t.animateFloat(
+        0f,
+        1f,
+        androidx.compose.animation.core.infiniteRepeatable(
+            androidx.compose.animation.core.tween(1400, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+            androidx.compose.animation.core.RepeatMode.Reverse,
+        ),
+        label = "bob",
+    )
+    Column(
+        modifier
+            .padding(bottom = 4.dp)
+            .graphicsLayer {
+                this.alpha = alpha
+                translationY = bob * 6.dp.toPx()
+            },
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text("листай вниз", fontSize = 12.sp, color = LC.Dim, letterSpacing = 1.sp)
+        Icon(LIcons.Down, null, Modifier.size(20.dp), tint = LC.Dim)
     }
 }
 

@@ -257,7 +257,7 @@ private fun lyricsNote(r: LyricsResult): String? = when (r) {
     LyricsResult.NotFound -> "Текст не найден"
     LyricsResult.Instrumental -> "Инструментал"
     LyricsResult.Disabled -> "Онлайн-поиск текстов выключен"
-    LyricsResult.Offline -> "Нет сети — текст не загрузился"
+    LyricsResult.Offline -> null
     LyricsResult.Loading -> "Ищу текст…"
     else -> null
 }
@@ -298,6 +298,12 @@ fun PlayerScreen(
         else -> Stage.CoverStage(if (showLyrics) lyricsNote(lyricsRes) else null)
     }
     val isFull = stage is Stage.Full
+    // Пока текст открыт на весь экран — экран не гаснет.
+    val view = androidx.compose.ui.platform.LocalView.current
+    androidx.compose.runtime.DisposableEffect(isFull) {
+        view.keepScreenOn = isFull
+        onDispose { view.keepScreenOn = false }
+    }
 
     var position by remember { mutableLongStateOf(0L) }
     LaunchedEffect(p.currentId, p.isPlaying) {

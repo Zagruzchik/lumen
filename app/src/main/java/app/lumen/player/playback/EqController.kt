@@ -100,21 +100,23 @@ class EqController(private val prefs: Prefs) {
     }
 
     fun setBand(index: Int, level: Int) {
+        if (!prefs.eqEnabled) return
         val e = eq ?: return
         val st = _state.value
         val clamped = level.coerceIn(st.minLevel, st.maxLevel)
         runCatching { e.setBandLevel(index.toShort(), clamped.toShort()) }
         prefs.eqPreset = -1
         prefs.eqLevels = (0 until e.numberOfBands).map { e.getBandLevel(it.toShort()).toInt() }
-        if (!prefs.eqEnabled) setEnabled(true) else publish()
+        publish()
     }
 
     fun usePreset(index: Int) {
+        if (!prefs.eqEnabled) return
         val e = eq ?: return
         runCatching { e.usePreset(index.toShort()) }
         prefs.eqPreset = index
         prefs.eqLevels = (0 until e.numberOfBands).map { e.getBandLevel(it.toShort()).toInt() }
-        if (!prefs.eqEnabled) setEnabled(true) else publish()
+        publish()
     }
 
     fun reset() {

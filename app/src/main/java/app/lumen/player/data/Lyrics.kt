@@ -136,7 +136,7 @@ class LyricsRepository(
         // 3. запись в базе (старые версии хранили текст только там) — переносим в файл
         val cached = dao.lyrics(t.uri)
         if (cached != null && !force) {
-            val fresh = System.currentTimeMillis() - cached.fetchedAt < 3L * 24 * 3600 * 1000
+            val fresh = System.currentTimeMillis() - cached.fetchedAt < 30L * 24 * 3600 * 1000
             when {
                 cached.instrumental -> return LyricsResult.Instrumental
                 !cached.synced.isNullOrBlank() -> {
@@ -182,7 +182,7 @@ class LyricsRepository(
         val c = dao.lyrics(t.uri) ?: return@withContext true
         if (c.instrumental) return@withContext false
         if (!c.synced.isNullOrBlank() || !c.plain.isNullOrBlank()) return@withContext true
-        System.currentTimeMillis() - c.fetchedAt >= 3L * 24 * 3600 * 1000
+        System.currentTimeMillis() - c.fetchedAt >= 30L * 24 * 3600 * 1000
     }
 
     /** .lrc рядом с файлом: в папке, добавленной вручную, или по прямому пути (если доступен). */

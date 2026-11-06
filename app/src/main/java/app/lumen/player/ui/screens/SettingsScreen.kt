@@ -224,9 +224,12 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
                 }
                 if (eq.available) {
                     Spacer(Modifier.height(14.dp))
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.graphicsLayer { alpha = if (eq.enabled) 1f else 0.45f },
+                    ) {
                         itemsIndexed(eq.presets) { i, name ->
-                            LChip(name, eq.enabled && eq.preset == i) { vm.eqPreset(i) }
+                            LChip(name, eq.enabled && eq.preset == i) { if (eq.enabled) vm.eqPreset(i) }
                         }
                     }
                     Spacer(Modifier.height(16.dp))
@@ -237,7 +240,7 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         eq.bands.forEachIndexed { i, b ->
-                            EqBandSlider(b, eq.minLevel, eq.maxLevel, Modifier.weight(1f)) { vm.eqSetBand(i, it) }
+                            EqBandSlider(b, eq.minLevel, eq.maxLevel, Modifier.weight(1f), enabled = eq.enabled) { vm.eqSetBand(i, it) }
                         }
                     }
                     if (eq.bassSupported) {
@@ -252,6 +255,7 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
                             onValueChange = { bass = it },
                             onValueChangeFinished = { vm.eqSetBass(bass.roundToInt()) },
                             valueRange = 0f..1000f,
+                            enabled = eq.enabled,
                             colors = SliderDefaults.colors(
                                 thumbColor = Color.White,
                                 activeTrackColor = LocalAccent.current,
@@ -260,7 +264,17 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
                         )
                     }
                     Spacer(Modifier.height(6.dp))
-                    PillButton("Сбросить", LIcons.Refresh, { vm.eqReset() }, Modifier.fillMaxWidth(), primary = false)
+                    PillButton(
+                        "Сбросить",
+                        LIcons.Refresh,
+                        { if (eq.enabled) vm.eqReset() },
+                        Modifier.fillMaxWidth().graphicsLayer { alpha = if (eq.enabled) 1f else 0.45f },
+                        primary = false,
+                    )
+                    if (!eq.enabled) {
+                        Spacer(Modifier.height(6.dp))
+                        Text("Включи эквалайзер переключателем сверху, чтобы менять настройки.", fontSize = 12.sp, color = LC.Faint)
+                    }
                 }
             }
         }
@@ -488,7 +502,7 @@ private fun freqLabel(hz: Int): String = when {
 
 /** Вертикальный ползунок полосы эквалайзера: тяни вверх/вниз или тапни в нужное место. */
 @Composable
-private fun EqBandSlider(band: EqBand, min: Int, max: Int, modifier: Modifier, onChange: (Int) -> Unit) {
+private fun EqBandSlider(band: EqBand, min: Int, max: Int, modifier: Modifier, enabled: Boolean, onChange: (Int) -> Unit) {
     val accent = LocalAccent.current
     val change by rememberUpdatedState(onChange)
     var local by remember(band.level) { mutableIntStateOf(band.level) }
@@ -509,13 +523,15 @@ private fun EqBandSlider(band: EqBand, min: Int, max: Int, modifier: Modifier, o
             Modifier
                 .width(36.dp)
                 .height(150.dp)
-                .pointerInput(min, max) {
+                .pointerInput(min, max, enabled) {
+                    if (!enabled) return@pointerInput
                     detectTapGestures { pos ->
                         local = levelAt(pos.y, size.height.toFloat())
                         change(local)
                     }
                 }
-                .pointerInput(min, max) {
+                .pointerInput(min, max, enabled) {
+                    if (!enabled) return@pointerInput
                     detectVerticalDragGestures(onDragEnd = { change(local) }) { c, _ ->
                         c.consume()
                         val l = levelAt(c.position.y, size.height.toFloat())

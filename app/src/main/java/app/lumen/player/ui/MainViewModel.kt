@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -200,13 +201,35 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val c = conn.controller ?: return
         if (c.mediaItemCount > 0) return
         val uris = g.prefs.queue
-        if (uris.isEmpty()) return
+        if (uris.isEmpty()) {
+            prepareDefaultSession()
+            return
+        }
         val found = uris.chunked(500).flatMap { dao.byUris(it) }.associateBy { it.uri }
         val ordered = uris.mapNotNull { found[it] }
-        if (ordered.isEmpty()) return
+        if (ordered.isEmpty()) {
+            prepareDefaultSession()
+            return
+        }
         val savedCurrent = uris.getOrNull(g.prefs.queueIndex)
         val idx = ordered.indexOfFirst { it.uri == savedCurrent }.coerceAtLeast(0)
         conn.restore(ordered, idx, g.prefs.queuePosition)
+    }
+
+    /**
+     * Первый запуск или пустая история: сразу готовим «Самое любимое» на паузе,
+     * чтобы мини-плеер и музыкальная сессия (уведомление, экран блокировки) были с самого начала.
+     */
+    private suspend fun prepareDefaultSession() {
+        val c = conn.controller ?: return
+        val withTracks = kotlinx.coroutines.withTimeoutOrNull(60_000) {
+            tracks.first { it.isNotEmpty() }
+        } ?: return
+        if (c.mediaItemCount > 0 || withTracks.isEmpty()) return
+        val list = dao.mostLoved()
+        if (list.isEmpty()) return
+        lovedMode.value = 1
+        conn.restore(list, 0, 0L)
     }
 
     fun saveQueue() {
@@ -521,6 +544,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (list.isNotEmpty()) conn.playTracks(list, 0, shuffle = false)
         }
     }
+
+    /** Треки, которые давно (или никогда) не звучали — для раздела на главной. */
+    suspend fun forgottenTracks(): List<TrackEntity> = withContext(Dispatchers.IO) { dao.leastLoved().take(8) }
 
     fun seekAndPlay(ms: Long) {
         conn.seekTo(ms)
