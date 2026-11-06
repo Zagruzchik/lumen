@@ -104,6 +104,7 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
     var exporting by remember { mutableStateOf(false) }
     val bulk by vm.lyricsBulk.collectAsStateWithLifecycle()
     val flashes by vm.beatFlashes.collectAsStateWithLifecycle()
+    val intensity by vm.beatIntensity.collectAsStateWithLifecycle()
     var importing by remember { mutableStateOf(false) }
     val importFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -183,6 +184,26 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
                     "Подсветка и обложка пульсируют в такт ударам. Ритм считается один раз и сохраняется — дальше вспышки начинаются мгновенно",
                     flashes,
                 ) { vm.setBeatFlashes(it) }
+                if (flashes) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Сила вспышек", fontSize = 15.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                        Text("${(intensity * 100).roundToInt()}%", fontSize = 14.sp, color = LocalAccent.current, fontWeight = FontWeight.SemiBold)
+                    }
+                    var local by remember(intensity) { mutableFloatStateOf(intensity) }
+                    Slider(
+                        value = local,
+                        onValueChange = {
+                            local = it
+                            vm.setBeatIntensity(it)
+                        },
+                        valueRange = 0.1f..1f,
+                        colors = SliderDefaults.colors(
+                            thumbColor = Color.White,
+                            activeTrackColor = LocalAccent.current,
+                            inactiveTrackColor = Color(0x26FFFFFF),
+                        ),
+                    )
+                }
             }
         }
 

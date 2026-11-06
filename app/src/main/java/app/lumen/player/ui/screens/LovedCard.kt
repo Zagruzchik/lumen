@@ -240,8 +240,8 @@ private fun NeonFace(
                     topLeft = tl,
                     size = panelSize,
                     cornerRadius = corner,
-                    alpha = (0.05f * (6 - i)) * (0.55f + 0.9f * l + 0.15f * breath),
-                    style = Stroke(width = (2f + i * (5f + 7f * l)).dp.toPx()),
+                    alpha = (0.05f * (6 - i)) * (0.55f + 0.5f * l + 0.15f * breath),
+                    style = Stroke(width = (2f + i * (5f + 3f * l)).dp.toPx()),
                 )
             }
             // Тёмное «стекло» внутри.
@@ -249,7 +249,7 @@ private fun NeonFace(
             // Цветной туман внутри панели.
             val fog = Offset(size.width / 2f, orbCenterY.toPx())
             drawRoundRect(
-                Brush.radialGradient(listOf(acc.copy(alpha = 0.22f + 0.25f * l), Color.Transparent), fog, size.maxDimension * 0.7f),
+                Brush.radialGradient(listOf(acc.copy(alpha = 0.22f + 0.12f * l), Color.Transparent), fog, size.maxDimension * 0.7f),
                 topLeft = tl,
                 size = panelSize,
                 cornerRadius = corner,
@@ -266,14 +266,14 @@ private fun NeonFace(
                 topLeft = tl,
                 size = panelSize,
                 cornerRadius = corner,
-                alpha = 0.85f + 0.15f * l,
-                style = Stroke(width = (2.5f + 1.5f * l).dp.toPx()),
+                alpha = 0.88f + 0.12f * l,
+                style = Stroke(width = (2.5f + 0.8f * l).dp.toPx()),
             )
 
             // Шар в центре.
-            val R = min(size.width, size.height) * 0.24f * (1f + 0.11f * l + 0.03f * breath)
+            val R = min(size.width, size.height) * 0.24f * (1f + 0.05f * l + 0.03f * breath)
             drawCircle(
-                Brush.radialGradient(listOf(acc.copy(alpha = 0.35f + 0.45f * l), Color.Transparent), fog, R * 2.4f),
+                Brush.radialGradient(listOf(acc.copy(alpha = 0.3f + 0.22f * l), Color.Transparent), fog, R * 2.4f),
                 R * 2.4f,
                 fog,
                 blendMode = BlendMode.Plus,
@@ -284,8 +284,8 @@ private fun NeonFace(
                 drawColorOrb(fog, R, ang, a, b, c, acc, l)
             }
             // Кольцо вокруг шара.
-            drawCircle(neon, R * (1.22f + 0.06f * l), fog, alpha = 0.55f + 0.45f * l, style = Stroke((2f + 2f * l).dp.toPx()))
-            drawCircle(neon, R * (1.45f + 0.18f * l), fog, alpha = 0.18f + 0.4f * l, style = Stroke(1.5.dp.toPx()))
+            drawCircle(neon, R * (1.22f + 0.03f * l), fog, alpha = 0.6f + 0.3f * l, style = Stroke((2f + 1f * l).dp.toPx()))
+            drawCircle(neon, R * (1.45f + 0.08f * l), fog, alpha = 0.18f + 0.22f * l, style = Stroke(1.5.dp.toPx()))
         }
 
         // Значок воспроизведения в центре шара.
@@ -344,8 +344,8 @@ private fun DrawScope.drawColorOrb(c0: Offset, r: Float, ang: Float, a: Color, b
         drawCircle(Brush.radialGradient(listOf(col, col.copy(alpha = 0f)), p, r * 1.05f), r * 1.05f, p)
     }
     drawCircle(
-        Brush.radialGradient(listOf(Color.White.copy(alpha = 0.55f + 0.4f * l), acc.copy(alpha = 0.6f), Color.Transparent), c0, r * (0.62f + 0.25f * l)),
-        r * (0.62f + 0.25f * l),
+        Brush.radialGradient(listOf(Color.White.copy(alpha = 0.55f + 0.2f * l), acc.copy(alpha = 0.6f), Color.Transparent), c0, r * (0.62f + 0.12f * l)),
+        r * (0.62f + 0.12f * l),
         c0,
         blendMode = BlendMode.Plus,
     )

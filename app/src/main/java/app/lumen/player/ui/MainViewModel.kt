@@ -466,6 +466,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var beatsJob: Job? = null
     private var beatsPrefetch: Job? = null
 
+    val beatIntensity = MutableStateFlow(g.prefs.beatIntensity)
+    fun setBeatIntensity(v: Float) {
+        g.prefs.beatIntensity = v
+        beatIntensity.value = v
+    }
+
     fun setBeatFlashes(v: Boolean) {
         g.prefs.beatFlashes = v
         beatFlashes.value = v

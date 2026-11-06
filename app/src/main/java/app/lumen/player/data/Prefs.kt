@@ -52,6 +52,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("beatFlashes", true)
         set(v) = sp.edit().putBoolean("beatFlashes", v).apply()
 
+    /** Сила вспышек под бит, 0..1. */
+    var beatIntensity: Float
+        get() = sp.getFloat("beatIntensity", 0.5f)
+        set(v) = sp.edit().putFloat("beatIntensity", v).apply()
+
     var queue: List<String>
         get() = sp.getString("queue", "").orEmpty().split('\n').filter { it.isNotBlank() }
         set(v) = sp.edit().putString("queue", v.joinToString("\n")).apply()

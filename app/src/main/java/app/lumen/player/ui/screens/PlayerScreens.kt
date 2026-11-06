@@ -179,8 +179,8 @@ private fun BeatFlashLayer(level: androidx.compose.runtime.MutableFloatState, ac
         val h = size.height
         val burstC = Offset(w / 2f, h * 0.36f)
         drawCircle(
-            Brush.radialGradient(listOf(accent.copy(alpha = 0.5f * l), Color.Transparent), burstC, w * (0.75f + 0.25f * l)),
-            radius = w * (0.75f + 0.25f * l),
+            Brush.radialGradient(listOf(accent.copy(alpha = 0.32f * l), Color.Transparent), burstC, w * (0.75f + 0.15f * l)),
+            radius = w * (0.75f + 0.15f * l),
             center = burstC,
             blendMode = BlendMode.Plus,
         )
@@ -188,7 +188,7 @@ private fun BeatFlashLayer(level: androidx.compose.runtime.MutableFloatState, ac
             Brush.radialGradient(
                 0f to Color.Transparent,
                 0.62f to Color.Transparent,
-                1f to accent.copy(alpha = 0.55f * l),
+                1f to accent.copy(alpha = 0.32f * l),
                 center = Offset(w / 2f, h / 2f),
                 radius = kotlin.math.max(w, h) * 0.72f,
             ),
@@ -497,9 +497,9 @@ private fun CoverArea(
                     val r = size.minDimension * 0.78f
                     drawCircle(
                         Brush.radialGradient(
-                            listOf(accent.copy(alpha = (glow + 0.55f * beatLevel.floatValue).coerceAtMost(1f)), Color.Transparent),
+                            listOf(accent.copy(alpha = (glow + 0.35f * beatLevel.floatValue).coerceAtMost(1f)), Color.Transparent),
                             c,
-                            r * (1f + 0.12f * beatLevel.floatValue),
+                            r * (1f + 0.07f * beatLevel.floatValue),
                         ),
                         radius = r,
                         center = c,
@@ -512,7 +512,7 @@ private fun CoverArea(
                     .fillMaxSize()
                     .graphicsLayer {
                         translationX = coverX
-                        val beat = 1f + 0.035f * beatLevel.floatValue
+                        val beat = 1f + 0.02f * beatLevel.floatValue
                         scaleX = beat
                         scaleY = beat
                         rotationZ = coverX / 40f

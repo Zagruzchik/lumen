@@ -21,7 +21,8 @@ fun rememberBeatLevel(vm: MainViewModel): MutableFloatState {
     val beats by vm.beats.collectAsStateWithLifecycle()
     val flashesOn by vm.beatFlashes.collectAsStateWithLifecycle()
     val p by vm.player.collectAsStateWithLifecycle()
-    LaunchedEffect(beats, p.isPlaying, flashesOn) {
+    val intensity by vm.beatIntensity.collectAsStateWithLifecycle()
+    LaunchedEffect(beats, p.isPlaying, flashesOn, intensity) {
         val b = beats
         if (b == null || !flashesOn || b.size == 0) {
             level.floatValue = 0f
@@ -43,7 +44,7 @@ fun rememberBeatLevel(vm: MainViewModel): MutableFloatState {
                 var lvl = 0f
                 if (i >= 0) {
                     val dt = (pos - b.times[i]).toFloat()
-                    if (dt < 700f) lvl = b.strengths[i] * exp(-dt / 170f)
+                    if (dt < 700f) lvl = b.strengths[i] * exp(-dt / 170f) * intensity
                 }
                 level.floatValue = if (playing) lvl else level.floatValue * 0.85f
             }
