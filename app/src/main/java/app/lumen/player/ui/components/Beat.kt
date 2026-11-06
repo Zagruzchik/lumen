@@ -198,7 +198,8 @@ fun DrawScope.drawBeatContour(
     shockGap: Float,
     samples: Int = 260,
 ) {
-    val tSec = sig.timeMs / 1000f
+    // Остаток от часа: Float от «времени с включения телефона» терял точность, и волны шли ступеньками.
+    val tSec = (sig.timeMs % 3_600_000L) / 1000f
     val lvl = sig.level()
     val ang = spinDeg * PI.toFloat() / 180f
     val rr = size.maxDimension * 0.6f

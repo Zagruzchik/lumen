@@ -90,8 +90,15 @@ fun ListenButton(
     val spin by t.animateFloat(0f, 360f, infiniteRepeatable(tween(16000, easing = LinearEasing)), label = "spin")
     val breath by t.animateFloat(0f, 1f, infiniteRepeatable(tween(3400, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "breath")
     val ringPhase by t.animateFloat(0f, 1f, infiniteRepeatable(tween(4200, easing = LinearEasing)), label = "rings")
-    val shimmer by t.animateFloat(0f, (2 * PI).toFloat(), infiniteRepeatable(tween(7000, easing = LinearEasing)), label = "shimmer")
-    val rayPath = remember { Path() }
+    // Непрерывные часы (секунды): у всех вращений и мерцаний нет «шва» на перезапуске цикла.
+    val clock = remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        val start = androidx.compose.runtime.withFrameNanos { it }
+        while (true) androidx.compose.runtime.withFrameNanos { clock.floatValue = (it - start) / 1_000_000_000f }
+    }
+    // Сглаженная сила удара: быстро нарастает, медленно спадает — без рывков.
+    val smooth = remember { floatArrayOf(0f, 0f) } // [уровень, прошлое время]
+    val rayPaths = remember { List(4) { Path() } }
 
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -120,33 +127,51 @@ fun ListenButton(
             Canvas(Modifier.fillMaxSize()) {
                 val cx = center
                 val R = size.minDimension * 0.40f * (1f + 0.02f * breath)
-                val lv = beat.level().coerceIn(0f, 1f)
+                val now = clock.floatValue
+                val dt = (now - smooth[1]).coerceIn(0f, 0.1f)
+                smooth[1] = now
+                val raw = beat.level().coerceIn(0f, 1f)
+                val tau = if (raw > smooth[0]) 0.06f else 0.35f
+                smooth[0] += (raw - smooth[0]) * (1f - kotlin.math.exp(-dt / tau))
+                val lv = smooth[0]
 
-                // 0. Лучи: мягкие клинья света из-за шара. Медленно вращаются, мерцают
-                // каждый в своём ритме и вытягиваются на ударах.
+                // 0. Лучи: лепестки света из-за шара. Плавно вращаются, каждый медленно
+                // «дышит» длиной в своём ритме, на ударах мягко вытягиваются.
                 val rays = 18
-                val rot = spin * 0.35f
+                val rot = now * 7f // градусов в секунду
                 val pal = listOf(a, acc, c, b)
+                val maxLen = R * 2.35f
+                rayPaths.forEach { it.reset() }
                 for (i in 0 until rays) {
                     val dir = ((i * 360f / rays) + rot) * PI.toFloat() / 180f
-                    val flick = 0.5f + 0.5f * sin(shimmer * (1f + (i % 5) * 0.25f) + i * 2.17f)
-                    val len = R * (1.45f + 0.35f * flick + 0.5f * lv)
-                    val half = (PI.toFloat() / rays) * (0.16f + 0.12f * flick + 0.06f * lv)
-                    rayPath.reset()
-                    rayPath.moveTo(cx.x, cx.y)
-                    rayPath.lineTo(cx.x + cos(dir - half) * len, cx.y + sin(dir - half) * len)
-                    rayPath.lineTo(cx.x + cos(dir + half) * len, cx.y + sin(dir + half) * len)
-                    rayPath.close()
-                    val col = pal[i % pal.size]
-                    val al = (0.16f + 0.16f * flick + 0.3f * lv).coerceAtMost(0.7f)
+                    val breathe = 0.5f + 0.5f * sin(now * (0.55f + (i % 5) * 0.11f) + i * 2.17f)
+                    val len = R * (1.4f + 0.4f * breathe + 0.45f * lv)
+                    val half = (PI.toFloat() / rays) * (0.2f + 0.1f * breathe + 0.05f * lv)
+                    val mid = R * 0.95f
+                    val path = rayPaths[i % 4]
+                    // Лепесток: узкий у центра, шире посередине, остриё на конце.
+                    path.moveTo(cx.x, cx.y)
+                    path.quadraticTo(
+                        cx.x + cos(dir - half) * mid * 1.3f, cx.y + sin(dir - half) * mid * 1.3f,
+                        cx.x + cos(dir) * len, cx.y + sin(dir) * len,
+                    )
+                    path.quadraticTo(
+                        cx.x + cos(dir + half) * mid * 1.3f, cx.y + sin(dir + half) * mid * 1.3f,
+                        cx.x, cx.y,
+                    )
+                    path.close()
+                }
+                val al = 0.34f + 0.26f * lv
+                for (k in 0 until 4) {
+                    val col = pal[k]
                     drawPath(
-                        rayPath,
+                        rayPaths[k],
                         Brush.radialGradient(
                             0f to col.copy(alpha = al),
-                            0.55f to col.copy(alpha = al * 0.55f),
+                            0.5f to col.copy(alpha = al * 0.55f),
                             1f to Color.Transparent,
                             center = cx,
-                            radius = len,
+                            radius = maxLen,
                         ),
                         blendMode = BlendMode.Plus,
                     )
@@ -183,14 +208,13 @@ fun ListenButton(
                     beatAmp = 7.dp.toPx(),
                     rippleAmp = 10.dp.toPx(),
                     shockGap = 30.dp.toPx(),
-                    samples = 220,
+                    samples = 180,
                 )
 
                 // 5. Жидкий шар: тёмная база + цветные облака, которые кружат и перетекают.
                 drawCircle(Color(0xFF0D0915), R, cx)
-                val ang = spin * PI.toFloat() / 180f
                 listOf(a, b, c, acc).forEachIndexed { i, col ->
-                    val ph = ang * (1f + i * 0.27f) + i * 1.57f
+                    val ph = now * (0.39f + i * 0.11f) + i * 1.57f
                     val p = cx + Offset(cos(ph) * R * 0.38f, sin(ph) * R * 0.38f)
                     drawCircle(Brush.radialGradient(listOf(col.copy(alpha = 0.95f), col.copy(alpha = 0f)), p, R * 0.95f), R * 0.95f, p)
                 }
