@@ -16,6 +16,8 @@ import app.lumen.player.data.AlbumRow
 import app.lumen.player.data.Artwork
 import app.lumen.player.data.FavoriteEntity
 import app.lumen.player.data.LyricsResult
+import app.lumen.player.data.RecItem
+import app.lumen.player.data.RecsState
 import app.lumen.player.data.TrackEntity
 import app.lumen.player.graph
 import app.lumen.player.ui.theme.CoverColors
@@ -690,7 +692,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------- рекомендации ----------
 
-    val recs = MutableStateFlow(g.recs.cached() ?: app.lumen.player.data.RecsState())
+    val recs = MutableStateFlow(g.recs.cached() ?: RecsState())
     private var recsJob: Job? = null
 
     /** Обновляем, если кэш старше суток (или по кнопке). Секции появляются по мере готовности. */
@@ -711,7 +713,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun hideRec(item: app.lumen.player.data.RecItem) {
+    fun hideRec(item: RecItem) {
         g.prefs.hiddenRecs = g.prefs.hiddenRecs + item.key
         recs.value = recs.value.copy(
             sections = recs.value.sections.map { s -> s.copy(items = s.items.filter { it.key != item.key }) }.filter { it.items.isNotEmpty() }
