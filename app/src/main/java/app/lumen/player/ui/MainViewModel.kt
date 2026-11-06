@@ -491,6 +491,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var beatsJob: Job? = null
     private var beatsPrefetch: Job? = null
 
+    val crossfadeSec = MutableStateFlow(g.prefs.crossfadeMs / 1000)
+    fun setCrossfadeSec(v: Int) {
+        val c = v.coerceIn(0, 12)
+        g.prefs.crossfadeMs = c * 1000
+        crossfadeSec.value = c
+    }
+
     val beatIntensity = MutableStateFlow(g.prefs.beatIntensity)
     fun setBeatIntensity(v: Float) {
         g.prefs.beatIntensity = v

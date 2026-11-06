@@ -105,6 +105,7 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
     val bulk by vm.lyricsBulk.collectAsStateWithLifecycle()
     val flashes by vm.beatFlashes.collectAsStateWithLifecycle()
     val intensity by vm.beatIntensity.collectAsStateWithLifecycle()
+    val crossfade by vm.crossfadeSec.collectAsStateWithLifecycle()
     var importing by remember { mutableStateOf(false) }
     val importFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -203,6 +204,50 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
                             inactiveTrackColor = Color(0x26FFFFFF),
                         ),
                     )
+                }
+            }
+        }
+
+        // ---------- кроссфейд ----------
+        item {
+            Card {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Кроссфейд", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            "Конец песни плавно перетекает в начало следующей",
+                            fontSize = 13.sp,
+                            color = LC.Dim,
+                        )
+                    }
+                    LSwitch(crossfade > 0) { vm.setCrossfadeSec(if (it) 6 else 0) }
+                }
+                androidx.compose.animation.AnimatedVisibility(
+                    crossfade > 0,
+                    enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(260)) +
+                        androidx.compose.animation.expandVertically(androidx.compose.animation.core.tween(320)),
+                    exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(200)) +
+                        androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(280)),
+                ) {
+                    Column {
+                        var local by remember(crossfade) { mutableFloatStateOf(crossfade.toFloat()) }
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 10.dp)) {
+                            Text("Длительность", fontSize = 15.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                            Text("${local.roundToInt()} с", fontSize = 14.sp, color = LocalAccent.current, fontWeight = FontWeight.SemiBold)
+                        }
+                        Slider(
+                            value = local,
+                            onValueChange = { local = it },
+                            onValueChangeFinished = { vm.setCrossfadeSec(local.roundToInt().coerceAtLeast(1)) },
+                            valueRange = 1f..12f,
+                            steps = 10,
+                            colors = SliderDefaults.colors(
+                                thumbColor = Color.White,
+                                activeTrackColor = LocalAccent.current,
+                                inactiveTrackColor = Color(0x26FFFFFF),
+                            ),
+                        )
+                    }
                 }
             }
         }

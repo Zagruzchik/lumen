@@ -139,6 +139,7 @@ class PlaybackService : MediaSessionService() {
             }
         })
         applicationContext.graph.eq.attach(player.audioSessionId)
+        crossfader = Crossfader(this, player, applicationContext.graph.prefs).also { it.start() }
 
         val openApp = PendingIntent.getActivity(
             this,
@@ -224,6 +225,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     private var exo: ExoPlayer? = null
+    private var crossfader: Crossfader? = null
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var originalOrder: List<MediaItem>? = null
     private var reordering = false
@@ -375,6 +377,8 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         finishListen(completedByAuto = false)
+        crossfader?.release()
+        crossfader = null
         applicationContext.graph.eq.release()
         session?.run {
             player.release()

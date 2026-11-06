@@ -53,6 +53,11 @@ class Prefs(context: Context) {
         set(v) = sp.edit().putBoolean("beatFlashes", v).apply()
 
     /** Сила вспышек под бит, 0..1. */
+    /** Кроссфейд между треками, мс (0 — выключен). */
+    var crossfadeMs: Int
+        get() = sp.getInt("crossfadeMs", 0)
+        set(v) = sp.edit().putInt("crossfadeMs", v).apply()
+
     var beatIntensity: Float
         get() = sp.getFloat("beatIntensity", 0.5f)
         set(v) = sp.edit().putFloat("beatIntensity", v).apply()

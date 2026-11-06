@@ -44,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
@@ -142,12 +143,8 @@ fun HomeScreen(vm: MainViewModel, nav: Nav, actions: TrackActions, bottomPad: Dp
     Column(Modifier.fillMaxSize().padding(top = topInset() + 12.dp)) {
         Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(
-                    "${pluralRu(tracks.size, "трек", "трека", "треков")} · ${pluralRu(albums.size, "альбом", "альбома", "альбомов")}",
-                    fontSize = 13.sp,
-                    color = LC.Dim,
-                )
-                Text(greeting(), fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
+                Text(greeting(), fontSize = 13.sp, color = LC.Dim)
+                LumenBrand(vm, colors)
             }
             IconBtn(if (searchOpen) LIcons.Close else LIcons.Search, if (searchOpen) "Закрыть поиск" else "Поиск", {
                 searchOpen = !searchOpen
@@ -205,11 +202,12 @@ fun HomeScreen(vm: MainViewModel, nav: Nav, actions: TrackActions, bottomPad: Dp
                 ) {
                     // Первый экран: только большая кнопка (и мини-плеер снизу).
                     item(key = "hero") {
-                        Box(
+                        Column(
                             Modifier
                                 .fillParentMaxHeight()
                                 .fillMaxWidth()
-                                .padding(bottom = bottomPad - 8.dp)
+                                .padding(bottom = bottomPad - 8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             ListenButton(
                                 vm = vm,
@@ -218,12 +216,19 @@ fun HomeScreen(vm: MainViewModel, nav: Nav, actions: TrackActions, bottomPad: Dp
                                 onClick = {
                                     if (p.queue.isNotEmpty()) vm.toggle() else vm.playLoved(true)
                                 },
-                                modifier = Modifier.fillMaxSize(),
+                                modifier = Modifier.weight(1f).fillMaxWidth(),
                             )
+                            Text(
+                                "${pluralRu(tracks.size, "трек", "трека", "треков")}  ·  ${pluralRu(albums.size, "альбом", "альбома", "альбомов")}",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = LC.Text.copy(alpha = 0.72f),
+                                letterSpacing = 0.4.sp,
+                            )
+                            Spacer(Modifier.height(6.dp))
                             ScrollHint(
                                 visible = listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset < 24,
                                 onClick = { floors.goTo(1) },
-                                modifier = Modifier.align(Alignment.BottomCenter),
                             )
                         }
                     }
@@ -893,6 +898,79 @@ private class HomeFloors(
 
         override suspend fun onPreFling(available: androidx.compose.ui.unit.Velocity): androidx.compose.ui.unit.Velocity {
             return if (animating || list.firstVisibleItemIndex == 0) available else androidx.compose.ui.unit.Velocity.Zero
+        }
+    }
+}
+
+
+/**
+ * «lumen by CheKavo». CheKavo — переливающийся градиент из цветов обложки
+ * с мягким неоновым ореолом; на ударах слегка вздрагивает и вспыхивает.
+ */
+@Composable
+private fun LumenBrand(vm: MainViewModel, colors: app.lumen.player.ui.theme.CoverColors) {
+    val beat = app.lumen.player.ui.components.rememberBeatSignal(vm)
+    val a by androidx.compose.animation.animateColorAsState(colors.a, androidx.compose.animation.core.tween(900), label = "ba")
+    val c by androidx.compose.animation.animateColorAsState(colors.c, androidx.compose.animation.core.tween(900), label = "bc")
+    val acc by androidx.compose.animation.animateColorAsState(colors.accent, androidx.compose.animation.core.tween(900), label = "bacc")
+    val t = androidx.compose.animation.core.rememberInfiniteTransition(label = "brand")
+    val shift by t.animateFloat(
+        0f,
+        1f,
+        androidx.compose.animation.core.infiniteRepeatable(
+            androidx.compose.animation.core.tween(5200, easing = androidx.compose.animation.core.LinearEasing),
+        ),
+        label = "shift",
+    )
+    Row(verticalAlignment = Alignment.Bottom) {
+        Text("lumen", fontSize = 27.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.5).sp)
+        Text(
+            " by ",
+            fontSize = 14.sp,
+            color = LC.Dim,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.padding(bottom = 4.dp),
+        )
+        Box(
+            Modifier
+                .graphicsLayer {
+                    val lv = beat.level().coerceIn(0f, 1f)
+                    val sc = 1f + 0.07f * lv
+                    scaleX = sc
+                    scaleY = sc
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.6f)
+                }
+                .drawBehind {
+                    val lv = beat.level().coerceIn(0f, 1f)
+                    val r = size.width * 0.7f
+                    drawCircle(
+                        Brush.radialGradient(
+                            listOf(acc.copy(alpha = 0.16f + 0.3f * lv), Color.Transparent),
+                            center,
+                            r,
+                        ),
+                        radius = r,
+                        center = center,
+                    )
+                }
+        ) {
+            val w = 520f
+            val x0 = -w + shift * w * 2f
+            Text(
+                "CheKavo",
+                fontSize = 27.sp,
+                fontWeight = FontWeight.Black,
+                letterSpacing = (-0.3).sp,
+                style = TextStyle(
+                    brush = Brush.linearGradient(
+                        listOf(acc, a, Color.White, c, acc),
+                        start = androidx.compose.ui.geometry.Offset(x0, 0f),
+                        end = androidx.compose.ui.geometry.Offset(x0 + w, 60f),
+                        tileMode = androidx.compose.ui.graphics.TileMode.Mirror,
+                    ),
+                    shadow = androidx.compose.ui.graphics.Shadow(acc.copy(alpha = 0.55f), blurRadius = 18f),
+                ),
+            )
         }
     }
 }
