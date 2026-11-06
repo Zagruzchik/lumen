@@ -79,6 +79,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -566,6 +567,18 @@ private fun MiniSkip(icon: androidx.compose.ui.graphics.vector.ImageVector, labe
 }
 
 @Composable
+private fun MiniInfo(id: String, title: String, artist: String, big: Float, modifier: Modifier = Modifier) {
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Cover(id, Modifier.size((48f + 16f * big).dp), corner = (13f + 3f * big).dp, sizePx = 192)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = (15f + 1f * big).sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(artist, fontSize = 13.sp, color = LC.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
 private fun MiniPlayer(
     vm: MainViewModel,
     p: PlayerState,
@@ -587,10 +600,48 @@ private fun MiniPlayer(
             delay(500)
         }
     }
-    var dragX by remember { mutableFloatStateOf(0f) }
-    val shownX by animateFloatAsState(dragX, spring(dampingRatio = 0.75f), label = "miniX")
     val id = p.currentId ?: return
     val fav = id in favs
+
+    // ---- карусель треков: текущий едет за пальцем, соседний выезжает следом ----
+    val scope = rememberCoroutineScope()
+    val off = remember { androidx.compose.animation.core.Animatable(0f) }
+    var areaW by remember { mutableFloatStateOf(1f) }
+    var committed by remember { mutableStateOf(false) }
+    var shown by remember { mutableStateOf(id to p.index) }
+    val qs = p.queue.size
+    val loop = p.repeat == androidx.media3.common.Player.REPEAT_MODE_ALL
+    fun neighbor(d: Int): app.lumen.player.playback.QueueEntry? {
+        if (qs == 0) return null
+        var i = p.index + d
+        if (i < 0 || i >= qs) {
+            if (!loop || qs < 2) return null
+            i = (i + qs) % qs
+        }
+        return p.queue.getOrNull(i)
+    }
+    val prevE = neighbor(-1)
+    val nextE = neighbor(1)
+
+    LaunchedEffect(id) {
+        val (oldId, oldIdx) = shown
+        if (oldId == id) return@LaunchedEffect
+        shown = id to p.index
+        if (committed) {
+            committed = false
+            off.snapTo(0f)
+        } else {
+            // Трек сменился кнопкой/из уведомления — показываем ту же карусель.
+            val d = when {
+                p.index == oldIdx + 1 || (oldIdx == qs - 1 && p.index == 0) -> 1
+                p.index == oldIdx - 1 || (oldIdx == 0 && p.index == qs - 1) -> -1
+                p.index > oldIdx -> 1
+                else -> -1
+            }
+            off.snapTo(d * areaW)
+            off.animateTo(0f, spring(dampingRatio = 0.86f, stiffness = 260f))
+        }
+    }
 
     Box(
         modifier
@@ -607,54 +658,82 @@ private fun MiniPlayer(
                 state = rememberDraggableState { onDrag(it) },
                 onDragStopped = { onDragEnd(it) },
             )
-            .pointerInput(Unit) {
+            .pointerInput(prevE?.mediaId, nextE?.mediaId) {
+                val tracker = androidx.compose.ui.input.pointer.util.VelocityTracker()
                 detectHorizontalDragGestures(
-                    onDragEnd = {
-                        if (dragX < -120f) vm.next() else if (dragX > 120f) vm.previous()
-                        dragX = 0f
+                    onDragStart = {
+                        tracker.resetTracking()
+                        scope.launch { off.stop() }
                     },
-                    onDragCancel = { dragX = 0f },
+                    onDragEnd = {
+                        val v = tracker.calculateVelocity().x
+                        val x = off.value
+                        val w = areaW
+                        scope.launch {
+                            val toNext = nextE != null && (x < -w * 0.32f || (v < -900f && x < 0f))
+                            val toPrev = prevE != null && (x > w * 0.32f || (v > 900f && x > 0f))
+                            when {
+                                toNext -> {
+                                    off.animateTo(-w, spring(dampingRatio = 1f, stiffness = 380f), initialVelocity = v.coerceIn(-6000f, 0f))
+                                    committed = true
+                                    vm.nextItem()
+                                    delay(1500)
+                                    if (committed) {
+                                        committed = false
+                                        off.animateTo(0f, spring(dampingRatio = 0.86f))
+                                    }
+                                }
+                                toPrev -> {
+                                    off.animateTo(w, spring(dampingRatio = 1f, stiffness = 380f), initialVelocity = v.coerceIn(0f, 6000f))
+                                    committed = true
+                                    vm.previousItem()
+                                    delay(1500)
+                                    if (committed) {
+                                        committed = false
+                                        off.animateTo(0f, spring(dampingRatio = 0.86f))
+                                    }
+                                }
+                                else -> off.animateTo(0f, spring(dampingRatio = 0.78f, stiffness = 320f), initialVelocity = v)
+                            }
+                        }
+                    },
+                    onDragCancel = { scope.launch { off.animateTo(0f, spring(dampingRatio = 0.78f)) } },
                 ) { change, d ->
                     change.consume()
-                    dragX += d
+                    tracker.addPosition(change.uptimeMillis, change.position)
+                    val cur = off.value
+                    // Если соседа нет — тянется туго, как резинка.
+                    val resist = if ((cur + d < 0f && nextE == null) || (cur + d > 0f && prevE == null)) 0.25f else 1f
+                    scope.launch { off.snapTo((cur + d * resist).coerceIn(-areaW, areaW)) }
                 }
             }
     ) {
         Row(
             Modifier
                 .fillMaxSize()
-                .graphicsLayer {
-                    translationX = shownX * 0.5f
-                    alpha = 1f - (kotlin.math.abs(shownX) / 600f).coerceAtMost(0.5f)
-                }
                 .padding(start = (9f + 3f * big).dp, end = (8f + 2f * big).dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            AnimatedContent(
-                targetState = Triple(id, p.index, p.queue.size),
-                contentKey = { it.first },
-                transitionSpec = {
-                    val a = initialState
-                    val b = targetState
-                    val d = when {
-                        b.second == a.second + 1 || (a.second == b.third - 1 && b.second == 0) -> 1
-                        b.second == a.second - 1 || (a.second == 0 && b.second == b.third - 1) -> -1
-                        b.second > a.second -> 1
-                        else -> -1
-                    }
-                    (slideInHorizontally(spring(dampingRatio = 0.85f, stiffness = 300f)) { w -> d * w / 2 } + fadeIn(tween(260))) togetherWith
-                        (slideOutHorizontally(tween(260)) { w -> -d * w / 2 } + fadeOut(tween(200)))
-                },
-                modifier = Modifier.weight(1f),
-                label = "miniTrack",
-            ) { _ ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Cover(id, Modifier.size((48f + 16f * big).dp), corner = (13f + 3f * big).dp, sizePx = 192)
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(p.title, fontSize = (15f + 1f * big).sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(p.artist, fontSize = 13.sp, color = LC.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .onSizeChanged { areaW = it.width.toFloat().coerceAtLeast(1f) }
+                    .clipToBounds(),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                val o = off.value
+                MiniInfo(id, p.title, p.artist, big, Modifier.graphicsLayer {
+                    translationX = off.value
+                    alpha = 1f - (kotlin.math.abs(off.value) / areaW).coerceIn(0f, 1f) * 0.6f
+                })
+                val nb = if (o < 0f) nextE else if (o > 0f) prevE else null
+                if (nb != null) {
+                    MiniInfo(nb.mediaId, nb.title, nb.artist, big, Modifier.graphicsLayer {
+                        val v = off.value
+                        translationX = if (v < 0f) v + areaW else v - areaW
+                        alpha = 0.4f + 0.6f * (kotlin.math.abs(v) / areaW).coerceIn(0f, 1f)
+                    })
                 }
             }
             IconBtn(

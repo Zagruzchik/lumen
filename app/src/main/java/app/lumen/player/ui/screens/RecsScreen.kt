@@ -256,7 +256,7 @@ private fun rememberRemote(url: String): ImageBitmap? {
 }
 
 @Composable
-private fun RemoteCover(url: String, seed: String, shape: Shape, modifier: Modifier) {
+internal fun RemoteCover(url: String, seed: String, shape: Shape, modifier: Modifier) {
     val bmp = rememberRemote(url)
     val shown by animateFloatAsState(if (bmp != null) 1f else 0f, tween(450), label = "img")
     Box(modifier.clip(shape).background(placeholderBrush(seed))) {

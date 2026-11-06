@@ -174,21 +174,7 @@ fun HomeScreen(vm: MainViewModel, nav: Nav, actions: TrackActions, bottomPad: Dp
                         { vm.query.value = it },
                         Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 8.dp),
                     )
-                    LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(bottom = bottomPad)) {
-                        if (query.isNotBlank() && results.isEmpty()) {
-                            item {
-                                Text(
-                                    "Ничего не нашлось",
-                                    color = LC.Dim,
-                                    modifier = Modifier.fillMaxWidth().padding(32.dp),
-                                    textAlign = TextAlign.Center,
-                                )
-                            }
-                        }
-                        itemsIndexed(results, key = { _, t -> "s:" + t.uri }) { i, t ->
-                            TrackRow(t, t.uri == p.currentId, t.uri in favs, actions, onClick = { vm.play(results, i) })
-                        }
-                    }
+                    SearchResults(vm, query, results, p.currentId, favs, actions, bottomPad, Modifier.weight(1f))
                 }
                 2 -> Column(Modifier.fillMaxSize().padding(top = 12.dp)) {
                     EmptyLibrary(scanning, onRescan = { vm.rescan() }, onSettings = { nav.tab(Dest.Settings, null) })
@@ -971,6 +957,138 @@ private fun LumenBrand(vm: MainViewModel, colors: app.lumen.player.ui.theme.Cove
                     shadow = androidx.compose.ui.graphics.Shadow(acc.copy(alpha = 0.55f), blurRadius = 18f),
                 ),
             )
+        }
+    }
+}
+
+
+/**
+ * Поиск: сначала треки из библиотеки, затем — найденное в сети (Deezer).
+ * Тап по треку из сети — поиск его в интернете. Без запроса показывается история:
+ * треки, которые были включены из поиска.
+ */
+@Composable
+private fun SearchResults(
+    vm: MainViewModel,
+    query: String,
+    results: List<TrackEntity>,
+    currentId: String?,
+    favs: Set<String>,
+    actions: TrackActions,
+    bottomPad: Dp,
+    modifier: Modifier = Modifier,
+) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val history by vm.searchHistory.collectAsStateWithLifecycle()
+    val online by vm.onlineResults.collectAsStateWithLifecycle()
+    val onlineLoading by vm.onlineLoading.collectAsStateWithLifecycle()
+    val onlineError by vm.onlineError.collectAsStateWithLifecycle()
+    val accent = LocalAccent.current
+    val q = query.trim()
+
+    LazyColumn(modifier, contentPadding = PaddingValues(bottom = bottomPad)) {
+        if (q.isEmpty()) {
+            if (history.isEmpty()) {
+                item(key = "hEmpty") {
+                    Column(
+                        Modifier.fillMaxWidth().padding(top = 70.dp, start = 32.dp, end = 32.dp).animateItem(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Icon(LIcons.Search, null, Modifier.size(40.dp), tint = LC.Dim.copy(alpha = 0.5f))
+                        Spacer(Modifier.height(14.dp))
+                        Text("Здесь будет история поиска", color = LC.Dim, fontSize = 16.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
+                    }
+                }
+            } else {
+                item(key = "hHead") { SectionHeader("История поиска", "Очистить") { vm.clearSearchHistory() } }
+                itemsIndexed(history, key = { _, t -> "h:" + t.uri }) { i, t ->
+                    Box(Modifier.animateItem()) {
+                        TrackRow(t, t.uri == currentId, t.uri in favs, actions, onClick = { vm.playFromSearch(history, i) })
+                    }
+                }
+            }
+            return@LazyColumn
+        }
+
+        if (results.isNotEmpty()) {
+            item(key = "lHead") { SectionHeader("В библиотеке") }
+            itemsIndexed(results, key = { _, t -> "s:" + t.uri }) { i, t ->
+                TrackRow(t, t.uri == currentId, t.uri in favs, actions, onClick = { vm.playFromSearch(results, i) })
+            }
+        }
+
+        item(key = "oHead") {
+            Row(Modifier.fillMaxWidth().padding(end = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) { SectionHeader("В сети") }
+                if (onlineLoading) CircularProgressIndicator(Modifier.size(18.dp), color = accent, strokeWidth = 2.dp)
+            }
+        }
+        val list = online
+        when {
+            list == null && !onlineLoading -> {}
+            onlineError && list.isNullOrEmpty() -> item(key = "oErr") {
+                Text(
+                    "Нет связи — показаны только треки из библиотеки",
+                    color = LC.Dim,
+                    fontSize = 14.sp,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                )
+            }
+            list != null && list.isEmpty() && !onlineLoading -> item(key = "oNone") {
+                Text(
+                    "В сети ничего нового не нашлось",
+                    color = LC.Dim,
+                    fontSize = 14.sp,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                )
+            }
+            list != null -> items(list, key = { "o:" + it.key }) { r ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .animateItem()
+                        .clickable(onClickLabel = "Найти в интернете") { searchWeb(ctx, r.query) }
+                        .padding(horizontal = 20.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RemoteCover(r.cover, r.key, RoundedCornerShape(12.dp), Modifier.size(52.dp))
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(r.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            if (r.reason.isNotBlank()) "${r.artist} · ${r.reason}" else r.artist,
+                            fontSize = 13.sp,
+                            color = LC.Dim,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Icon(LIcons.Search, "Найти в интернете", Modifier.size(20.dp), tint = LC.Dim)
+                }
+            }
+        }
+        item(key = "web") {
+            Row(
+                Modifier
+                    .padding(horizontal = 20.dp, vertical = 12.dp)
+                    .fillMaxWidth()
+                    .glass(RoundedCornerShape(18.dp))
+                    .clickable { searchWeb(ctx, q) }
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(LIcons.Search, null, Modifier.size(20.dp), tint = accent)
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    "Искать «$q» в интернете",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
     }
 }

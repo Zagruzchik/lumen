@@ -63,6 +63,11 @@ class Prefs(context: Context) {
         set(v) = sp.edit().putFloat("beatIntensity", v).apply()
 
     /** Рекомендации, которые пользователь скрыл. */
+    /** Треки, включённые из поиска (новые сверху), через перевод строки. */
+    var searchHistory: List<String>
+        get() = sp.getString("searchHistory", "")!!.split('\n').filter { it.isNotBlank() }
+        set(v) = sp.edit().putString("searchHistory", v.joinToString("\n")).apply()
+
     var hiddenRecs: Set<String>
         get() = sp.getStringSet("hiddenRecs", emptySet())?.toSet() ?: emptySet()
         set(v) = sp.edit().putStringSet("hiddenRecs", v).apply()

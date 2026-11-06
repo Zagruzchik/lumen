@@ -134,6 +134,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun toggle() = conn.toggle()
     fun next() = conn.next()
     fun previous() = conn.previous()
+    fun nextItem() = conn.nextItem()
+    fun previousItem() = conn.previousItem()
     fun seek(f: Float) = conn.seekFraction(f)
     fun seekTo(ms: Long) = conn.seekTo(ms)
     fun toggleShuffle() = conn.toggleShuffle()
@@ -726,6 +728,60 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // ---------- рекомендации ----------
 
     val recs = MutableStateFlow(g.recs.cached() ?: RecsState())
+
+    // ---------- поиск в сети и история поиска ----------
+
+    /** null — ещё не искали/нет запроса; пустой список — ничего не нашлось. */
+    val onlineResults = MutableStateFlow<List<RecItem>?>(null)
+    val onlineLoading = MutableStateFlow(false)
+    val onlineError = MutableStateFlow(false)
+    private var onlineJob: Job? = null
+    @Suppress("unused")
+    private val onlineWatcher = Unit.also { watchOnlineSearch() }
+
+    private fun watchOnlineSearch() {
+        viewModelScope.launch {
+            query.debounce(450).distinctUntilChanged().collect { raw ->
+                onlineJob?.cancel()
+                val q = raw.trim()
+                if (q.length < 2) {
+                    onlineResults.value = null
+                    onlineLoading.value = false
+                    onlineError.value = false
+                    return@collect
+                }
+                onlineJob = viewModelScope.launch {
+                    onlineLoading.value = true
+                    onlineError.value = false
+                    val r = runCatching { g.recs.searchTracks(q) }
+                    if (query.value.trim() == q) {
+                        onlineResults.value = r.getOrNull() ?: emptyList()
+                        onlineError.value = r.isFailure
+                        onlineLoading.value = false
+                    }
+                }
+            }
+        }
+    }
+
+    private val historyUris = MutableStateFlow(g.prefs.searchHistory)
+    val searchHistory: StateFlow<List<TrackEntity>> =
+        combine(historyUris, trackIndex) { uris, idx -> uris.mapNotNull { idx[it] } }.state(emptyList())
+
+    /** Включить трек из результатов поиска и запомнить его в истории. */
+    fun playFromSearch(list: List<TrackEntity>, index: Int) {
+        list.getOrNull(index)?.let { t ->
+            val h = (listOf(t.uri) + historyUris.value.filter { it != t.uri }).take(40)
+            historyUris.value = h
+            g.prefs.searchHistory = h
+        }
+        play(list, index)
+    }
+
+    fun clearSearchHistory() {
+        historyUris.value = emptyList()
+        g.prefs.searchHistory = emptyList()
+    }
     private var recsJob: Job? = null
 
     /** Обновляем, если кэш старше суток (или по кнопке). Секции появляются по мере готовности. */

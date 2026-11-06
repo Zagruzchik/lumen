@@ -172,6 +172,8 @@ class PlayerConnection(private val context: Context) {
     fun pause() = controller?.pause()
     fun next() = controller?.seekToNext()
     fun previous() = controller?.seekToPrevious()
+    fun nextItem() = controller?.seekToNextMediaItem()
+    fun previousItem() = controller?.seekToPreviousMediaItem()
 
     fun seekFraction(f: Float) {
         val c = controller ?: return

@@ -256,6 +256,28 @@ class RecommendationsRepository(
         else -> "Альбом"
     }
 
+    /** Поиск треков в Deezer; то, что уже есть в библиотеке, отбрасывается. */
+    suspend fun searchTracks(q: String): List<RecItem> = withContext(Dispatchers.IO) {
+        val local = dao.allTracksOnce().mapTo(HashSet()) { key(it.artist, it.title) }
+        val arr = getArray("/search?q=${URLEncoder.encode(q, "UTF-8")}&limit=30")
+        val seen = HashSet<String>()
+        (0 until arr.length()).mapNotNull { i ->
+            val o = arr.getJSONObject(i)
+            val title = o.optString("title")
+            val artist = o.optJSONObject("artist")?.optString("name").orEmpty()
+            val k = key(artist, title)
+            if (title.isBlank() || k in local || !seen.add(k)) return@mapNotNull null
+            val al = o.optJSONObject("album")
+            RecItem(
+                kind = RecItem.KIND_TRACK,
+                title = title,
+                artist = artist,
+                cover = al?.optString("cover_medium").orEmpty(),
+                reason = al?.optString("title").orEmpty(),
+            )
+        }
+    }
+
     private fun searchArtistId(name: String): Long? {
         val arr = getArray("/search/artist?q=${URLEncoder.encode(name, "UTF-8")}&limit=3")
         if (arr.length() == 0) return null

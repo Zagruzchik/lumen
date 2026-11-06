@@ -125,7 +125,15 @@ fun PillButton(
     Row(
         modifier
             .height(50.dp)
-            .then(if (primary) Modifier.clip(shape).background(accent) else Modifier.glass(shape))
+            .then(
+                if (primary) Modifier.clip(shape).background(accent)
+                // Плотное «матовое стекло»: ничего из фона под кнопкой не просвечивает полосами.
+                else Modifier
+                    .clip(shape)
+                    .background(Brush.verticalGradient(listOf(Color(0xFF2B2534), Color(0xFF1C1823))))
+                    .background(accent.copy(alpha = 0.07f))
+                    .border(1.dp, Color(0x2BFFFFFF), shape)
+            )
             .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 18.dp),
         verticalAlignment = Alignment.CenterVertically,
