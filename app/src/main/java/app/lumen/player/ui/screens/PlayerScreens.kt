@@ -110,6 +110,7 @@ import app.lumen.player.ui.theme.CoverColors
 import app.lumen.player.ui.theme.LC
 import app.lumen.player.ui.theme.LocalAccent
 import kotlinx.coroutines.delay
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
@@ -1457,7 +1458,7 @@ private fun SleepDial(minutes: Int, accent: Color, onMinutes: (Int) -> Unit) {
                         val dy = o.y - size.height / 2f
                         return (Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat() + 90f + 360f) % 360f
                     }
-                    androidx.compose.foundation.gestures.detectDragGestures(
+                    detectDragGestures(
                         onDragStart = { o ->
                             dragging = true
                             last = angleAt(o)
