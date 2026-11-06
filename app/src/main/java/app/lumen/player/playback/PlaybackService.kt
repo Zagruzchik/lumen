@@ -129,6 +129,7 @@ class PlaybackService : MediaSessionService() {
                         Player.EVENT_PLAY_WHEN_READY_CHANGED,
                         Player.EVENT_MEDIA_METADATA_CHANGED,
                         Player.EVENT_PLAYBACK_STATE_CHANGED,
+                        Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED,
                     )
                 ) {
                     app.lumen.player.widget.WidgetUpdater.push(this@PlaybackService, player, favorites)

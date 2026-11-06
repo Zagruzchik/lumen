@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Анимированный эквалайзер для виджета: крутится сам на рабочем столе (через ProgressBar). -->
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt">
+    <aapt:attr name="android:drawable">
+        <vector
+            android:width="24dp"
+            android:height="24dp"
+            android:viewportWidth="24"
+            android:viewportHeight="24">
+            <group android:name="b0" android:pivotY="21">
+                <path android:fillColor="#FFFFFFFF" android:pathData="M3,21V5.5a1.5,1.5 0,0 1,3 0V21z" />
+            </group>
+            <group android:name="b1" android:pivotY="21">
+                <path android:fillColor="#FFFFFFFF" android:pathData="M8.5,21V5.5a1.5,1.5 0,0 1,3 0V21z" />
+            </group>
+            <group android:name="b2" android:pivotY="21">
+                <path android:fillColor="#FFFFFFFF" android:pathData="M14,21V5.5a1.5,1.5 0,0 1,3 0V21z" />
+            </group>
+            <group android:name="b3" android:pivotY="21">
+                <path android:fillColor="#FFFFFFFF" android:pathData="M19.5,21V5.5a1.5,1.5 0,0 1,3 0V21z" />
+            </group>
+        </vector>
+    </aapt:attr>
+    <target android:name="b0">
+        <aapt:attr name="android:animation">
+            <objectAnimator
+                android:duration="430"
+                android:interpolator="@android:interpolator/fast_out_slow_in"
+                android:propertyName="scaleY"
+                android:repeatCount="infinite"
+                android:repeatMode="reverse"
+                android:valueFrom="0.3"
+                android:valueTo="1.0"
+                android:valueType="floatType" />
+        </aapt:attr>
+    </target>
+    <target android:name="b1">
+        <aapt:attr name="android:animation">
+            <objectAnimator
+                android:duration="310"
+                android:interpolator="@android:interpolator/fast_out_slow_in"
+                android:propertyName="scaleY"
+                android:repeatCount="infinite"
+                android:repeatMode="reverse"
+                android:valueFrom="0.55"
+                android:valueTo="0.95"
+                android:valueType="floatType" />
+        </aapt:attr>
+    </target>
+    <target android:name="b2">
+        <aapt:attr name="android:animation">
+            <objectAnimator
+                android:duration="520"
+                android:interpolator="@android:interpolator/fast_out_slow_in"
+                android:propertyName="scaleY"
+                android:repeatCount="infinite"
+                android:repeatMode="reverse"
+                android:valueFrom="0.25"
+                android:valueTo="0.85"
+                android:valueType="floatType" />
+        </aapt:attr>
+    </target>
+    <target android:name="b3">
+        <aapt:attr name="android:animation">
+            <objectAnimator
+                android:duration="370"
+                android:interpolator="@android:interpolator/fast_out_slow_in"
+                android:propertyName="scaleY"
+                android:repeatCount="infinite"
+                android:repeatMode="reverse"
+                android:valueFrom="0.45"
+                android:valueTo="1.0"
+                android:valueType="floatType" />
+        </aapt:attr>
+    </target>
+</animated-vector>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ProgressBar xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/eq"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:indeterminate="true"
+    android:indeterminateDrawable="@drawable/avd_eq"
+    android:indeterminateOnly="true"
+    android:minWidth="0dp"
+    android:minHeight="0dp"
+    android:maxWidth="200dp"
+    android:maxHeight="200dp" />
