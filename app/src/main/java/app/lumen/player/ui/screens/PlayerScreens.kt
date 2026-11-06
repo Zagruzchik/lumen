@@ -114,6 +114,7 @@ import app.lumen.player.ui.theme.CoverColors
 import app.lumen.player.ui.theme.LC
 import app.lumen.player.ui.theme.LocalAccent
 import kotlinx.coroutines.delay
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideInHorizontally
@@ -666,7 +667,15 @@ private fun LyricsList(
     val current = if (synced) lines.indexOfLast { it.timeMs <= position + 250 } else -1
     val listState = rememberLazyListState()
     LaunchedEffect(current) {
-        if (current >= 0 && !listState.isScrollInProgress) {
+        if (current < 0 || listState.isScrollInProgress) return@LaunchedEffect
+        // Плавно подводим текущую строку к «точке чтения» (треть высоты), а не прыгаем к ней.
+        val info = listState.layoutInfo
+        val item = info.visibleItemsInfo.firstOrNull { it.index == current }
+        if (item != null) {
+            val anchor = info.viewportStartOffset + (info.viewportEndOffset - info.viewportStartOffset) * (if (big) 0.36f else 0.3f)
+            val delta = item.offset + item.size / 2f - anchor
+            listState.animateScrollBy(delta, tween(750, easing = FastOutSlowInEasing))
+        } else {
             listState.animateScrollToItem((current - if (big) 2 else 1).coerceAtLeast(0))
         }
     }
@@ -680,10 +689,14 @@ private fun LyricsList(
                     i < current -> Color(0x52F5F4FA)
                     else -> Color(0x99F5F4FA)
                 },
-                tween(300),
+                tween(650, easing = FastOutSlowInEasing),
                 label = "lc",
             )
-            val scale by animateFloatAsState(if (!synced || isCur) 1f else 0.92f, tween(300), label = "ls")
+            val scale by animateFloatAsState(
+                if (!synced || isCur) 1f else 0.94f,
+                spring(dampingRatio = 0.9f, stiffness = 120f),
+                label = "ls",
+            )
             Text(
                 l.text.ifBlank { "♪" },
                 fontSize = when {

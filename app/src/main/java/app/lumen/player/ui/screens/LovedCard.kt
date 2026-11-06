@@ -42,6 +42,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.input.pointer.positionChange
@@ -132,8 +133,10 @@ fun LovedHero(
         }
         val target = base + dir * 180f
         base = target
+        // Без перелёта: пружина не проскакивает за край, и чужая сторона не мелькает даже на резком флике.
+        val v0 = (velocity / width * 180f).coerceIn(-420f, 420f)
         scope.launch {
-            rot.animateTo(target, spring(dampingRatio = 0.78f, stiffness = 260f), initialVelocity = velocity / width * 180f)
+            rot.animateTo(target, spring(dampingRatio = 1f, stiffness = 170f), initialVelocity = v0)
         }
         if (dir != 0f) {
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -145,6 +148,12 @@ fun LovedHero(
     Box(
         modifier
             .onSizeChanged { width = it.width.toFloat().coerceAtLeast(1f) }
+            // Над волной отключаем системный жест «назад» у краёв — иначе быстрый свайп от края его запускает.
+            .systemGestureExclusion { c ->
+                val h = c.size.height.toFloat()
+                val band = minOf(h, 560f)
+                androidx.compose.ui.geometry.Rect(0f, (h - band) / 2f, c.size.width.toFloat(), (h + band) / 2f)
+            }
             .graphicsLayer {
                 val r = rot.value
                 rotationY = r
