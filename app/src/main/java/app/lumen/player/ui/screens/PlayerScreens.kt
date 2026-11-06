@@ -110,6 +110,12 @@ import app.lumen.player.ui.theme.CoverColors
 import app.lumen.player.ui.theme.LC
 import app.lumen.player.ui.theme.LocalAccent
 import kotlinx.coroutines.delay
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.runtime.mutableIntStateOf
@@ -1007,6 +1013,7 @@ private fun QueueList(
     modifier: Modifier,
 ) {
     val accent = LocalAccent.current
+    val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val items = remember { mutableStateListOf<QItem>() }
     var draggingKey by remember { mutableStateOf<String?>(null) }
@@ -1094,17 +1101,21 @@ private fun QueueList(
                         clip = lift > 0.01f
                     }
             ) {
-                // Красная подложка, которая открывается при смахивании вправо.
+                // Красная подложка: открывается со стороны, куда смахиваешь.
+                val removeAt = rowWidth * 0.4f
                 Row(
                     Modifier
                         .matchParentSize()
-                        .background(Color(0xFFC0392B).copy(alpha = (shownSwipe / (rowWidth * 0.35f)).coerceIn(0f, 1f)))
-                        .padding(start = 24.dp),
+                        .background(Color(0xFFC0392B).copy(alpha = (abs(shownSwipe) / removeAt).coerceIn(0f, 1f)))
+                        .padding(horizontal = 24.dp),
                     verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = if (shownSwipe >= 0f) Arrangement.Start else Arrangement.End,
                 ) {
-                    Icon(LIcons.Trash, null, Modifier.size(20.dp), tint = Color.White)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Убрать", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                    if (abs(shownSwipe) > 1f) {
+                        Icon(LIcons.Trash, null, Modifier.size(20.dp), tint = Color.White)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Убрать", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                    }
                 }
                 Row(
                     Modifier
@@ -1113,29 +1124,61 @@ private fun QueueList(
                         .background(if (dragging) Color(0xFF241D2E) else Color(0xFF141019))
                         .background(if (cur) Color(0x14FFFFFF) else Color.Transparent)
                         .pointerInput(q.key) {
-                            detectHorizontalDragGestures(
-                                onDragStart = { swiping = true },
-                                onDragEnd = {
-                                    swiping = false
-                                    if (swipe > rowWidth * 0.35f) {
-                                        swipe = rowWidth
-                                        scope.launch {
-                                            delay(170)
-                                            val idx = items.indexOfFirst { it.key == q.key }
-                                            if (idx >= 0) vm.removeAt(idx)
+                            // Свайп включается только при явно горизонтальном движении.
+                            // Если палец сначала пошёл вертикально — жест отдаётся списку, и он спокойно листается.
+                            val slop = viewConfiguration.touchSlop
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                if (draggingKey != null) return@awaitEachGesture
+                                var totalX = 0f
+                                var totalY = 0f
+                                var locked = false
+                                var passed = false
+                                val tracker = VelocityTracker()
+                                tracker.addPosition(down.uptimeMillis, down.position)
+                                while (true) {
+                                    val ev = awaitPointerEvent()
+                                    val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                                    if (!ch.pressed) break
+                                    if (!locked && ch.isConsumed) break
+                                    val d = ch.positionChange()
+                                    if (!locked) {
+                                        totalX += d.x
+                                        totalY += d.y
+                                        if (abs(totalY) > slop) break
+                                        if (abs(totalX) > slop * 2f && abs(totalX) > abs(totalY) * 2.5f) {
+                                            locked = true
+                                            swiping = true
+                                        } else {
+                                            continue
                                         }
-                                    } else {
+                                    }
+                                    ch.consume()
+                                    tracker.addPosition(ch.uptimeMillis, ch.position)
+                                    swipe += d.x
+                                    val over = abs(swipe) > removeAt
+                                    if (over != passed) {
+                                        passed = over
+                                        if (over) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    }
+                                }
+                                if (!locked) return@awaitEachGesture
+                                swiping = false
+                                val v = tracker.calculateVelocity().x
+                                val fling = abs(v) > 2200f && abs(swipe) > rowWidth * 0.2f && (v > 0f) == (swipe > 0f)
+                                if (abs(swipe) > removeAt || fling) {
+                                    val dir = if (swipe > 0f) 1f else -1f
+                                    swipe = dir * rowWidth
+                                    scope.launch {
+                                        delay(180)
+                                        val idx = keyed(vm.player.value.queue).indexOfFirst { it.key == q.key }
+                                        if (idx >= 0) vm.removeAt(idx) else swipe = 0f
+                                        delay(600)
                                         swipe = 0f
                                     }
-                                },
-                                onDragCancel = {
-                                    swiping = false
+                                } else {
                                     swipe = 0f
-                                },
-                            ) { change, d ->
-                                if (draggingKey != null) return@detectHorizontalDragGestures
-                                change.consume()
-                                swipe = max(0f, swipe + d)
+                                }
                             }
                         }
                         .pointerInput(q.key) {
@@ -1155,7 +1198,7 @@ private fun QueueList(
                                     draggingKey = null
                                     dragOffset = 0f
                                     items.clear()
-                                    items.addAll(keyed(p.queue))
+                                    items.addAll(keyed(vm.player.value.queue))
                                 },
                             ) { change, amount ->
                                 change.consume()

@@ -74,7 +74,17 @@ class PlaybackService : MediaSessionService() {
 
         player.addListener(object : Player.Listener {
             override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
-                applyShuffle(player, shuffleModeEnabled)
+                // Меняем очередь не внутри обработчика события, а следующим шагом главного потока.
+                mainHandler.post {
+                    if (player.shuffleModeEnabled == shuffleModeEnabled) {
+                        try {
+                            applyShuffle(player, shuffleModeEnabled)
+                        } catch (t: Throwable) {
+                            android.util.Log.e("Lumen", "shuffle reorder failed", t)
+                            originalOrder = null
+                        }
+                    }
+                }
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -182,6 +192,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     private var exo: ExoPlayer? = null
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var originalOrder: List<MediaItem>? = null
     private var reordering = false
 
@@ -232,11 +243,17 @@ class PlaybackService : MediaSessionService() {
                 pool.values.forEach { q -> ordered.addAll(q) }
                 target = ordered
             }
-            val ci = target.indexOf(currentItem)
-            if (cur < n - 1) p.removeMediaItems(cur + 1, n)
-            if (cur > 0) p.removeMediaItems(0, cur)
-            if (ci > 0) p.addMediaItems(0, target.subList(0, ci))
-            if (ci < target.size - 1) p.addMediaItems(target.subList(ci + 1, target.size))
+            val ci = target.indexOfFirst { it === currentItem }.takeIf { it >= 0 } ?: target.indexOf(currentItem)
+            if (ci < 0) return
+            val before = ArrayList(target.subList(0, ci))
+            val after = ArrayList(target.subList(ci + 1, target.size))
+            val count = p.mediaItemCount
+            val curNow = p.currentMediaItemIndex
+            if (curNow < 0 || curNow >= count) return
+            if (curNow < count - 1) p.removeMediaItems(curNow + 1, count)
+            if (curNow > 0) p.removeMediaItems(0, curNow)
+            if (before.isNotEmpty()) p.addMediaItems(0, before)
+            if (after.isNotEmpty()) p.addMediaItems(p.mediaItemCount, after)
         } finally {
             reordering = false
         }
