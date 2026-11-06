@@ -42,6 +42,9 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.positionChange
 import kotlin.math.roundToInt
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -120,8 +123,8 @@ fun LovedHero(
 
     fun side(): Float = if ((((base / 180f).roundToInt() % 2) + 2) % 2 == 1) -1f else 1f
 
-    fun settle(velocity: Float) {
-        val delta = rot.value - base
+    fun settle(velocity: Float, current: Float = rot.value) {
+        val delta = current - base
         val dir = when {
             abs(velocity) > 900f -> if (velocity > 0f) 1f else -1f
             abs(delta) > 60f -> if (delta > 0f) 1f else -1f
@@ -153,23 +156,41 @@ fun LovedHero(
                 scaleY = sc
             }
             .pointerInput(Unit) {
-                val tracker = VelocityTracker()
-                var angle = 0f
-                detectHorizontalDragGestures(
-                    onDragStart = {
-                        tracker.resetTracking()
-                        angle = rot.value
-                        scope.launch { rot.stop() }
-                    },
-                    onDragEnd = { settle(side() * tracker.calculateVelocity().x) },
-                    onDragCancel = { settle(0f) },
-                ) { change, d ->
-                    change.consume()
-                    tracker.addPointerInputChange(change)
-                    // На обороте мы смотрим на карточку «сзади» — направление поворота зеркалится.
-                    angle = (angle + side() * d / width * 180f).coerceIn(base - 180f, base + 180f)
-                    val next = angle
-                    scope.launch { rot.snapTo(next) }
+                // Свой жест: скорость считается с самого касания (быстрый флик тоже распознаётся точно),
+                // поворот включается только при явно горизонтальном движении.
+                val slop = viewConfiguration.touchSlop
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val tracker = VelocityTracker()
+                    tracker.addPosition(down.uptimeMillis, down.position)
+                    var totalX = 0f
+                    var totalY = 0f
+                    var locked = false
+                    var angle = rot.value
+                    // На обороте мы смотрим на карточку «сзади» — направление зеркалится.
+                    val dirSign = side()
+                    while (true) {
+                        val ev = awaitPointerEvent()
+                        val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                        tracker.addPosition(ch.uptimeMillis, ch.position)
+                        if (!ch.pressed) break
+                        val d = ch.positionChange()
+                        if (!locked) {
+                            totalX += d.x
+                            totalY += d.y
+                            if (abs(totalY) > slop * 1.5f && abs(totalY) > abs(totalX)) break
+                            if (abs(totalX) > slop) {
+                                locked = true
+                                angle = rot.value
+                                scope.launch { rot.stop() }
+                            } else continue
+                        }
+                        ch.consume()
+                        angle = (angle + dirSign * d.x / width * 180f).coerceIn(base - 180f, base + 180f)
+                        val next = angle
+                        scope.launch { rot.snapTo(next) }
+                    }
+                    if (locked) settle(dirSign * tracker.calculateVelocity().x, angle)
                 }
             }
             .clickable(

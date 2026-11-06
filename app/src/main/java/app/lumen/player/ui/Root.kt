@@ -600,11 +600,32 @@ private fun MiniPlayer(
                 .padding(start = 9.dp, end = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Cover(id, Modifier.size(48.dp), corner = 13.dp, sizePx = 128)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(p.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(p.artist, fontSize = 13.sp, color = LC.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            AnimatedContent(
+                targetState = Triple(id, p.index, p.queue.size),
+                contentKey = { it.first },
+                transitionSpec = {
+                    val a = initialState
+                    val b = targetState
+                    val d = when {
+                        b.second == a.second + 1 || (a.second == b.third - 1 && b.second == 0) -> 1
+                        b.second == a.second - 1 || (a.second == 0 && b.second == b.third - 1) -> -1
+                        b.second > a.second -> 1
+                        else -> -1
+                    }
+                    (slideInHorizontally(spring(dampingRatio = 0.85f, stiffness = 300f)) { w -> d * w / 2 } + fadeIn(tween(260))) togetherWith
+                        (slideOutHorizontally(tween(260)) { w -> -d * w / 2 } + fadeOut(tween(200)))
+                },
+                modifier = Modifier.weight(1f),
+                label = "miniTrack",
+            ) { _ ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Cover(id, Modifier.size(48.dp), corner = 13.dp, sizePx = 128)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(p.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(p.artist, fontSize = 13.sp, color = LC.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
             }
             IconBtn(
                 if (fav) LIcons.Heart else LIcons.HeartOutline,

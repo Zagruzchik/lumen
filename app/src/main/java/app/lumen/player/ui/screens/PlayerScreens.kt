@@ -114,6 +114,9 @@ import app.lumen.player.ui.theme.CoverColors
 import app.lumen.player.ui.theme.LC
 import app.lumen.player.ui.theme.LocalAccent
 import kotlinx.coroutines.delay
+import androidx.compose.ui.input.pointer.util.addPointerInputChange
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Size
@@ -148,6 +151,14 @@ import kotlin.math.min
 /** Размытая обложка на весь экран — фон для плеера. */
 @Composable
 private fun CoverBackdrop(uri: String?, colors: CoverColors) {
+    // Фон плавно перетекает от обложки к обложке.
+    androidx.compose.animation.Crossfade(targetState = uri, animationSpec = tween(800), label = "backdrop") { u ->
+        CoverBackdropLayer(u, colors)
+    }
+}
+
+@Composable
+private fun CoverBackdropLayer(uri: String?, colors: CoverColors) {
     val bg = rememberArtwork(uri, 48)
     Box(Modifier.fillMaxSize().background(Color(0xFF12081A))) {
         if (bg != null) {
@@ -498,38 +509,27 @@ private fun CoverArea(
                     )
                 }
         ) {
-            Cover(
-                p.currentId,
-                Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        translationX = coverX
-                        rotationZ = coverX / 40f
-                        alpha = 1f - min(0.4f, abs(coverX) / 1200f)
-                    }
-                    .border(1.dp, Color(0x2EFFFFFF), RoundedCornerShape(30.dp))
-                    .pointerInput(p.currentId) {
-                        detectHorizontalDragGestures(
-                            onDragStart = { coverDragging = true },
-                            onDragEnd = {
-                                if (coverDrag < -swipeThreshold) vm.next()
-                                else if (coverDrag > swipeThreshold) vm.previous()
-                                coverDragging = false
-                                coverDrag = 0f
-                            },
-                            onDragCancel = {
-                                coverDragging = false
-                                coverDrag = 0f
-                            },
-                        ) { change, d ->
-                            change.consume()
-                            coverDrag += d
-                        }
-                    },
-                corner = 30.dp,
-                sizePx = 1024,
-                seed = p.currentId,
-            )
+            // Карусель: обложка уезжает за пальцем, новая въезжает с другой стороны с пружиной.
+            AnimatedContent(
+                targetState = TrackKey(p.currentId, p.index, p.queue.size),
+                contentKey = { it.id },
+                transitionSpec = {
+                    val d = trackDir(initialState, targetState)
+                    (
+                        slideInHorizontally(spring(dampingRatio = 0.82f, stiffness = 240f)) { w -> d * w } +
+                            fadeIn(tween(280)) +
+                            scaleIn(spring(dampingRatio = 0.8f, stiffness = 240f), initialScale = 0.84f)
+                        ) togetherWith (
+                        slideOutHorizontally(tween(340, easing = FastOutSlowInEasing)) { w -> -d * w } +
+                            fadeOut(tween(300)) +
+                            scaleOut(tween(340, easing = FastOutSlowInEasing), targetScale = 0.84f)
+                        ) using SizeTransform(clip = false)
+                },
+                modifier = Modifier.fillMaxSize(),
+                label = "coverCarousel",
+            ) { key ->
+                SwipeCover(vm, key.id, swipeThreshold)
+            }
             if (note != null) {
                 Box(
                     Modifier
@@ -544,6 +544,81 @@ private fun CoverArea(
             }
         }
     }
+}
+
+private data class TrackKey(val id: String?, val index: Int, val size: Int)
+
+/** Направление смены трека по очереди: +1 — вперёд, -1 — назад, 0 — просто сменить. */
+private fun trackDir(a: TrackKey, b: TrackKey): Int {
+    if (a.id == b.id) return 0
+    val n = b.size
+    return when {
+        b.index == a.index + 1 || (a.index == n - 1 && b.index == 0 && n > 1) -> 1
+        b.index == a.index - 1 || (a.index == 0 && b.index == n - 1 && n > 1) -> -1
+        b.index > a.index -> 1
+        b.index < a.index -> -1
+        else -> 1
+    }
+}
+
+/** Обложка, которую можно смахнуть: тянется за пальцем, на отпускании — переход или мягкий возврат. */
+@Composable
+private fun SwipeCover(vm: MainViewModel, id: String?, threshold: Float) {
+    val scope = rememberCoroutineScope()
+    val offset = remember { androidx.compose.animation.core.Animatable(0f) }
+    Cover(
+        id,
+        Modifier
+            .fillMaxSize()
+            .graphicsLayer {
+                val x = offset.value
+                translationX = x
+                rotationZ = x / 45f
+                val k = (abs(x) / (size.width.coerceAtLeast(1f))).coerceIn(0f, 1f)
+                alpha = 1f - 0.35f * k
+                val sc = 1f - 0.06f * k
+                scaleX = sc
+                scaleY = sc
+            }
+            .border(1.dp, Color(0x2EFFFFFF), RoundedCornerShape(30.dp))
+            .pointerInput(id) {
+                val tracker = VelocityTracker()
+                detectHorizontalDragGestures(
+                    onDragStart = {
+                        tracker.resetTracking()
+                        scope.launch { offset.stop() }
+                    },
+                    onDragEnd = {
+                        val v = tracker.calculateVelocity().x
+                        val x = offset.value
+                        val goNext = x < -threshold || (v < -1200f && x < -24f)
+                        val goPrev = x > threshold || (v > 1200f && x > 24f)
+                        scope.launch {
+                            when {
+                                goNext -> vm.next()
+                                goPrev -> vm.previous()
+                            }
+                            if (goNext || goPrev) {
+                                // Если трек не сменился (например, начало очереди) — мягко возвращаемся.
+                                kotlinx.coroutines.delay(450)
+                            }
+                            offset.animateTo(0f, spring(dampingRatio = 0.72f, stiffness = 300f), initialVelocity = v)
+                        }
+                    },
+                    onDragCancel = {
+                        scope.launch { offset.animateTo(0f, spring(dampingRatio = 0.72f, stiffness = 300f)) }
+                    },
+                ) { change, d ->
+                    change.consume()
+                    tracker.addPointerInputChange(change)
+                    val next = offset.value + d
+                    scope.launch { offset.snapTo(next) }
+                }
+            },
+        corner = 30.dp,
+        sizePx = 1024,
+        seed = id,
+    )
 }
 
 @Composable
@@ -658,20 +733,36 @@ private fun FullControls(
 ) {
     Column(Modifier.fillMaxWidth()) {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            QualityBadges(quality, p.sampleRate)
+            AnimatedContent(
+                targetState = quality,
+                transitionSpec = { fadeIn(tween(400)) togetherWith fadeOut(tween(250)) },
+                label = "quality",
+            ) { q -> QualityBadges(q, p.sampleRate) }
         }
         Spacer(Modifier.height(16.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(p.title, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, modifier = Modifier.basicMarquee())
-                Text(
-                    p.artist,
-                    fontSize = 16.sp,
-                    color = LC.Dim,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.clickable(onClick = onArtist),
-                )
+            AnimatedContent(
+                targetState = TrackKey(p.currentId, p.index, p.queue.size),
+                contentKey = { it.id },
+                transitionSpec = {
+                    val d = trackDir(initialState, targetState)
+                    (slideInHorizontally(tween(360, easing = FastOutSlowInEasing)) { w -> d * w / 4 } + fadeIn(tween(360))) togetherWith
+                        (slideOutHorizontally(tween(260, easing = FastOutSlowInEasing)) { w -> -d * w / 4 } + fadeOut(tween(200)))
+                },
+                modifier = Modifier.weight(1f),
+                label = "titles",
+            ) { _ ->
+                Column {
+                    Text(p.title, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, modifier = Modifier.basicMarquee())
+                    Text(
+                        p.artist,
+                        fontSize = 16.sp,
+                        color = LC.Dim,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.clickable(onClick = onArtist),
+                    )
+                }
             }
             FavButton(p, favs, accent, vm, 48.dp)
         }
