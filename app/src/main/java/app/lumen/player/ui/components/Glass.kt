@@ -95,12 +95,15 @@ fun WavySlider(
         val stroke = 3.5.dp.toPx()
         val wl = 26.dp.toPx()
         val a = 3.5.dp.toPx() * amp
+        // Волна плавно «вырастает» у начала и затухает у ползунка — без рывка и кривого старта.
+        val ramp = wl * 0.75f
         val path = Path().apply {
             moveTo(0f, cy)
             var px = 0f
             while (px < x) {
-                px = min(px + 2f, x)
-                val y = cy + a * sin(((px / wl) - phase) * 2 * PI).toFloat()
+                px = min(px + 1.5f, x)
+                val env = min(1f, px / ramp) * min(1f, (x - px) / ramp)
+                val y = cy + a * env * sin(((px / wl) - phase) * 2 * PI).toFloat()
                 lineTo(px, y)
             }
         }

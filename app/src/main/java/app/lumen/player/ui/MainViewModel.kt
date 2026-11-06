@@ -98,6 +98,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val onlineLyrics = MutableStateFlow(g.prefs.onlineLyrics)
     val hasPermission = MutableStateFlow(false)
     val openPlayerRequest = MutableStateFlow(0)
+    val showLyrics = MutableStateFlow(g.prefs.showLyrics)
+
+    fun toggleShowLyrics() {
+        val v = !showLyrics.value
+        showLyrics.value = v
+        g.prefs.showLyrics = v
+    }
 
     init {
         viewModelScope.launch {
@@ -338,6 +345,89 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun albumOf(t: TrackEntity): AlbumRow? = albums.value.firstOrNull { it.albumKey == t.albumKey }
+
+    // ---------- исключённые папки ----------
+
+    val allFolders = dao.allFolders().state(emptyList())
+    val excludedFolders = dao.excludedFolders().map { it.toHashSet() as Set<String> }.state(emptySet())
+
+    fun setFolderHidden(folder: String, hidden: Boolean) {
+        viewModelScope.launch {
+            if (hidden) dao.addExcluded(listOf(app.lumen.player.data.ExcludedFolder(folder)))
+            else dao.removeExcluded(folder)
+        }
+    }
+
+    // ---------- эквалайзер ----------
+
+    val eq = g.eq.state
+    fun eqSetEnabled(on: Boolean) = g.eq.setEnabled(on)
+    fun eqSetBand(i: Int, level: Int) = g.eq.setBand(i, level)
+    fun eqPreset(i: Int) = g.eq.usePreset(i)
+    fun eqReset() = g.eq.reset()
+    fun eqSetBass(s: Int) = g.eq.setBass(s)
+
+    // ---------- перенос медиатеки на ПК ----------
+
+    /** Экспорт всей медиатеки в JSON: треки с путями и тегами, любимое, статистика, исключения, настройки. */
+    fun exportLibrary(target: Uri, onDone: (Boolean, Int) -> Unit) {
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val tracksAll = dao.visibleTracksOnce()
+                    val favs = dao.allFavorites().associateBy { it.uri }
+                    val plays = dao.allPlays().associateBy { it.uri }
+                    val root = org.json.JSONObject()
+                    root.put("app", "Lumen")
+                    root.put("format", 1)
+                    root.put("appVersion", "0.2.0")
+                    root.put("exportedAt", System.currentTimeMillis())
+                    root.put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
+                    val arr = org.json.JSONArray()
+                    tracksAll.forEach { t ->
+                        val o = org.json.JSONObject()
+                        o.put("path", t.path)
+                        o.put("uri", t.uri)
+                        o.put("title", t.title)
+                        o.put("artist", t.artist)
+                        o.put("album", t.album)
+                        o.put("albumArtist", t.albumArtist)
+                        o.put("trackNo", t.trackNo)
+                        o.put("discNo", t.discNo)
+                        o.put("year", t.year)
+                        o.put("durationMs", t.durationMs)
+                        o.put("mime", t.mime)
+                        o.put("size", t.size)
+                        o.put("bitrate", t.bitrate)
+                        o.put("folder", t.folderName)
+                        o.put("dateAdded", t.dateAdded)
+                        favs[t.uri]?.let { o.put("favoriteAt", it.addedAt) }
+                        plays[t.uri]?.let {
+                            o.put("playCount", it.count)
+                            o.put("lastPlayed", it.lastPlayed)
+                        }
+                        arr.put(o)
+                    }
+                    root.put("tracks", arr)
+                    root.put("excludedFolders", org.json.JSONArray(dao.excludedOnce()))
+                    root.put(
+                        "settings",
+                        org.json.JSONObject()
+                            .put("onlineLyrics", g.prefs.onlineLyrics)
+                            .put("skipShort", g.prefs.skipShort)
+                            .put("eqEnabled", g.prefs.eqEnabled)
+                            .put("eqLevels", org.json.JSONArray(g.prefs.eqLevels))
+                            .put("bassStrength", g.prefs.bassStrength),
+                    )
+                    getApplication<Application>().contentResolver.openOutputStream(target)?.use { out ->
+                        out.write(root.toString(2).toByteArray(Charsets.UTF_8))
+                    } ?: error("no stream")
+                    tracksAll.size
+                }
+            }
+            onDone(result.isSuccess, result.getOrDefault(0))
+        }
+    }
 
     fun album(key: String) = dao.album(key)
     fun albumTracks(key: String) = dao.albumTracks(key)

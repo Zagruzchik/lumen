@@ -44,10 +44,31 @@ class MediaScanner(
                 val known = (ms ?: emptyList()).mapTo(HashSet()) { dedupeKey(it.title, it.artist, it.durationMs) }
                 val saf = runCatching { scanFolders(known) }.getOrNull()
                 if (saf != null) dao.replaceSource(SOURCE_FOLDER, saf)
+                autoExclude(ms.orEmpty() + saf.orEmpty())
             }
         } finally {
             _scanning.value = false
         }
+    }
+
+    private val musicFolders = HashSet<String>()
+    private val nonMusicFolders = HashSet<String>()
+
+    /**
+     * Новые папки с голосовыми, записями звонков, рингтонами и т.п. скрываются сами при первом обнаружении.
+     * Пользователь может вернуть их в настройках — повторно они уже не скроются.
+     */
+    private suspend fun autoExclude(all: List<TrackEntity>) {
+        val seen = prefs.seenFolders
+        val folders = all.map { it.folder }.toSet()
+        val fresh = folders - seen
+        if (fresh.isEmpty()) return
+        val toExclude = fresh.filter { f ->
+            val lower = (f + "/").lowercase()
+            SKIP_PATH_PARTS.any { lower.contains(it) } || (f in nonMusicFolders && f !in musicFolders)
+        }
+        if (toExclude.isNotEmpty()) dao.addExcluded(toExclude.map { ExcludedFolder(it) })
+        prefs.seenFolders = seen + fresh
     }
 
     private fun dedupeKey(title: String, artist: String, durationMs: Long) =
@@ -76,8 +97,12 @@ class MediaScanner(
             cols += "disc_number"
             cols += "bitrate"
         }
-        val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0 AND ${MediaStore.Audio.Media.DURATION} >= ?"
+        cols += MediaStore.Audio.Media.IS_MUSIC
+        // Берём все звуки, а не только «музыку»: лишние папки пользователь исключает сам в настройках.
+        val selection = "${MediaStore.Audio.Media.DURATION} >= ?"
         val out = ArrayList<TrackEntity>()
+        nonMusicFolders.clear()
+        musicFolders.clear()
         context.contentResolver.query(
             MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
             cols.toTypedArray(),
@@ -100,11 +125,12 @@ class MediaScanner(
             val iAlbumArtist = if (modern) c.getColumnIndex("album_artist") else -1
             val iDisc = if (modern) c.getColumnIndex("disc_number") else -1
             val iBitrate = if (modern) c.getColumnIndex("bitrate") else -1
+            val iIsMusic = c.getColumnIndexOrThrow(MediaStore.Audio.Media.IS_MUSIC)
 
             while (c.moveToNext()) {
                 val path = c.getString(iData).orEmpty()
-                val lowerPath = path.lowercase()
-                if (SKIP_PATH_PARTS.any { lowerPath.contains(it) }) continue
+                val parentPath = File(path).parent.orEmpty()
+                if (c.getInt(iIsMusic) != 0) musicFolders.add(parentPath) else nonMusicFolders.add(parentPath)
 
                 val id = c.getLong(iId)
                 val uri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id).toString()

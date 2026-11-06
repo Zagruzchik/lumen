@@ -17,6 +17,32 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("onlineLyrics", true)
         set(v) = sp.edit().putBoolean("onlineLyrics", v).apply()
 
+    var showLyrics: Boolean
+        get() = sp.getBoolean("showLyrics", false)
+        set(v) = sp.edit().putBoolean("showLyrics", v).apply()
+
+    /** Папки, которые сканер уже видел: автоисключение срабатывает только при первом обнаружении. */
+    var seenFolders: Set<String>
+        get() = sp.getStringSet("seenFolders", emptySet())?.toSet() ?: emptySet()
+        set(v) = sp.edit().putStringSet("seenFolders", v).apply()
+
+    var eqEnabled: Boolean
+        get() = sp.getBoolean("eqEnabled", false)
+        set(v) = sp.edit().putBoolean("eqEnabled", v).apply()
+
+    /** Уровни полос эквалайзера в миллибелах через запятую. */
+    var eqLevels: List<Int>
+        get() = sp.getString("eqLevels", "").orEmpty().split(',').mapNotNull { it.trim().toIntOrNull() }
+        set(v) = sp.edit().putString("eqLevels", v.joinToString(",")).apply()
+
+    var eqPreset: Int
+        get() = sp.getInt("eqPreset", -1)
+        set(v) = sp.edit().putInt("eqPreset", v).apply()
+
+    var bassStrength: Int
+        get() = sp.getInt("bassStrength", 0)
+        set(v) = sp.edit().putInt("bassStrength", v).apply()
+
     var queue: List<String>
         get() = sp.getString("queue", "").orEmpty().split('\n').filter { it.isNotBlank() }
         set(v) = sp.edit().putString("queue", v.joinToString("\n")).apply()

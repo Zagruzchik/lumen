@@ -10,6 +10,8 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 const val SOURCE_MEDIASTORE = 0
@@ -56,6 +58,13 @@ data class LyricsEntity(
     val fetchedAt: Long,
 )
 
+@Entity(tableName = "excluded")
+data class ExcludedFolder(@PrimaryKey val folder: String)
+
+/** Трек виден, если его папка не в списке исключений. */
+private const val VISIBLE = "folder NOT IN (SELECT folder FROM excluded)"
+private const val VISIBLE_T = "t.folder NOT IN (SELECT folder FROM excluded)"
+
 data class AlbumRow(
     val albumKey: String,
     val album: String,
@@ -86,13 +95,25 @@ private const val ALBUM_SELECT = """
     SELECT albumKey, album, albumArtist, MAX(year) AS year, COUNT(*) AS trackCount,
            SUM(durationMs) AS durationMs, MIN(uri) AS coverUri, MAX(dateAdded) AS dateAdded,
            MAX(mime) AS mime
-    FROM tracks
+    FROM tracks WHERE $VISIBLE
 """
 
 @Dao
 abstract class LibraryDao {
-    @Query("SELECT * FROM tracks ORDER BY title COLLATE NOCASE")
+    @Query("SELECT * FROM tracks WHERE $VISIBLE ORDER BY title COLLATE NOCASE")
     abstract fun tracks(): Flow<List<TrackEntity>>
+
+    @Query("SELECT * FROM tracks WHERE $VISIBLE ORDER BY albumArtist, album, discNo, trackNo")
+    abstract suspend fun visibleTracksOnce(): List<TrackEntity>
+
+    @Query("SELECT * FROM favorites")
+    abstract suspend fun allFavorites(): List<FavoriteEntity>
+
+    @Query("SELECT * FROM plays")
+    abstract suspend fun allPlays(): List<PlayStatEntity>
+
+    @Query("SELECT folder FROM excluded")
+    abstract suspend fun excludedOnce(): List<String>
 
     @Query("SELECT * FROM tracks WHERE source = :source")
     abstract suspend fun tracksOfSource(source: Int): List<TrackEntity>
@@ -103,47 +124,47 @@ abstract class LibraryDao {
     @Query("$ALBUM_SELECT GROUP BY albumKey ORDER BY dateAdded DESC LIMIT 16")
     abstract fun recentAlbums(): Flow<List<AlbumRow>>
 
-    @Query("$ALBUM_SELECT WHERE albumArtist = :name GROUP BY albumKey ORDER BY year DESC")
+    @Query("$ALBUM_SELECT AND albumArtist = :name GROUP BY albumKey ORDER BY year DESC")
     abstract fun albumsOfArtist(name: String): Flow<List<AlbumRow>>
 
-    @Query("$ALBUM_SELECT WHERE albumKey = :key GROUP BY albumKey")
+    @Query("$ALBUM_SELECT AND albumKey = :key GROUP BY albumKey")
     abstract fun album(key: String): Flow<AlbumRow?>
 
     @Query(
         """SELECT albumArtist AS name, COUNT(DISTINCT albumKey) AS albumCount,
            COUNT(*) AS trackCount, MIN(uri) AS coverUri
-           FROM tracks GROUP BY albumArtist ORDER BY albumArtist COLLATE NOCASE"""
+           FROM tracks WHERE $VISIBLE GROUP BY albumArtist ORDER BY albumArtist COLLATE NOCASE"""
     )
     abstract fun artists(): Flow<List<ArtistRow>>
 
     @Query(
         """SELECT folder, folderName, COUNT(*) AS trackCount, MIN(uri) AS coverUri
-           FROM tracks GROUP BY folder ORDER BY folderName COLLATE NOCASE"""
+           FROM tracks WHERE $VISIBLE GROUP BY folder ORDER BY folderName COLLATE NOCASE"""
     )
     abstract fun folders(): Flow<List<FolderRow>>
 
-    @Query("SELECT * FROM tracks WHERE albumKey = :key ORDER BY discNo, trackNo, title COLLATE NOCASE")
+    @Query("SELECT * FROM tracks WHERE albumKey = :key AND $VISIBLE ORDER BY discNo, trackNo, title COLLATE NOCASE")
     abstract fun albumTracks(key: String): Flow<List<TrackEntity>>
 
-    @Query("SELECT * FROM tracks WHERE albumArtist = :name ORDER BY year DESC, albumKey, discNo, trackNo")
+    @Query("SELECT * FROM tracks WHERE albumArtist = :name AND $VISIBLE ORDER BY year DESC, albumKey, discNo, trackNo")
     abstract fun artistTracks(name: String): Flow<List<TrackEntity>>
 
-    @Query("SELECT * FROM tracks WHERE folder = :folder ORDER BY trackNo, title COLLATE NOCASE")
+    @Query("SELECT * FROM tracks WHERE folder = :folder AND $VISIBLE ORDER BY trackNo, title COLLATE NOCASE")
     abstract fun folderTracks(folder: String): Flow<List<TrackEntity>>
 
     @Query(
         """SELECT t.* FROM tracks t INNER JOIN plays p ON p.uri = t.uri
-           ORDER BY p.count DESC, p.lastPlayed DESC LIMIT 12"""
+           WHERE $VISIBLE_T ORDER BY p.count DESC, p.lastPlayed DESC LIMIT 12"""
     )
     abstract fun frequent(): Flow<List<TrackEntity>>
 
     @Query(
         """SELECT t.* FROM tracks t INNER JOIN plays p ON p.uri = t.uri
-           ORDER BY p.lastPlayed DESC LIMIT 1"""
+           WHERE $VISIBLE_T ORDER BY p.lastPlayed DESC LIMIT 1"""
     )
     abstract fun lastPlayed(): Flow<TrackEntity?>
 
-    @Query("SELECT t.* FROM tracks t INNER JOIN favorites f ON f.uri = t.uri ORDER BY f.addedAt DESC")
+    @Query("SELECT t.* FROM tracks t INNER JOIN favorites f ON f.uri = t.uri WHERE $VISIBLE_T ORDER BY f.addedAt DESC")
     abstract fun favorites(): Flow<List<TrackEntity>>
 
     @Query("SELECT uri FROM favorites")
@@ -166,6 +187,25 @@ abstract class LibraryDao {
         deleteSource(source)
         list.chunked(400).forEach { insertTracks(it) }
     }
+
+    /** Все папки, где нашлись звуки, включая исключённые. */
+    @Query(
+        """SELECT folder, folderName, COUNT(*) AS trackCount, MIN(uri) AS coverUri
+           FROM tracks GROUP BY folder ORDER BY folderName COLLATE NOCASE"""
+    )
+    abstract fun allFolders(): Flow<List<FolderRow>>
+
+    @Query("SELECT DISTINCT folder FROM tracks")
+    abstract suspend fun knownFolders(): List<String>
+
+    @Query("SELECT folder FROM excluded")
+    abstract fun excludedFolders(): Flow<List<String>>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    abstract suspend fun addExcluded(list: List<ExcludedFolder>)
+
+    @Query("DELETE FROM excluded WHERE folder = :folder")
+    abstract suspend fun removeExcluded(folder: String)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     abstract suspend fun addFavorite(f: FavoriteEntity)
@@ -196,10 +236,17 @@ abstract class LibraryDao {
 }
 
 @Database(
-    entities = [TrackEntity::class, FavoriteEntity::class, PlayStatEntity::class, LyricsEntity::class],
-    version = 1,
+    entities = [TrackEntity::class, FavoriteEntity::class, PlayStatEntity::class, LyricsEntity::class, ExcludedFolder::class],
+    version = 2,
     exportSchema = false,
 )
 abstract class LumenDb : RoomDatabase() {
     abstract fun dao(): LibraryDao
+}
+
+/** 1 → 2: таблица исключённых папок. Любимое и статистика сохраняются. */
+val MIGRATION_1_2 = object : Migration(1, 2) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS `excluded` (`folder` TEXT NOT NULL, PRIMARY KEY(`folder`))")
+    }
 }

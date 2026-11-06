@@ -12,21 +12,30 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -37,6 +46,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -46,12 +56,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -61,8 +73,10 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -89,7 +103,6 @@ import app.lumen.player.ui.screens.FavoritesScreen
 import app.lumen.player.ui.screens.FolderScreen
 import app.lumen.player.ui.screens.HomeScreen
 import app.lumen.player.ui.screens.LibraryScreen
-import app.lumen.player.ui.screens.LyricsScreen
 import app.lumen.player.ui.screens.PlayerScreen
 import app.lumen.player.ui.screens.QueueSheet
 import app.lumen.player.ui.screens.SettingsScreen
@@ -100,6 +113,7 @@ import app.lumen.player.ui.theme.LocalAccent
 import app.lumen.player.ui.theme.LumenTheme
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 sealed interface Dest {
     data object Home : Dest
@@ -210,25 +224,73 @@ private fun PermissionScreen(onGrant: () -> Unit, toSettings: Boolean) {
 
 // ---------- основной каркас ----------
 
+private val TAB_ORDER = listOf(Dest.Home, Dest.Library, Dest.Favorites, Dest.Settings)
+
 @Composable
 private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
     val stack = remember { mutableStateListOf<Dest>(Dest.Home) }
     var libTab by rememberSaveable { mutableIntStateOf(0) }
-    var playerOpen by rememberSaveable { mutableStateOf(false) }
-    var lyricsOpen by rememberSaveable { mutableStateOf(false) }
+    var navDir by remember { mutableIntStateOf(1) }
+    var lyricsFull by rememberSaveable { mutableStateOf(false) }
     var queueOpen by remember { mutableStateOf(false) }
     var timerOpen by remember { mutableStateOf(false) }
 
+    val scope = rememberCoroutineScope()
+    // 0 — свёрнут в мини-плеер, 1 — полноэкранный плеер. Значение ведёт палец, потом пружина.
+    val expand = remember { Animatable(0f) }
+    val playerVisible by remember { derivedStateOf { expand.value > 0.001f } }
+    val playerExpanded by remember { derivedStateOf { expand.targetValue > 0.5f } }
+    var screenH by remember { mutableFloatStateOf(2000f) }
+
+    val openSpring = spring<Float>(dampingRatio = 0.86f, stiffness = 380f)
+    fun openPlayer() {
+        scope.launch { expand.animateTo(1f, openSpring) }
+    }
+    fun closePlayer() {
+        lyricsFull = false
+        scope.launch { expand.animateTo(0f, spring(dampingRatio = 1f, stiffness = 420f)) }
+    }
+    fun dragPlayer(dy: Float) {
+        scope.launch { expand.snapTo((expand.value - dy / screenH).coerceIn(0f, 1f)) }
+    }
+    fun settlePlayer(velocity: Float) {
+        scope.launch {
+            val v = expand.value
+            val target = when {
+                velocity < -900f -> 1f
+                velocity > 900f -> 0f
+                v > 0.5f -> 1f
+                else -> 0f
+            }
+            if (target == 0f) lyricsFull = false
+            expand.animateTo(target, openSpring, initialVelocity = -velocity / screenH)
+        }
+    }
+
     val openReq by vm.openPlayerRequest.collectAsStateWithLifecycle()
-    LaunchedEffect(openReq) { if (openReq > 0) playerOpen = true }
-    LaunchedEffect(lyricsOpen) { vm.setLyricsVisible(lyricsOpen) }
+    LaunchedEffect(openReq) { if (openReq > 0) openPlayer() }
+    val showLyrics by vm.showLyrics.collectAsStateWithLifecycle()
+    LaunchedEffect(showLyrics) { vm.setLyricsVisible(showLyrics) }
 
     val nav = remember {
         Nav(
-            open = { d -> if (stack.lastOrNull() != d) stack.add(d) },
-            back = { if (stack.size > 1) stack.removeAt(stack.lastIndex) },
+            open = { d ->
+                if (stack.lastOrNull() != d) {
+                    navDir = 1
+                    stack.add(d)
+                }
+            },
+            back = {
+                if (stack.size > 1) {
+                    navDir = -1
+                    stack.removeAt(stack.lastIndex)
+                }
+            },
             tab = { d, t ->
                 if (t != null) libTab = t
+                val from = TAB_ORDER.indexOf(stack.first())
+                val to = TAB_ORDER.indexOf(d)
+                navDir = if (to >= from) 1 else -1
                 stack.clear()
                 stack.add(d)
             },
@@ -236,12 +298,12 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
         )
     }
 
-    BackHandler(enabled = timerOpen || queueOpen || lyricsOpen || playerOpen || stack.size > 1) {
+    BackHandler(enabled = timerOpen || queueOpen || playerExpanded || stack.size > 1) {
         when {
             timerOpen -> timerOpen = false
             queueOpen -> queueOpen = false
-            lyricsOpen -> lyricsOpen = false
-            playerOpen -> playerOpen = false
+            lyricsFull -> lyricsFull = false
+            playerExpanded -> closePlayer()
             else -> nav.back()
         }
     }
@@ -252,11 +314,11 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
             onEnqueue = { vm.enqueue(it) },
             onToggleFav = { vm.toggleFavorite(it.uri) },
             onOpenAlbum = {
-                playerOpen = false
+                closePlayer()
                 nav.open(Dest.Album(it.albumKey))
             },
             onOpenArtist = {
-                playerOpen = false
+                closePlayer()
                 nav.open(Dest.Artist(it.albumArtist))
             },
         )
@@ -268,62 +330,116 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val bottomPad = navBottom + 68.dp + (if (hasCurrent) 80.dp else 0.dp) + 16.dp
 
-    Box(Modifier.fillMaxSize().background(LC.Bg)) {
-        Box(Modifier.fillMaxSize().glassSource(haze)) {
-            AmbientBackground(colors)
-            AnimatedContent(
-                targetState = stack.last(),
-                transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(150)) },
-                label = "nav",
-            ) { d ->
-                when (d) {
-                    Dest.Home -> HomeScreen(vm, nav, actions, bottomPad, onOpenPlayer = { playerOpen = true })
-                    Dest.Library -> LibraryScreen(vm, nav, actions, libTab, { libTab = it }, bottomPad)
-                    Dest.Favorites -> FavoritesScreen(vm, nav, actions, bottomPad)
-                    Dest.Settings -> SettingsScreen(vm, bottomPad)
-                    is Dest.Album -> AlbumScreen(vm, d.key, nav, actions, bottomPad)
-                    is Dest.Artist -> ArtistScreen(vm, d.name, nav, actions, bottomPad)
-                    is Dest.Folder -> FolderScreen(vm, d.path, d.name, nav, actions, bottomPad)
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .onSizeChanged { screenH = it.height.toFloat().coerceAtLeast(1f) }
+    ) {
+        // Основной экран слегка «уходит вглубь», пока выезжает плеер.
+        Box(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    val e = expand.value
+                    val s = 1f - 0.06f * e
+                    scaleX = s
+                    scaleY = s
+                    alpha = 1f - 0.45f * e
+                    shape = RoundedCornerShape((e * 28f).dp)
+                    clip = e > 0.001f
+                }
+                .background(LC.Bg)
+        ) {
+            Box(Modifier.fillMaxSize().glassSource(haze)) {
+                AmbientBackground(colors)
+                AnimatedContent(
+                    targetState = stack.last(),
+                    transitionSpec = {
+                        val dir = navDir
+                        (slideInHorizontally(tween(320)) { w -> dir * w / 5 } + fadeIn(tween(320))) togetherWith
+                            (slideOutHorizontally(tween(260)) { w -> -dir * w / 5 } + fadeOut(tween(200)))
+                    },
+                    label = "nav",
+                ) { d ->
+                    when (d) {
+                        Dest.Home -> HomeScreen(vm, nav, actions, bottomPad, onOpenPlayer = { openPlayer() })
+                        Dest.Library -> LibraryScreen(vm, nav, actions, libTab, { libTab = it }, bottomPad)
+                        Dest.Favorites -> FavoritesScreen(vm, nav, actions, bottomPad)
+                        Dest.Settings -> SettingsScreen(vm, bottomPad)
+                        is Dest.Album -> AlbumScreen(vm, d.key, nav, actions, bottomPad)
+                        is Dest.Artist -> ArtistScreen(vm, d.name, nav, actions, bottomPad)
+                        is Dest.Folder -> FolderScreen(vm, d.path, d.name, nav, actions, bottomPad)
+                    }
                 }
             }
-        }
 
-        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
-            AnimatedVisibility(hasCurrent, enter = fadeIn() + slideInVertically { it }, exit = fadeOut()) {
-                MiniPlayer(vm, p, haze, onOpen = { playerOpen = true })
+            Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
+                AnimatedVisibility(hasCurrent, enter = fadeIn() + slideInVertically { it }, exit = fadeOut()) {
+                    MiniPlayer(
+                        vm = vm,
+                        p = p,
+                        haze = haze,
+                        onOpen = { openPlayer() },
+                        onDrag = { dragPlayer(it) },
+                        onDragEnd = { settlePlayer(it) },
+                        modifier = Modifier.graphicsLayer {
+                            val e = expand.value
+                            alpha = 1f - (e * 2.5f).coerceAtMost(1f)
+                            translationY = -e * 160.dp.toPx()
+                        },
+                    )
+                }
+                BottomNav(
+                    root = stack.first(),
+                    haze = haze,
+                    onSelect = { nav.tab(it, null) },
+                    modifier = Modifier.graphicsLayer { translationY = expand.value * size.height },
+                )
             }
-            BottomNav(stack.first(), haze, onSelect = { nav.tab(it, null) })
         }
 
-        AnimatedVisibility(
-            visible = playerOpen,
-            enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMediumLow)) { it } + fadeIn(),
-            exit = slideOutVertically(tween(260)) { it } + fadeOut(tween(260)),
-        ) {
+        if (playerVisible) {
             PlayerScreen(
                 vm = vm,
                 colors = colors,
                 actions = actions,
-                onClose = { playerOpen = false },
-                onLyrics = { lyricsOpen = true },
+                lyricsFull = lyricsFull,
+                onLyricsFull = { lyricsFull = it },
+                onDrag = { dragPlayer(it) },
+                onDragEnd = { settlePlayer(it) },
+                onClose = { closePlayer() },
                 onQueue = { queueOpen = true },
                 onTimer = { timerOpen = true },
+                modifier = Modifier.graphicsLayer {
+                    val e = expand.value
+                    translationY = (1f - e) * size.height
+                    alpha = (e * 3f).coerceAtMost(1f)
+                    shape = RoundedCornerShape(((1f - e) * 32f).dp)
+                    clip = true
+                },
             )
         }
 
-        AnimatedVisibility(
-            visible = lyricsOpen,
-            enter = slideInVertically(spring(dampingRatio = 0.9f, stiffness = Spring.StiffnessMediumLow)) { it } + fadeIn(),
-            exit = slideOutVertically(tween(240)) { it } + fadeOut(tween(240)),
-        ) {
-            LyricsScreen(vm, colors, onClose = { lyricsOpen = false })
+        AnimatedVisibility(queueOpen, enter = fadeIn(tween(220)), exit = fadeOut(tween(220))) {
+            QueueSheet(
+                vm,
+                onClose = { queueOpen = false },
+                sheetModifier = Modifier.animateEnterExit(
+                    enter = slideInVertically(spring(dampingRatio = 0.85f, stiffness = 420f)) { it },
+                    exit = slideOutVertically(tween(220)) { it },
+                ),
+            )
         }
-
-        AnimatedVisibility(queueOpen, enter = fadeIn(), exit = fadeOut()) {
-            QueueSheet(vm, onClose = { queueOpen = false })
-        }
-        AnimatedVisibility(timerOpen, enter = fadeIn(), exit = fadeOut()) {
-            TimerSheet(vm, onClose = { timerOpen = false })
+        AnimatedVisibility(timerOpen, enter = fadeIn(tween(220)), exit = fadeOut(tween(220))) {
+            TimerSheet(
+                vm,
+                onClose = { timerOpen = false },
+                sheetModifier = Modifier.animateEnterExit(
+                    enter = slideInVertically(spring(dampingRatio = 0.85f, stiffness = 420f)) { it },
+                    exit = slideOutVertically(tween(220)) { it },
+                ),
+            )
         }
     }
 }
@@ -351,7 +467,15 @@ fun AmbientBackground(colors: CoverColors, modifier: Modifier = Modifier.fillMax
 }
 
 @Composable
-private fun MiniPlayer(vm: MainViewModel, p: PlayerState, haze: HazeState, onOpen: () -> Unit) {
+private fun MiniPlayer(
+    vm: MainViewModel,
+    p: PlayerState,
+    haze: HazeState,
+    onOpen: () -> Unit,
+    onDrag: (Float) -> Unit,
+    onDragEnd: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val accent = LocalAccent.current
     val favs by vm.favoriteUris.collectAsStateWithLifecycle()
     val shape = RoundedCornerShape(22.dp)
@@ -364,11 +488,12 @@ private fun MiniPlayer(vm: MainViewModel, p: PlayerState, haze: HazeState, onOpe
         }
     }
     var dragX by remember { mutableFloatStateOf(0f) }
+    val shownX by animateFloatAsState(dragX, spring(dampingRatio = 0.75f), label = "miniX")
     val id = p.currentId ?: return
     val fav = id in favs
 
     Box(
-        Modifier
+        modifier
             .padding(horizontal = 10.dp)
             .padding(bottom = 8.dp)
             .fillMaxWidth()
@@ -377,6 +502,11 @@ private fun MiniPlayer(vm: MainViewModel, p: PlayerState, haze: HazeState, onOpe
             .glassBlur(haze, Color(0x8C281630))
             .border(1.dp, Color(0x2EFFFFFF), shape)
             .clickable(role = Role.Button, onClickLabel = "Открыть плеер", onClick = onOpen)
+            .draggable(
+                orientation = Orientation.Vertical,
+                state = rememberDraggableState { onDrag(it) },
+                onDragStopped = { onDragEnd(it) },
+            )
             .pointerInput(Unit) {
                 detectHorizontalDragGestures(
                     onDragEnd = {
@@ -391,7 +521,13 @@ private fun MiniPlayer(vm: MainViewModel, p: PlayerState, haze: HazeState, onOpe
             }
     ) {
         Row(
-            Modifier.fillMaxSize().padding(start = 9.dp, end = 8.dp),
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    translationX = shownX * 0.5f
+                    alpha = 1f - (kotlin.math.abs(shownX) / 600f).coerceAtMost(0.5f)
+                }
+                .padding(start = 9.dp, end = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Cover(id, Modifier.size(48.dp), corner = 13.dp, sizePx = 128)
@@ -431,40 +567,88 @@ private fun MiniPlayer(vm: MainViewModel, p: PlayerState, haze: HazeState, onOpe
     }
 }
 
+private class NavEntry(val dest: Dest, val icon: ImageVector, val label: String)
+
+private val NAV_ENTRIES = listOf(
+    NavEntry(Dest.Home, LIcons.Home, "Главная"),
+    NavEntry(Dest.Library, LIcons.Library, "Библиотека"),
+    NavEntry(Dest.Favorites, LIcons.HeartOutline, "Любимое"),
+    NavEntry(Dest.Settings, LIcons.Sliders, "Настройки"),
+)
+
 @Composable
-private fun BottomNav(root: Dest, haze: HazeState, onSelect: (Dest) -> Unit) {
+private fun BottomNav(root: Dest, haze: HazeState, onSelect: (Dest) -> Unit, modifier: Modifier = Modifier) {
+    val accent = LocalAccent.current
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    Row(
-        Modifier
+    val idx = NAV_ENTRIES.indexOfFirst { it.dest == root }.coerceAtLeast(0)
+    Box(
+        modifier
             .fillMaxWidth()
             .glassBlur(haze, Color(0x990A0A12))
             .drawBehind {
                 drawLine(Color(0x1AFFFFFF), Offset(0f, 0f), Offset(size.width, 0f), 1.dp.toPx())
             }
             .padding(bottom = navBottom)
-            .height(68.dp),
-        horizontalArrangement = Arrangement.SpaceAround,
-        verticalAlignment = Alignment.CenterVertically,
+            .height(68.dp)
     ) {
-        NavItem(LIcons.Home, "Главная", root == Dest.Home) { onSelect(Dest.Home) }
-        NavItem(LIcons.Library, "Библиотека", root == Dest.Library) { onSelect(Dest.Library) }
-        NavItem(LIcons.HeartOutline, "Любимое", root == Dest.Favorites) { onSelect(Dest.Favorites) }
-        NavItem(LIcons.Sliders, "Настройки", root == Dest.Settings) { onSelect(Dest.Settings) }
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val cell = maxWidth / NAV_ENTRIES.size
+            val x by animateDpAsState(
+                cell * idx + (cell - 64.dp) / 2,
+                spring(dampingRatio = 0.7f, stiffness = 480f),
+                label = "indicator",
+            )
+            // «Пилюля», которая переезжает под выбранную вкладку.
+            Box(
+                Modifier
+                    .offset(x = x, y = 8.dp)
+                    .size(width = 64.dp, height = 32.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(accent.copy(alpha = 0.18f))
+            )
+            Row(Modifier.fillMaxSize()) {
+                NAV_ENTRIES.forEachIndexed { i, e ->
+                    NavItem(e.icon, e.label, i == idx, Modifier.weight(1f)) { onSelect(e.dest) }
+                }
+            }
+        }
     }
 }
 
 @Composable
-private fun NavItem(icon: ImageVector, label: String, selected: Boolean, onClick: () -> Unit) {
-    val color = if (selected) LocalAccent.current else LC.Dim
+private fun NavItem(icon: ImageVector, label: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val accent = LocalAccent.current
+    val color by animateColorAsState(if (selected) accent else LC.Dim, tween(250), label = "navC")
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        when {
+            pressed -> 0.85f
+            selected -> 1.1f
+            else -> 1f
+        },
+        spring(dampingRatio = 0.4f, stiffness = 600f),
+        label = "navS",
+    )
     Column(
-        Modifier
-            .clip(RoundedCornerShape(14.dp))
-            .clickable(role = Role.Tab, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+        modifier
+            .fillMaxHeight()
+            .clickable(interaction, null, role = Role.Tab, onClick = onClick)
+            .padding(top = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Icon(icon, null, Modifier.size(24.dp), tint = color)
-        Spacer(Modifier.height(4.dp))
+        Icon(
+            icon,
+            null,
+            Modifier
+                .size(24.dp)
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                },
+            tint = color,
+        )
+        Spacer(Modifier.height(6.dp))
         Text(label, fontSize = 11.sp, color = color, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
     }
 }

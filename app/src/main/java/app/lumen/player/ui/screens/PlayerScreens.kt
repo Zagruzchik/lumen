@@ -1,5 +1,7 @@
 package app.lumen.player.ui.screens
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -10,15 +12,25 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -40,12 +52,10 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -57,9 +67,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
@@ -69,14 +82,15 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.Player
 import app.lumen.player.data.LyricLine
 import app.lumen.player.data.LyricsResult
+import app.lumen.player.playback.PlayerState
 import app.lumen.player.ui.AmbientBackground
 import app.lumen.player.ui.AudioQuality
 import app.lumen.player.ui.MainViewModel
@@ -100,7 +114,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
-/** Размытая обложка на весь экран — фон для плеера и текста. */
+/** Размытая обложка на весь экран — фон для плеера. */
 @Composable
 private fun CoverBackdrop(uri: String?, colors: CoverColors) {
     val bg = rememberArtwork(uri, 48)
@@ -121,18 +135,14 @@ private fun CoverBackdrop(uri: String?, colors: CoverColors) {
             Modifier
                 .fillMaxSize()
                 .background(
-                    Brush.verticalGradient(
-                        listOf(Color(0x330A0610), Color(0x8C0A0610), Color(0xE00A0610))
-                    )
+                    Brush.verticalGradient(listOf(Color(0x330A0610), Color(0x8C0A0610), Color(0xE00A0610)))
                 )
         )
     }
 }
 
-private fun sampleRateLabel(sr: Int): String {
-    val k = sr / 1000f
-    return if (sr % 1000 == 0) "${sr / 1000} кГц" else "%.1f кГц".format(k).replace('.', ',')
-}
+private fun sampleRateLabel(sr: Int): String =
+    if (sr % 1000 == 0) "${sr / 1000} кГц" else "%.1f кГц".format(sr / 1000f).replace('.', ',')
 
 @Composable
 private fun QualityBadges(q: AudioQuality?, fallbackSampleRate: Int) {
@@ -149,6 +159,66 @@ private fun QualityBadges(q: AudioQuality?, fallbackSampleRate: Int) {
     }
 }
 
+/** Плавное затухание краёв списка сверху и снизу. */
+private fun Modifier.fadeEdges(top: Dp, bottom: Dp): Modifier = this
+    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+    .drawWithContent {
+        drawContent()
+        val h = size.height
+        if (h <= 0f) return@drawWithContent
+        val t = (top.toPx() / h).coerceIn(0f, 0.45f)
+        val b = (bottom.toPx() / h).coerceIn(0f, 0.45f)
+        drawRect(
+            Brush.verticalGradient(
+                0f to Color.Transparent,
+                t to Color.Black,
+                (1f - b) to Color.Black,
+                1f to Color.Transparent,
+            ),
+            blendMode = BlendMode.DstIn,
+        )
+    }
+
+/** Нажатие «проседает» и пружинит обратно. */
+@Composable
+private fun Modifier.pressBounce(interaction: MutableInteractionSource): Modifier {
+    val pressed by interaction.collectIsPressedAsState()
+    val s by animateFloatAsState(
+        if (pressed) 0.86f else 1f,
+        spring(dampingRatio = 0.45f, stiffness = 700f),
+        label = "press",
+    )
+    return this.graphicsLayer {
+        scaleX = s
+        scaleY = s
+    }
+}
+
+private sealed interface Stage {
+    val kind: Int
+
+    data class CoverStage(val note: String?) : Stage {
+        override val kind = 0
+    }
+
+    data class Inline(val lines: List<LyricLine>, val synced: Boolean) : Stage {
+        override val kind = 1
+    }
+
+    data class Full(val lines: List<LyricLine>, val synced: Boolean, val source: String) : Stage {
+        override val kind = 2
+    }
+}
+
+private fun lyricsNote(r: LyricsResult): String? = when (r) {
+    LyricsResult.NotFound -> "Текст не найден"
+    LyricsResult.Instrumental -> "Инструментал"
+    LyricsResult.Disabled -> "Онлайн-поиск текстов выключен"
+    LyricsResult.Offline -> "Нет сети — текст не загрузился"
+    LyricsResult.Loading -> "Ищу текст…"
+    else -> null
+}
+
 // ======================= ПЛЕЕР =======================
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -157,60 +227,54 @@ fun PlayerScreen(
     vm: MainViewModel,
     colors: CoverColors,
     actions: TrackActions,
+    lyricsFull: Boolean,
+    onLyricsFull: (Boolean) -> Unit,
+    onDrag: (Float) -> Unit,
+    onDragEnd: (Float) -> Unit,
     onClose: () -> Unit,
-    onLyrics: () -> Unit,
     onQueue: () -> Unit,
     onTimer: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val p by vm.player.collectAsStateWithLifecycle()
     val track by vm.currentTrack.collectAsStateWithLifecycle()
     val quality by vm.quality.collectAsStateWithLifecycle()
     val favs by vm.favoriteUris.collectAsStateWithLifecycle()
     val sleepAt by vm.sleepEndsAt.collectAsStateWithLifecycle()
+    val showLyrics by vm.showLyrics.collectAsStateWithLifecycle()
+    val lyricsRes by vm.lyrics.collectAsStateWithLifecycle()
     val accent = LocalAccent.current
-    val density = LocalDensity.current
+
+    val found = lyricsRes as? LyricsResult.Found
+    LaunchedEffect(found == null) { if (found == null && lyricsFull) onLyricsFull(false) }
+    val stage: Stage = when {
+        found != null && lyricsFull -> Stage.Full(found.lines, found.synced, found.source)
+        found != null && showLyrics -> Stage.Inline(found.lines, found.synced)
+        else -> Stage.CoverStage(if (showLyrics) lyricsNote(lyricsRes) else null)
+    }
+    val isFull = stage is Stage.Full
 
     var position by remember { mutableLongStateOf(0L) }
     LaunchedEffect(p.currentId, p.isPlaying) {
         while (true) {
             position = vm.position()
-            delay(if (p.isPlaying) 250 else 800)
+            delay(if (p.isPlaying) 120 else 700)
         }
     }
-
-    var dragY by remember { mutableFloatStateOf(0f) }
-    var dragging by remember { mutableStateOf(false) }
-    val offsetY by animateFloatAsState(
-        targetValue = dragY,
-        animationSpec = if (dragging) snap() else spring(dampingRatio = 0.8f),
-        label = "dragY",
-    )
-    var menu by remember { mutableStateOf(false) }
-    val closeThreshold = with(density) { 140.dp.toPx() }
+    val seek: (Float) -> Unit = { f ->
+        vm.seek(f)
+        position = (p.durationMs * f).toLong()
+    }
 
     Box(
-        Modifier
+        modifier
             .fillMaxSize()
-            .graphicsLayer { translationY = offsetY }
-            .clip(RoundedCornerShape(if (offsetY > 1f) 28.dp else 0.dp))
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
-            .pointerInput(Unit) {
-                detectVerticalDragGestures(
-                    onDragStart = { dragging = true },
-                    onDragEnd = {
-                        dragging = false
-                        if (dragY > closeThreshold) onClose()
-                        dragY = 0f
-                    },
-                    onDragCancel = {
-                        dragging = false
-                        dragY = 0f
-                    },
-                ) { change, d ->
-                    change.consume()
-                    dragY = max(0f, dragY + d)
-                }
-            }
+            .draggable(
+                orientation = Orientation.Vertical,
+                state = rememberDraggableState { onDrag(it) },
+                onDragStopped = { onDragEnd(it) },
+            )
     ) {
         CoverBackdrop(p.currentId, colors)
 
@@ -221,376 +285,256 @@ fun PlayerScreen(
                 .navigationBarsPadding()
                 .padding(horizontal = 22.dp),
         ) {
-            // --- верхняя панель ---
-            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconBtn(LIcons.Down, "Свернуть плеер", onClose)
-                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("ИЗ АЛЬБОМА", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = LC.Dim, letterSpacing = 1.2.sp)
-                    Text(
-                        p.album.ifBlank { "—" },
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable(enabled = track != null) { track?.let { actions.onOpenAlbum(it) } }
-                            .padding(horizontal = 8.dp, vertical = 2.dp),
-                    )
-                }
-                Box {
-                    IconBtn(LIcons.MoreH, "Меню трека", { menu = true })
-                    track?.let { TrackMenu(menu, { menu = false }, it, it.uri in favs, actions) }
+            // --- верх ---
+            AnimatedContent(
+                targetState = isFull,
+                transitionSpec = { fadeIn(tween(260)) togetherWith fadeOut(tween(180)) },
+                label = "top",
+            ) { full ->
+                if (full) {
+                    Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        IconBtn(LIcons.Down, "Свернуть текст", { onLyricsFull(false) })
+                        Spacer(Modifier.width(12.dp))
+                        Text("Текст песни", fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        IconBtn(LIcons.Close, "Скрыть текст", {
+                            onLyricsFull(false)
+                            vm.toggleShowLyrics()
+                        })
+                    }
+                } else {
+                    PlayerTopBar(p, track != null, favs, onClose, actions, vm)
                 }
             }
 
-            // --- обложка со свечением ---
-            BoxWithConstraints(
-                Modifier
+            // --- середина: обложка / текст / текст на весь экран ---
+            AnimatedContent(
+                targetState = stage,
+                contentKey = { it.kind },
+                transitionSpec = {
+                    (fadeIn(tween(320)) + scaleIn(tween(320), initialScale = 0.93f)) togetherWith
+                        (fadeOut(tween(200)) + scaleOut(tween(200), targetScale = 0.96f)) using
+                        SizeTransform(clip = false)
+                },
+                modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .padding(vertical = 18.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                val side = min(maxWidth.value, maxHeight.value).dp
-                val pulse by rememberInfiniteTransition(label = "glow").animateFloat(
-                    initialValue = 0.32f,
-                    targetValue = 0.6f,
-                    animationSpec = infiniteRepeatable(tween(1800, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-                    label = "pulse",
-                )
-                val glow = if (p.isPlaying) pulse else 0.25f
-                var coverDrag by remember { mutableFloatStateOf(0f) }
-                var coverDragging by remember { mutableStateOf(false) }
-                val coverX by animateFloatAsState(
-                    if (coverDragging) coverDrag else 0f,
-                    if (coverDragging) snap() else spring(dampingRatio = 0.7f),
-                    label = "coverX",
-                )
-                val swipeThreshold = with(density) { 90.dp.toPx() }
-                Box(
-                    Modifier
-                        .size(side)
-                        .drawBehind {
-                            val c = center + Offset(0f, 26.dp.toPx())
-                            val r = size.minDimension * 0.78f
-                            drawCircle(
-                                Brush.radialGradient(listOf(accent.copy(alpha = glow), Color.Transparent), c, r),
-                                radius = r,
-                                center = c,
-                            )
-                        }
-                ) {
-                    Cover(
-                        p.currentId,
-                        Modifier
-                            .fillMaxSize()
-                            .graphicsLayer {
-                                translationX = coverX
-                                rotationZ = coverX / 40f
-                                alpha = 1f - min(0.4f, abs(coverX) / 1200f)
-                            }
-                            .border(1.dp, Color(0x2EFFFFFF), RoundedCornerShape(30.dp))
-                            .pointerInput(p.currentId) {
-                                detectHorizontalDragGestures(
-                                    onDragStart = { coverDragging = true },
-                                    onDragEnd = {
-                                        if (coverDrag < -swipeThreshold) vm.next()
-                                        else if (coverDrag > swipeThreshold) vm.previous()
-                                        coverDragging = false
-                                        coverDrag = 0f
-                                    },
-                                    onDragCancel = {
-                                        coverDragging = false
-                                        coverDrag = 0f
-                                    },
-                                ) { change, d ->
-                                    change.consume()
-                                    coverDrag += d
-                                }
-                            },
-                        corner = 30.dp,
-                        sizePx = 1024,
-                        seed = p.currentId,
+                    .padding(vertical = 14.dp),
+                label = "stage",
+            ) { s ->
+                when (s) {
+                    is Stage.CoverStage -> CoverArea(vm, p, accent, s.note)
+                    is Stage.Inline -> InlineLyrics(s.lines, s.synced, position) { onLyricsFull(true) }
+                    is Stage.Full -> LyricsList(
+                        lines = s.lines,
+                        synced = s.synced,
+                        position = position,
+                        onSeek = { vm.seekTo(it) },
+                        big = true,
+                        contentPadding = PaddingValues(start = 6.dp, end = 6.dp, top = 40.dp, bottom = 160.dp),
+                        modifier = Modifier.fillMaxSize().fadeEdges(40.dp, 90.dp),
                     )
                 }
             }
 
-            // --- качество, название ---
-            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                QualityBadges(quality, p.sampleRate)
-            }
-            Spacer(Modifier.height(16.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        p.title,
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        maxLines = 1,
-                        modifier = Modifier.basicMarquee(),
-                    )
-                    Text(
-                        p.artist,
-                        fontSize = 16.sp,
-                        color = LC.Dim,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.clickable(enabled = track != null) { track?.let { actions.onOpenArtist(it) } },
-                    )
-                }
-                val fav = p.currentId != null && p.currentId in favs
-                Box(
-                    Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(Color(0x1FFFFFFF))
-                        .clickable(role = Role.Button, onClickLabel = if (fav) "Убрать из любимого" else "В любимое") {
-                            p.currentId?.let { vm.toggleFavorite(it) }
-                        },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(if (fav) LIcons.Heart else LIcons.HeartOutline, null, Modifier.size(24.dp), tint = if (fav) accent else LC.Text)
-                }
-            }
-
-            // --- прогресс ---
-            Spacer(Modifier.height(10.dp))
-            val dur = p.durationMs
-            WavySlider(
-                fraction = if (dur > 0) position.toFloat() / dur else 0f,
-                playing = p.isPlaying,
-                onSeek = { f ->
-                    vm.seek(f)
-                    position = (dur * f).toLong()
+            // --- низ: полный набор или мини-плеер с кнопками ---
+            AnimatedContent(
+                targetState = isFull,
+                transitionSpec = {
+                    (fadeIn(tween(300)) + slideInVertically(tween(300)) { it / 3 }) togetherWith
+                        (fadeOut(tween(180)) + slideOutVertically(tween(180)) { it / 3 }) using
+                        SizeTransform(clip = false)
                 },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Row(Modifier.fillMaxWidth()) {
-                Text(formatMs(position), fontSize = 12.sp, color = LC.Dim)
-                Spacer(Modifier.weight(1f))
-                Text("−" + formatMs(max(0L, dur - position)), fontSize = 12.sp, color = LC.Dim)
+                label = "bottom",
+            ) { full ->
+                if (full) {
+                    CompactControls(vm, p, position, seek, favs, accent, onCollapse = { onLyricsFull(false) })
+                } else {
+                    FullControls(
+                        vm = vm,
+                        p = p,
+                        position = position,
+                        seek = seek,
+                        quality = quality,
+                        favs = favs,
+                        accent = accent,
+                        sleepAt = sleepAt,
+                        showLyrics = showLyrics,
+                        onArtist = { track?.let { actions.onOpenArtist(it) } },
+                        onAlbum = { track?.let { actions.onOpenAlbum(it) } },
+                        onQueue = onQueue,
+                        onTimer = onTimer,
+                    )
+                }
             }
+        }
+    }
+}
 
-            // --- кнопки управления ---
-            Spacer(Modifier.height(8.dp))
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconBtn(
-                    LIcons.Shuffle,
-                    if (p.shuffle) "Перемешивание включено" else "Перемешивание выключено",
-                    { vm.toggleShuffle() },
-                    glass = false,
-                    size = 48.dp,
-                    iconSize = 22.dp,
-                    tint = if (p.shuffle) accent else LC.Dim,
-                )
-                IconBtn(LIcons.Prev, "Предыдущий трек", { vm.previous() }, glass = false, size = 60.dp, iconSize = 32.dp)
+@Composable
+private fun PlayerTopBar(
+    p: PlayerState,
+    hasTrack: Boolean,
+    favs: Set<String>,
+    onClose: () -> Unit,
+    actions: TrackActions,
+    vm: MainViewModel,
+) {
+    val track by vm.currentTrack.collectAsStateWithLifecycle()
+    var menu by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconBtn(LIcons.Down, "Свернуть плеер", onClose)
+        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("ИЗ АЛЬБОМА", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = LC.Dim, letterSpacing = 1.2.sp)
+            Text(
+                p.album.ifBlank { "—" },
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(enabled = hasTrack) { track?.let { actions.onOpenAlbum(it) } }
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+            )
+        }
+        Box {
+            IconBtn(LIcons.MoreH, "Меню трека", { menu = true })
+            track?.let { TrackMenu(menu, { menu = false }, it, it.uri in favs, actions) }
+        }
+    }
+}
+
+@Composable
+private fun CoverArea(vm: MainViewModel, p: PlayerState, accent: Color, note: String?) {
+    val density = LocalDensity.current
+    BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        val side = min(maxWidth.value, maxHeight.value).dp
+        val pulse by rememberInfiniteTransition(label = "glow").animateFloat(
+            initialValue = 0.32f,
+            targetValue = 0.6f,
+            animationSpec = infiniteRepeatable(tween(1800, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+            label = "pulse",
+        )
+        val glow = if (p.isPlaying) pulse else 0.25f
+        var coverDrag by remember { mutableFloatStateOf(0f) }
+        var coverDragging by remember { mutableStateOf(false) }
+        val coverX by animateFloatAsState(
+            if (coverDragging) coverDrag else 0f,
+            if (coverDragging) snap() else spring(dampingRatio = 0.7f),
+            label = "coverX",
+        )
+        val swipeThreshold = with(density) { 90.dp.toPx() }
+        Box(
+            Modifier
+                .size(side)
+                .drawBehind {
+                    val c = center + Offset(0f, 26.dp.toPx())
+                    val r = size.minDimension * 0.78f
+                    drawCircle(
+                        Brush.radialGradient(listOf(accent.copy(alpha = glow), Color.Transparent), c, r),
+                        radius = r,
+                        center = c,
+                    )
+                }
+        ) {
+            Cover(
+                p.currentId,
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        translationX = coverX
+                        rotationZ = coverX / 40f
+                        alpha = 1f - min(0.4f, abs(coverX) / 1200f)
+                    }
+                    .border(1.dp, Color(0x2EFFFFFF), RoundedCornerShape(30.dp))
+                    .pointerInput(p.currentId) {
+                        detectHorizontalDragGestures(
+                            onDragStart = { coverDragging = true },
+                            onDragEnd = {
+                                if (coverDrag < -swipeThreshold) vm.next()
+                                else if (coverDrag > swipeThreshold) vm.previous()
+                                coverDragging = false
+                                coverDrag = 0f
+                            },
+                            onDragCancel = {
+                                coverDragging = false
+                                coverDrag = 0f
+                            },
+                        ) { change, d ->
+                            change.consume()
+                            coverDrag += d
+                        }
+                    },
+                corner = 30.dp,
+                sizePx = 1024,
+                seed = p.currentId,
+            )
+            if (note != null) {
                 Box(
                     Modifier
-                        .size(80.dp)
-                        .clip(CircleShape)
-                        .background(LC.Text)
-                        .clickable(role = Role.Button, onClickLabel = if (p.isPlaying) "Пауза" else "Играть") { vm.toggle() },
-                    contentAlignment = Alignment.Center,
+                        .align(Alignment.BottomCenter)
+                        .padding(14.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color(0x99000000))
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
                 ) {
-                    Icon(if (p.isPlaying) LIcons.Pause else LIcons.Play, null, Modifier.size(34.dp), tint = Color(0xFF140A1C))
-                }
-                IconBtn(LIcons.Next, "Следующий трек", { vm.next() }, glass = false, size = 60.dp, iconSize = 32.dp)
-                IconBtn(
-                    if (p.repeat == Player.REPEAT_MODE_ONE) LIcons.RepeatOne else LIcons.Repeat,
-                    when (p.repeat) {
-                        Player.REPEAT_MODE_ONE -> "Повтор трека"
-                        Player.REPEAT_MODE_ALL -> "Повтор очереди"
-                        else -> "Повтор выключен"
-                    },
-                    { vm.cycleRepeat() },
-                    glass = false,
-                    size = 48.dp,
-                    iconSize = 22.dp,
-                    tint = if (p.repeat != Player.REPEAT_MODE_OFF) accent else LC.Dim,
-                )
-            }
-
-            // --- нижняя стеклянная панель ---
-            Spacer(Modifier.height(18.dp))
-            var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-            LaunchedEffect(sleepAt) {
-                while (sleepAt != null) {
-                    now = System.currentTimeMillis()
-                    delay(15_000)
+                    Text(note, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                 }
             }
-            val sleepLabel = sleepAt?.let { "${max(1L, (it - now + 59_999) / 60_000)} мин" } ?: "Таймер"
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .height(70.dp)
-                    .glass(RoundedCornerShape(24.dp), Color(0x1AFFFFFF), Color(0x2EFFFFFF)),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                BarItem(LIcons.Lyrics, "Текст", false, onLyrics)
-                BarItem(LIcons.Queue, "Очередь", false, onQueue)
-                BarItem(LIcons.Moon, sleepLabel, sleepAt != null, onTimer)
-                BarItem(LIcons.Disc, "Альбом", false) { track?.let { actions.onOpenAlbum(it) } }
-            }
-            Spacer(Modifier.height(14.dp))
         }
     }
 }
 
 @Composable
-private fun BarItem(icon: ImageVector, label: String, active: Boolean, onClick: () -> Unit) {
-    val c = if (active) LocalAccent.current else LC.Text
-    Column(
-        Modifier
-            .clip(RoundedCornerShape(14.dp))
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Icon(icon, null, Modifier.size(22.dp), tint = c)
-        Spacer(Modifier.height(4.dp))
-        Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = c)
-    }
-}
-
-// ======================= ТЕКСТ ПЕСНИ =======================
-
-@Composable
-fun LyricsScreen(vm: MainViewModel, colors: CoverColors, onClose: () -> Unit) {
-    val p by vm.player.collectAsStateWithLifecycle()
-    val res by vm.lyrics.collectAsStateWithLifecycle()
-
-    var position by remember { mutableLongStateOf(0L) }
-    LaunchedEffect(p.currentId, p.isPlaying) {
-        while (true) {
-            position = vm.position()
-            delay(if (p.isPlaying) 120 else 600)
-        }
-    }
-
+private fun InlineLyrics(lines: List<LyricLine>, synced: Boolean, position: Long, onOpen: () -> Unit) {
+    val shape = RoundedCornerShape(30.dp)
     Box(
         Modifier
             .fillMaxSize()
-            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
+            .clip(shape)
+            .background(Color(0x1AFFFFFF))
+            .border(1.dp, Color(0x26FFFFFF), shape)
+            .clickable(onClickLabel = "Открыть текст на весь экран", onClick = onOpen)
     ) {
-        CoverBackdrop(p.currentId, colors)
-        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
-            Row(
-                Modifier
-                    .padding(horizontal = 12.dp, vertical = 8.dp)
-                    .fillMaxWidth()
-                    .height(68.dp)
-                    .glass(RoundedCornerShape(22.dp), Color(0x1AFFFFFF), Color(0x2EFFFFFF))
-                    .padding(start = 10.dp, end = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Cover(p.currentId, Modifier.size(48.dp), corner = 13.dp, sizePx = 128)
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(p.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(p.artist, fontSize = 13.sp, color = LC.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                IconBtn(LIcons.Close, "Закрыть текст", onClose)
-            }
-
-            Box(Modifier.weight(1f).fillMaxWidth()) {
-                when (val r = res) {
-                    LyricsResult.Idle, LyricsResult.Loading -> CircularProgressIndicator(
-                        color = Color.White,
-                        modifier = Modifier.align(Alignment.Center).size(36.dp),
-                    )
-                    is LyricsResult.Found -> LyricsList(r.lines, r.synced, position) { vm.seekTo(it) }
-                    LyricsResult.NotFound -> LyricsMessage(
-                        "Текст не найден",
-                        "Для этого трека нет текста ни рядом с файлом, ни в LRCLIB.",
-                        "Искать снова",
-                    ) { vm.loadLyrics(force = true) }
-                    LyricsResult.Instrumental -> LyricsMessage("Инструментал", "В этом треке нет слов — просто слушай.", null) {}
-                    LyricsResult.Disabled -> LyricsMessage(
-                        "Онлайн-поиск выключен",
-                        "Включи поиск текстов в LRCLIB, чтобы подтягивать их автоматически.",
-                        "Включить",
-                    ) {
-                        vm.setOnlineLyrics(true)
-                        vm.loadLyrics(force = true)
-                    }
-                    LyricsResult.Offline -> LyricsMessage(
-                        "Нет соединения",
-                        "Не получилось достучаться до LRCLIB. Проверь интернет.",
-                        "Повторить",
-                    ) { vm.loadLyrics(force = true) }
-                }
-            }
-
-            val source = (res as? LyricsResult.Found)?.let { if (it.synced) "Синхронно · ${it.source}" else "Текст · ${it.source}" }
-            Column(
-                Modifier
-                    .padding(horizontal = 12.dp, vertical = 10.dp)
-                    .fillMaxWidth()
-                    .glass(RoundedCornerShape(24.dp), Color(0x59140A1E), Color(0x29FFFFFF))
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
-            ) {
-                val dur = p.durationMs
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(formatMs(position), fontSize = 12.sp, color = LC.Dim)
-                    Box(
-                        Modifier
-                            .weight(1f)
-                            .padding(horizontal = 10.dp)
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(Color(0x33FFFFFF))
-                    ) {
-                        Box(
-                            Modifier
-                                .fillMaxWidth(if (dur > 0) (position.toFloat() / dur).coerceIn(0f, 1f) else 0f)
-                                .fillMaxHeight()
-                                .background(Color.White)
-                        )
-                    }
-                    Text(formatMs(dur), fontSize = 12.sp, color = LC.Dim)
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(source ?: "", fontSize = 12.sp, color = LC.Dim, modifier = Modifier.weight(1f))
-                    IconBtn(LIcons.Prev, "Предыдущий трек", { vm.previous() }, glass = false, iconSize = 22.dp)
-                    Box(
-                        Modifier
-                            .size(52.dp)
-                            .clip(CircleShape)
-                            .background(LC.Text)
-                            .clickable(role = Role.Button) { vm.toggle() },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(if (p.isPlaying) LIcons.Pause else LIcons.Play, null, Modifier.size(22.dp), tint = Color(0xFF140A1C))
-                    }
-                    IconBtn(LIcons.Next, "Следующий трек", { vm.next() }, glass = false, iconSize = 22.dp)
-                    Spacer(Modifier.weight(1f))
-                }
-            }
-        }
+        LyricsList(
+            lines = lines,
+            synced = synced,
+            position = position,
+            onSeek = null,
+            big = false,
+            contentPadding = PaddingValues(start = 22.dp, end = 22.dp, top = 60.dp, bottom = 120.dp),
+            modifier = Modifier.fillMaxSize().fadeEdges(56.dp, 70.dp),
+        )
+        Icon(
+            LIcons.Expand,
+            null,
+            Modifier
+                .align(Alignment.TopEnd)
+                .padding(14.dp)
+                .size(18.dp),
+            tint = LC.Dim,
+        )
     }
 }
 
 @Composable
-private fun LyricsList(lines: List<LyricLine>, synced: Boolean, position: Long, onSeek: (Long) -> Unit) {
+private fun LyricsList(
+    lines: List<LyricLine>,
+    synced: Boolean,
+    position: Long,
+    onSeek: ((Long) -> Unit)?,
+    big: Boolean,
+    contentPadding: PaddingValues,
+    modifier: Modifier = Modifier,
+) {
     val current = if (synced) lines.indexOfLast { it.timeMs <= position + 250 } else -1
     val listState = rememberLazyListState()
     LaunchedEffect(current) {
         if (current >= 0 && !listState.isScrollInProgress) {
-            listState.animateScrollToItem((current - 2).coerceAtLeast(0))
+            listState.animateScrollToItem((current - if (big) 2 else 1).coerceAtLeast(0))
         }
     }
-    LazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 28.dp, end = 28.dp, top = 24.dp, bottom = 240.dp),
-    ) {
+    LazyColumn(state = listState, modifier = modifier, contentPadding = contentPadding) {
         itemsIndexed(lines) { i, l ->
             val isCur = i == current
             val color by animateColorAsState(
@@ -606,8 +550,12 @@ private fun LyricsList(lines: List<LyricLine>, synced: Boolean, position: Long, 
             val scale by animateFloatAsState(if (!synced || isCur) 1f else 0.92f, tween(300), label = "ls")
             Text(
                 l.text.ifBlank { "♪" },
-                fontSize = if (synced) 27.sp else 20.sp,
-                lineHeight = if (synced) 34.sp else 28.sp,
+                fontSize = when {
+                    !synced -> if (big) 20.sp else 17.sp
+                    big -> 28.sp
+                    else -> 23.sp
+                },
+                lineHeight = if (big) 36.sp else 30.sp,
                 fontWeight = if (synced) FontWeight.ExtraBold else FontWeight.SemiBold,
                 color = color,
                 modifier = Modifier
@@ -617,39 +565,297 @@ private fun LyricsList(lines: List<LyricLine>, synced: Boolean, position: Long, 
                         scaleY = scale
                         transformOrigin = TransformOrigin(0f, 0.5f)
                     }
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable(enabled = synced && l.timeMs >= 0) { onSeek(l.timeMs) }
-                    .padding(vertical = 10.dp),
+                    .then(
+                        if (onSeek != null && synced && l.timeMs >= 0) {
+                            Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable { onSeek(l.timeMs) }
+                        } else Modifier
+                    )
+                    .padding(vertical = if (big) 10.dp else 8.dp),
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun FullControls(
+    vm: MainViewModel,
+    p: PlayerState,
+    position: Long,
+    seek: (Float) -> Unit,
+    quality: AudioQuality?,
+    favs: Set<String>,
+    accent: Color,
+    sleepAt: Long?,
+    showLyrics: Boolean,
+    onArtist: () -> Unit,
+    onAlbum: () -> Unit,
+    onQueue: () -> Unit,
+    onTimer: () -> Unit,
+) {
+    Column(Modifier.fillMaxWidth()) {
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            QualityBadges(quality, p.sampleRate)
+        }
+        Spacer(Modifier.height(16.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(p.title, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, modifier = Modifier.basicMarquee())
+                Text(
+                    p.artist,
+                    fontSize = 16.sp,
+                    color = LC.Dim,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.clickable(onClick = onArtist),
+                )
+            }
+            FavButton(p, favs, accent, vm, 48.dp)
+        }
+
+        Spacer(Modifier.height(10.dp))
+        val dur = p.durationMs
+        WavySlider(
+            fraction = if (dur > 0) position.toFloat() / dur else 0f,
+            playing = p.isPlaying,
+            onSeek = seek,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(Modifier.fillMaxWidth()) {
+            Text(formatMs(position), fontSize = 12.sp, color = LC.Dim)
+            Spacer(Modifier.weight(1f))
+            Text("−" + formatMs(max(0L, dur - position)), fontSize = 12.sp, color = LC.Dim)
+        }
+
+        Spacer(Modifier.height(8.dp))
+        TransportRow(vm, p, accent, playSize = 80.dp, sideSize = 60.dp, withModes = true)
+
+        Spacer(Modifier.height(18.dp))
+        var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+        LaunchedEffect(sleepAt) {
+            while (sleepAt != null) {
+                now = System.currentTimeMillis()
+                delay(15_000)
+            }
+        }
+        val sleepLabel = sleepAt?.let { "${max(1L, (it - now + 59_999) / 60_000)} мин" } ?: "Таймер"
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(70.dp)
+                .glass(RoundedCornerShape(24.dp), Color(0x1AFFFFFF), Color(0x2EFFFFFF)),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            BarItem(LIcons.Lyrics, "Текст", showLyrics) { vm.toggleShowLyrics() }
+            BarItem(LIcons.Queue, "Очередь", false, onQueue)
+            BarItem(LIcons.Moon, sleepLabel, sleepAt != null, onTimer)
+            BarItem(LIcons.Disc, "Альбом", false, onAlbum)
+        }
+        Spacer(Modifier.height(14.dp))
+    }
+}
+
+/** Режим «текст на весь экран»: снизу только мини-плеер и кнопки управления. */
+@Composable
+private fun CompactControls(
+    vm: MainViewModel,
+    p: PlayerState,
+    position: Long,
+    seek: (Float) -> Unit,
+    favs: Set<String>,
+    accent: Color,
+    onCollapse: () -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(bottom = 12.dp)
+            .glass(RoundedCornerShape(26.dp), Color(0x1AFFFFFF), Color(0x2EFFFFFF))
+            .padding(horizontal = 14.dp, vertical = 12.dp)
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .clickable(onClickLabel = "Вернуть обложку", onClick = onCollapse),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Cover(p.currentId, Modifier.size(48.dp), corner = 13.dp, sizePx = 128)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(p.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(p.artist, fontSize = 13.sp, color = LC.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            FavButton(p, favs, accent, vm, 44.dp)
+        }
+        Spacer(Modifier.height(4.dp))
+        val dur = p.durationMs
+        WavySlider(
+            fraction = if (dur > 0) position.toFloat() / dur else 0f,
+            playing = p.isPlaying,
+            onSeek = seek,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(Modifier.fillMaxWidth()) {
+            Text(formatMs(position), fontSize = 11.sp, color = LC.Dim)
+            Spacer(Modifier.weight(1f))
+            Text("−" + formatMs(max(0L, dur - position)), fontSize = 11.sp, color = LC.Dim)
+        }
+        TransportRow(vm, p, accent, playSize = 60.dp, sideSize = 52.dp, withModes = true)
+    }
+}
+
+@Composable
+private fun FavButton(p: PlayerState, favs: Set<String>, accent: Color, vm: MainViewModel, size: Dp) {
+    val fav = p.currentId != null && p.currentId in favs
+    val interaction = remember { MutableInteractionSource() }
+    val heartScale by animateFloatAsState(
+        if (fav) 1f else 0.9f,
+        spring(dampingRatio = 0.35f, stiffness = 500f),
+        label = "heart",
+    )
+    Box(
+        Modifier
+            .size(size)
+            .pressBounce(interaction)
+            .clip(CircleShape)
+            .background(Color(0x1FFFFFFF))
+            .clickable(interaction, null, role = Role.Button, onClickLabel = if (fav) "Убрать из любимого" else "В любимое") {
+                p.currentId?.let { vm.toggleFavorite(it) }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            if (fav) LIcons.Heart else LIcons.HeartOutline,
+            null,
+            Modifier
+                .size(24.dp)
+                .graphicsLayer {
+                    scaleX = heartScale
+                    scaleY = heartScale
+                },
+            tint = if (fav) accent else LC.Text,
+        )
+    }
+}
+
+@Composable
+private fun TransportRow(
+    vm: MainViewModel,
+    p: PlayerState,
+    accent: Color,
+    playSize: Dp,
+    sideSize: Dp,
+    withModes: Boolean,
+) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = if (withModes) Arrangement.SpaceBetween else Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (withModes) {
+            IconBtn(
+                LIcons.Shuffle,
+                if (p.shuffle) "Перемешивание включено" else "Перемешивание выключено",
+                { vm.toggleShuffle() },
+                glass = false,
+                size = 48.dp,
+                iconSize = 22.dp,
+                tint = if (p.shuffle) accent else LC.Dim,
+            )
+        }
+        BounceIcon(LIcons.Prev, "Предыдущий трек", sideSize, sideSize * 0.53f) { vm.previous() }
+        val interaction = remember { MutableInteractionSource() }
+        Box(
+            Modifier
+                .size(playSize)
+                .pressBounce(interaction)
+                .clip(CircleShape)
+                .background(LC.Text)
+                .clickable(interaction, null, role = Role.Button, onClickLabel = if (p.isPlaying) "Пауза" else "Играть") { vm.toggle() },
+            contentAlignment = Alignment.Center,
+        ) {
+            AnimatedContent(
+                targetState = p.isPlaying,
+                transitionSpec = {
+                    (fadeIn(tween(160)) + scaleIn(tween(200), initialScale = 0.6f)) togetherWith
+                        (fadeOut(tween(120)) + scaleOut(tween(160), targetScale = 0.6f))
+                },
+                label = "playIcon",
+            ) { playing ->
+                Icon(
+                    if (playing) LIcons.Pause else LIcons.Play,
+                    null,
+                    Modifier.size(playSize * 0.42f),
+                    tint = Color(0xFF140A1C),
+                )
+            }
+        }
+        BounceIcon(LIcons.Next, "Следующий трек", sideSize, sideSize * 0.53f) { vm.next() }
+        if (withModes) {
+            IconBtn(
+                if (p.repeat == Player.REPEAT_MODE_ONE) LIcons.RepeatOne else LIcons.Repeat,
+                when (p.repeat) {
+                    Player.REPEAT_MODE_ONE -> "Повтор трека"
+                    Player.REPEAT_MODE_ALL -> "Повтор очереди"
+                    else -> "Повтор выключен"
+                },
+                { vm.cycleRepeat() },
+                glass = false,
+                size = 48.dp,
+                iconSize = 22.dp,
+                tint = if (p.repeat != Player.REPEAT_MODE_OFF) accent else LC.Dim,
             )
         }
     }
 }
 
 @Composable
-private fun LyricsMessage(title: String, text: String, action: String?, onAction: () -> Unit) {
+private fun BounceIcon(icon: ImageVector, desc: String, size: Dp, iconSize: Dp, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    Box(
+        Modifier
+            .size(size)
+            .pressBounce(interaction)
+            .clip(CircleShape)
+            .clickable(interaction, null, role = Role.Button, onClickLabel = desc, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, null, Modifier.size(iconSize), tint = LC.Text)
+    }
+}
+
+@Composable
+private fun BarItem(icon: ImageVector, label: String, active: Boolean, onClick: () -> Unit) {
+    val accent = LocalAccent.current
+    val interaction = remember { MutableInteractionSource() }
+    val c by animateColorAsState(if (active) accent else LC.Text, tween(250), label = "barC")
+    val bg by animateColorAsState(if (active) accent.copy(alpha = 0.18f) else Color.Transparent, tween(250), label = "barBg")
     Column(
-        Modifier.fillMaxSize().padding(32.dp),
-        verticalArrangement = Arrangement.Center,
+        Modifier
+            .pressBounce(interaction)
+            .clip(RoundedCornerShape(16.dp))
+            .background(bg)
+            .clickable(interaction, null, role = Role.Button, onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 7.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Icon(LIcons.Lyrics, null, Modifier.size(40.dp), tint = LC.Dim)
-        Spacer(Modifier.height(14.dp))
-        Text(title, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
-        Spacer(Modifier.height(8.dp))
-        Text(text, fontSize = 15.sp, color = LC.Dim, textAlign = TextAlign.Center)
-        if (action != null) {
-            Spacer(Modifier.height(20.dp))
-            PillButton(action, null, onAction)
-        }
+        Icon(icon, null, Modifier.size(22.dp), tint = c)
+        Spacer(Modifier.height(4.dp))
+        Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = c)
     }
 }
 
 // ======================= ОЧЕРЕДЬ =======================
 
 @Composable
-fun QueueSheet(vm: MainViewModel, onClose: () -> Unit) {
+fun QueueSheet(vm: MainViewModel, onClose: () -> Unit, sheetModifier: Modifier = Modifier) {
     val p by vm.player.collectAsStateWithLifecycle()
     val accent = LocalAccent.current
+    val shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
     Box(
         Modifier
             .fillMaxSize()
@@ -657,13 +863,13 @@ fun QueueSheet(vm: MainViewModel, onClose: () -> Unit) {
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClose)
     ) {
         Column(
-            Modifier
+            sheetModifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .fillMaxHeight(0.8f)
-                .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+                .clip(shape)
                 .background(Color(0xF5141019))
-                .border(1.dp, Color(0x1FFFFFFF), RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+                .border(1.dp, Color(0x1FFFFFFF), shape)
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                 .navigationBarsPadding()
         ) {
@@ -712,7 +918,11 @@ fun QueueSheet(vm: MainViewModel, onClose: () -> Unit) {
                             Icon(if (p.isPlaying) LIcons.Pause else LIcons.Play, null, Modifier.padding(12.dp).size(18.dp), tint = accent)
                         } else {
                             if (i > 0) {
-                                IconBtn(LIcons.Back, "Выше", { vm.moveItem(i, i - 1) }, glass = false, size = 40.dp, iconSize = 16.dp, tint = LC.Faint, modifier = Modifier.graphicsLayer { rotationZ = 90f })
+                                IconBtn(
+                                    LIcons.Back, "Выше", { vm.moveItem(i, i - 1) },
+                                    glass = false, size = 40.dp, iconSize = 16.dp, tint = LC.Faint,
+                                    modifier = Modifier.graphicsLayer { rotationZ = 90f },
+                                )
                             }
                             IconBtn(LIcons.Close, "Убрать из очереди", { vm.removeAt(i) }, glass = false, size = 40.dp, iconSize = 16.dp, tint = LC.Dim)
                         }
@@ -726,7 +936,7 @@ fun QueueSheet(vm: MainViewModel, onClose: () -> Unit) {
 // ======================= ТАЙМЕР СНА =======================
 
 @Composable
-fun TimerSheet(vm: MainViewModel, onClose: () -> Unit) {
+fun TimerSheet(vm: MainViewModel, onClose: () -> Unit, sheetModifier: Modifier = Modifier) {
     val sleepAt by vm.sleepEndsAt.collectAsStateWithLifecycle()
     Box(
         Modifier
@@ -735,7 +945,7 @@ fun TimerSheet(vm: MainViewModel, onClose: () -> Unit) {
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClose)
     ) {
         Column(
-            Modifier
+            sheetModifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
