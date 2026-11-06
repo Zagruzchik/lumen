@@ -909,3 +909,198 @@ private class HomeFloors(
         }
     }
 }
+
+/**
+ * Поиск: сначала треки из библиотеки, затем — найденное в сети (Deezer).
+ * Тап по треку из сети — поиск его в интернете. Без запроса показывается история:
+ * треки, которые были включены из поиска.
+ */
+@Composable
+private fun SearchResults(
+    vm: MainViewModel,
+    query: String,
+    results: List<TrackEntity>,
+    currentId: String?,
+    favs: Set<String>,
+    actions: TrackActions,
+    bottomPad: Dp,
+    modifier: Modifier = Modifier,
+) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val history by vm.searchHistory.collectAsStateWithLifecycle()
+    val online by vm.onlineResults.collectAsStateWithLifecycle()
+    val onlineLoading by vm.onlineLoading.collectAsStateWithLifecycle()
+    val onlineError by vm.onlineError.collectAsStateWithLifecycle()
+    val accent = LocalAccent.current
+    val q = query.trim()
+
+    LazyColumn(modifier, contentPadding = PaddingValues(bottom = bottomPad)) {
+        if (q.isEmpty()) {
+            if (history.isEmpty()) {
+                item(key = "hEmpty") {
+                    Column(
+                        Modifier.fillMaxWidth().padding(top = 70.dp, start = 32.dp, end = 32.dp).animateItem(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Icon(LIcons.Search, null, Modifier.size(40.dp), tint = LC.Dim.copy(alpha = 0.5f))
+                        Spacer(Modifier.height(14.dp))
+                        Text("Здесь будет история поиска", color = LC.Dim, fontSize = 16.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
+                    }
+                }
+            } else {
+                item(key = "hHead") { SectionHeader("История поиска", "Очистить") { vm.clearSearchHistory() } }
+                itemsIndexed(history, key = { _, t -> "h:" + t.uri }) { i, t ->
+                    Box(Modifier.animateItem()) {
+                        TrackRow(t, t.uri == currentId, t.uri in favs, actions, onClick = { vm.playFromSearch(history, i) })
+                    }
+                }
+            }
+            return@LazyColumn
+        }
+
+        if (results.isNotEmpty()) {
+            item(key = "lHead") { SectionHeader("В библиотеке") }
+            itemsIndexed(results, key = { _, t -> "s:" + t.uri }) { i, t ->
+                TrackRow(t, t.uri == currentId, t.uri in favs, actions, onClick = { vm.playFromSearch(results, i) })
+            }
+        }
+
+        item(key = "oHead") {
+            Row(Modifier.fillMaxWidth().padding(end = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) { SectionHeader("В сети") }
+                if (onlineLoading) CircularProgressIndicator(Modifier.size(18.dp), color = accent, strokeWidth = 2.dp)
+            }
+        }
+        val list = online
+        when {
+            list == null && !onlineLoading -> {}
+            onlineError && list.isNullOrEmpty() -> item(key = "oErr") {
+                Text(
+                    "Нет связи — показаны только треки из библиотеки",
+                    color = LC.Dim,
+                    fontSize = 14.sp,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                )
+            }
+            list != null && list.isEmpty() && !onlineLoading -> item(key = "oNone") {
+                Text(
+                    "В сети ничего нового не нашлось",
+                    color = LC.Dim,
+                    fontSize = 14.sp,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                )
+            }
+            list != null -> items(list, key = { "o:" + it.key }) { r ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .animateItem()
+                        .clickable(onClickLabel = "Найти в интернете") { searchWeb(ctx, r.query) }
+                        .padding(horizontal = 20.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RemoteCover(r.cover, r.key, RoundedCornerShape(12.dp), Modifier.size(52.dp))
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(r.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            if (r.reason.isNotBlank()) "${r.artist} · ${r.reason}" else r.artist,
+                            fontSize = 13.sp,
+                            color = LC.Dim,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Icon(LIcons.Search, "Найти в интернете", Modifier.size(20.dp), tint = LC.Dim)
+                }
+            }
+        }
+        item(key = "web") {
+            Row(
+                Modifier
+                    .padding(horizontal = 20.dp, vertical = 12.dp)
+                    .fillMaxWidth()
+                    .glass(RoundedCornerShape(18.dp))
+                    .clickable { searchWeb(ctx, q) }
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(LIcons.Search, null, Modifier.size(20.dp), tint = accent)
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    "Искать «$q» в интернете",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * «lumen by CheKavo». CheKavo — переливающийся градиент из цветов обложки
+ * (статичный) с мягким неоновым ореолом; на ударах слегка вздрагивает и вспыхивает.
+ */
+@Composable
+private fun LumenBrand(vm: MainViewModel, colors: app.lumen.player.ui.theme.CoverColors) {
+    val beat = app.lumen.player.ui.components.rememberBeatSignal(vm)
+    val a by androidx.compose.animation.animateColorAsState(colors.a, androidx.compose.animation.core.tween(900), label = "ba")
+    val c by androidx.compose.animation.animateColorAsState(colors.c, androidx.compose.animation.core.tween(900), label = "bc")
+    val acc by androidx.compose.animation.animateColorAsState(colors.accent, androidx.compose.animation.core.tween(900), label = "bacc")
+    Row(verticalAlignment = Alignment.Bottom) {
+        Text("lumen", fontSize = 27.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.5).sp)
+        Text(
+            " by ",
+            fontSize = 14.sp,
+            color = LC.Dim,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.padding(bottom = 4.dp),
+        )
+        Box(
+            Modifier
+                .graphicsLayer {
+                    val lv = beat.level().coerceIn(0f, 1f)
+                    val sc = 1f + 0.07f * lv
+                    scaleX = sc
+                    scaleY = sc
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.6f)
+                }
+                .drawBehind {
+                    val lv = beat.level().coerceIn(0f, 1f)
+                    val r = size.width * 0.7f
+                    drawCircle(
+                        Brush.radialGradient(
+                            listOf(acc.copy(alpha = 0.16f + 0.3f * lv), Color.Transparent),
+                            center,
+                            r,
+                        ),
+                        radius = r,
+                        center = center,
+                    )
+                }
+        ) {
+            // Статичный градиент по слову.
+            val w = 320f
+            val x0 = 0f
+            Text(
+                "CheKavo",
+                fontSize = 27.sp,
+                fontWeight = FontWeight.Black,
+                letterSpacing = (-0.3).sp,
+                style = TextStyle(
+                    brush = Brush.linearGradient(
+                        listOf(acc, a, Color.White.copy(alpha = 0.95f), c),
+                        start = androidx.compose.ui.geometry.Offset(x0, 0f),
+                        end = androidx.compose.ui.geometry.Offset(x0 + w, 60f),
+                        tileMode = androidx.compose.ui.graphics.TileMode.Clamp,
+                    ),
+                    shadow = androidx.compose.ui.graphics.Shadow(acc.copy(alpha = 0.55f), blurRadius = 18f),
+                ),
+            )
+        }
+    }
+}
