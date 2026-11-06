@@ -123,8 +123,10 @@ class PlayerConnection(private val context: Context) {
         val c = controller ?: return
         if (list.isEmpty()) return
         val start = if (shuffle) Random.nextInt(list.size) else startIndex.coerceIn(0, list.lastIndex)
-        c.shuffleModeEnabled = shuffle
+        // Сервис сам переставит очередь: выбранный трек первым, остальные вразнобой — и играет сверху вниз.
+        if (!shuffle && c.shuffleModeEnabled) c.shuffleModeEnabled = false
         c.setMediaItems(list.map { it.toMediaItem() }, start, 0L)
+        if (shuffle && !c.shuffleModeEnabled) c.shuffleModeEnabled = true
         c.prepare()
         c.play()
     }

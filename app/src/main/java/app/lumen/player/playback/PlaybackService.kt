@@ -16,6 +16,7 @@ import androidx.media3.common.util.BitmapLoader
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.ShuffleOrder
 import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionCommand
@@ -66,8 +67,16 @@ class PlaybackService : MediaSessionService() {
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()
+        // Порядок воспроизведения = порядок в очереди. Перемешивание физически переставляет треки,
+        // поэтому очередь всегда показывает то, что реально будет играть сверху вниз.
+        player.setShuffleOrder(ShuffleOrder.UnshuffledShuffleOrder(0))
+        exo = player
 
         player.addListener(object : Player.Listener {
+            override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+                applyShuffle(player, shuffleModeEnabled)
+            }
+
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 val id = mediaItem?.mediaId ?: return
                 if (player.isPlaying) record(id) else pendingPlayCount = id
@@ -128,17 +137,37 @@ class PlaybackService : MediaSessionService() {
                     return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                 }
 
+                override fun onSetMediaItems(
+                    mediaSession: MediaSession,
+                    controller: MediaSession.ControllerInfo,
+                    mediaItems: MutableList<MediaItem>,
+                    startIndex: Int,
+                    startPositionMs: Long,
+                ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+                    val resolved = resolve(mediaItems)
+                    val start = if (startIndex == C.INDEX_UNSET) 0 else startIndex.coerceIn(0, (resolved.size - 1).coerceAtLeast(0))
+                    // Новая очередь: если перемешивание включено — выбранный трек первым, остальные вразнобой.
+                    if (mediaSession.player.shuffleModeEnabled && resolved.size > 1) {
+                        originalOrder = resolved
+                        val first = resolved[start]
+                        val rest = resolved.filterIndexed { i, _ -> i != start }.shuffled()
+                        return Futures.immediateFuture(
+                            MediaSession.MediaItemsWithStartPosition(listOf(first) + rest, 0, startPositionMs)
+                        )
+                    }
+                    originalOrder = null
+                    return Futures.immediateFuture(
+                        MediaSession.MediaItemsWithStartPosition(resolved, start, startPositionMs)
+                    )
+                }
+
                 override fun onAddMediaItems(
                     mediaSession: MediaSession,
                     controller: MediaSession.ControllerInfo,
                     mediaItems: MutableList<MediaItem>,
                 ): ListenableFuture<MutableList<MediaItem>> {
                     // mediaId у нас всегда равен URI файла: восстанавливаем адрес, если его отрезало при передаче.
-                    val resolved = mediaItems.map { item ->
-                        if (item.localConfiguration != null) item
-                        else item.buildUpon().setUri(Uri.parse(item.mediaId)).build()
-                    }.toMutableList()
-                    return Futures.immediateFuture(resolved)
+                    return Futures.immediateFuture(resolve(mediaItems).toMutableList())
                 }
             })
             .build()
@@ -149,6 +178,67 @@ class PlaybackService : MediaSessionService() {
                 favorites = it.toHashSet()
                 updateNotificationButtons()
             }
+        }
+    }
+
+    private var exo: ExoPlayer? = null
+    private var originalOrder: List<MediaItem>? = null
+    private var reordering = false
+
+    private fun resolve(items: List<MediaItem>): List<MediaItem> = items.map { item ->
+        if (item.localConfiguration != null) item
+        else item.buildUpon().setUri(Uri.parse(item.mediaId)).build()
+    }
+
+    private fun itemsOf(p: Player): List<MediaItem> = List(p.mediaItemCount) { p.getMediaItemAt(it) }
+
+    /**
+     * Включение: текущий трек остаётся первым, остальные перемешиваются и идут после него.
+     * Выключение: возвращаем исходный порядок (новые треки, добавленные за это время, — в конце).
+     * Текущий трек не прерывается: убираем и добавляем только соседей.
+     */
+    private fun applyShuffle(p: ExoPlayer, enabled: Boolean) {
+        if (reordering) return
+        val n = p.mediaItemCount
+        val cur = p.currentMediaItemIndex
+        if (n < 2 || cur !in 0 until n) {
+            originalOrder = if (enabled) itemsOf(p) else null
+            return
+        }
+        reordering = true
+        try {
+            val present = itemsOf(p)
+            val target: List<MediaItem>
+            val currentItem = present[cur]
+            if (enabled) {
+                originalOrder = present
+                target = listOf(currentItem) + present.filterIndexed { i, _ -> i != cur }.shuffled()
+            } else {
+                val orig = originalOrder ?: return
+                originalOrder = null
+                val pool = HashMap<String, ArrayDeque<MediaItem>>()
+                present.forEachIndexed { i, m -> if (i != cur) pool.getOrPut(m.mediaId) { ArrayDeque() }.addLast(m) }
+                val ordered = ArrayList<MediaItem>(n)
+                var currentPlaced = false
+                for (m in orig) {
+                    if (!currentPlaced && m.mediaId == currentItem.mediaId) {
+                        ordered += currentItem
+                        currentPlaced = true
+                        continue
+                    }
+                    pool[m.mediaId]?.removeFirstOrNull()?.let { ordered += it }
+                }
+                if (!currentPlaced) ordered.add(0, currentItem)
+                pool.values.forEach { q -> ordered.addAll(q) }
+                target = ordered
+            }
+            val ci = target.indexOf(currentItem)
+            if (cur < n - 1) p.removeMediaItems(cur + 1, n)
+            if (cur > 0) p.removeMediaItems(0, cur)
+            if (ci > 0) p.addMediaItems(0, target.subList(0, ci))
+            if (ci < target.size - 1) p.addMediaItems(target.subList(ci + 1, target.size))
+        } finally {
+            reordering = false
         }
     }
 

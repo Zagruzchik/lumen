@@ -110,6 +110,20 @@ import app.lumen.player.ui.theme.CoverColors
 import app.lumen.player.ui.theme.LC
 import app.lumen.player.ui.theme.LocalAccent
 import kotlinx.coroutines.delay
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.ui.zIndex
+import androidx.compose.animation.core.animate
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.Velocity
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -856,9 +870,58 @@ fun QueueSheet(vm: MainViewModel, onClose: () -> Unit, sheetModifier: Modifier =
     val p by vm.player.collectAsStateWithLifecycle()
     val accent = LocalAccent.current
     val shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    val closeAt = with(density) { 130.dp.toPx() }
+    val close by rememberUpdatedState(onClose)
+
+    // Смахивание вниз: тянем за шапку или за список, когда он долистан до верха.
+    var offset by remember { mutableFloatStateOf(0f) }
+    var sheetHeight by remember { mutableFloatStateOf(1f) }
+    fun settle(velocity: Float) {
+        scope.launch {
+            if (offset > closeAt || velocity > 1800f) {
+                animate(offset, sheetHeight, animationSpec = tween(200)) { v, _ -> offset = v }
+                close()
+            } else {
+                animate(offset, 0f, animationSpec = spring(dampingRatio = 0.8f, stiffness = 500f)) { v, _ -> offset = v }
+            }
+        }
+    }
+    val nested = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (available.y < 0f && offset > 0f) {
+                    val used = max(available.y, -offset)
+                    offset += used
+                    return Offset(0f, used)
+                }
+                return Offset.Zero
+            }
+
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                if (available.y > 0f && source == NestedScrollSource.UserInput) {
+                    offset += available.y
+                    return Offset(0f, available.y)
+                }
+                return Offset.Zero
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                if (offset > 0f) {
+                    settle(available.y)
+                    return available
+                }
+                return Velocity.Zero
+            }
+        }
+    }
+    val dragState = rememberDraggableState { d -> offset = max(0f, offset + d) }
+
     Box(
         Modifier
             .fillMaxSize()
+            .graphicsLayer { alpha = 1f - (offset / (sheetHeight.coerceAtLeast(1f))).coerceIn(0f, 0.8f) }
             .background(Color(0x99000000))
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClose)
     ) {
@@ -867,66 +930,266 @@ fun QueueSheet(vm: MainViewModel, onClose: () -> Unit, sheetModifier: Modifier =
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .fillMaxHeight(0.8f)
+                .onSizeChanged { sheetHeight = it.height.toFloat() }
+                .graphicsLayer { translationY = offset }
                 .clip(shape)
                 .background(Color(0xF5141019))
                 .border(1.dp, Color(0x1FFFFFFF), shape)
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                 .navigationBarsPadding()
         ) {
-            Box(
+            Column(
                 Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .padding(top = 10.dp)
-                    .size(width = 40.dp, height = 4.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(Color(0x40FFFFFF))
-            )
-            Row(Modifier.padding(start = 20.dp, end = 12.dp, top = 12.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Очередь", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
-                    Text(pluralRu(p.queue.size, "трек", "трека", "треков"), fontSize = 13.sp, color = LC.Dim)
+                    .fillMaxWidth()
+                    .draggable(
+                        orientation = Orientation.Vertical,
+                        state = dragState,
+                        onDragStopped = { v -> settle(v) },
+                    )
+            ) {
+                Box(
+                    Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .padding(top = 10.dp)
+                        .size(width = 40.dp, height = 4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(Color(0x40FFFFFF))
+                )
+                Row(Modifier.padding(start = 20.dp, end = 12.dp, top = 12.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Очередь", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+                        Text(
+                            pluralRu(p.queue.size, "трек", "трека", "треков") + if (p.shuffle) " · перемешано" else "",
+                            fontSize = 13.sp,
+                            color = LC.Dim,
+                        )
+                    }
+                    IconBtn(
+                        LIcons.Shuffle,
+                        if (p.shuffle) "Вернуть исходный порядок" else "Перемешать очередь",
+                        { vm.toggleShuffle() },
+                        tint = if (p.shuffle) accent else LC.Text,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    IconBtn(LIcons.Close, "Закрыть очередь", onClose)
                 }
-                IconBtn(LIcons.Close, "Закрыть очередь", onClose)
             }
             val listState = rememberLazyListState(initialFirstVisibleItemIndex = (p.index - 2).coerceAtLeast(0))
-            LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                itemsIndexed(p.queue, key = { i, e -> "$i:${e.mediaId}" }) { i, e ->
-                    val cur = i == p.index
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .background(if (cur) Color(0x14FFFFFF) else Color.Transparent)
-                            .clickable { vm.skipTo(i) }
-                            .padding(start = 20.dp, end = 8.dp)
-                            .height(62.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Cover(e.mediaId, Modifier.size(44.dp), corner = 11.dp, sizePx = 128)
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                e.title,
-                                fontSize = 15.sp,
-                                fontWeight = if (cur) FontWeight.Bold else FontWeight.Medium,
-                                color = if (cur) accent else LC.Text,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(e.artist, fontSize = 13.sp, color = LC.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                        if (cur) {
-                            Icon(if (p.isPlaying) LIcons.Pause else LIcons.Play, null, Modifier.padding(12.dp).size(18.dp), tint = accent)
-                        } else {
-                            if (i > 0) {
-                                IconBtn(
-                                    LIcons.Back, "Выше", { vm.moveItem(i, i - 1) },
-                                    glass = false, size = 40.dp, iconSize = 16.dp, tint = LC.Faint,
-                                    modifier = Modifier.graphicsLayer { rotationZ = 90f },
-                                )
-                            }
-                            IconBtn(LIcons.Close, "Убрать из очереди", { vm.removeAt(i) }, glass = false, size = 40.dp, iconSize = 16.dp, tint = LC.Dim)
-                        }
+            LaunchedEffect(p.shuffle) {
+                // После перемешивания текущий трек наверху — показываем начало списка.
+                listState.scrollToItem((p.index - 2).coerceAtLeast(0))
+            }
+            QueueList(vm, p, listState, Modifier.fillMaxSize().nestedScroll(nested))
+        }
+    }
+}
+
+private data class QItem(val key: String, val index: Int, val entry: app.lumen.player.playback.QueueEntry)
+
+private fun keyed(queue: List<app.lumen.player.playback.QueueEntry>): List<QItem> {
+    val counts = HashMap<String, Int>()
+    return queue.mapIndexed { i, e ->
+        val n = (counts[e.mediaId] ?: 0) + 1
+        counts[e.mediaId] = n
+        QItem("${e.mediaId}#$n", i, e)
+    }
+}
+
+/**
+ * Очередь: тап — перейти к треку, смахнуть вправо — убрать,
+ * удержать и потянуть — переставить (соседи плавно расступаются, у краёв список сам прокручивается).
+ */
+@Composable
+private fun QueueList(
+    vm: MainViewModel,
+    p: PlayerState,
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    modifier: Modifier,
+) {
+    val accent = LocalAccent.current
+    val scope = rememberCoroutineScope()
+    val items = remember { mutableStateListOf<QItem>() }
+    var draggingKey by remember { mutableStateOf<String?>(null) }
+    var dragFrom by remember { mutableIntStateOf(-1) }
+    var dragOffset by remember { mutableFloatStateOf(0f) }
+
+    LaunchedEffect(p.queue) {
+        if (draggingKey == null) {
+            items.clear()
+            items.addAll(keyed(p.queue))
+        }
+    }
+    val currentKey = remember(p.queue, p.index) { keyed(p.queue).getOrNull(p.index)?.key }
+    val currentPos = items.indexOfFirst { it.key == currentKey }
+
+    fun checkSwap() {
+        val key = draggingKey ?: return
+        val info = listState.layoutInfo.visibleItemsInfo
+        val me = info.firstOrNull { it.key == key } ?: return
+        var idx = items.indexOfFirst { it.key == key }
+        while (dragOffset > me.size / 2f && idx < items.lastIndex) {
+            items.add(idx + 1, items.removeAt(idx))
+            idx++
+            dragOffset -= me.size
+        }
+        while (dragOffset < -me.size / 2f && idx > 0) {
+            items.add(idx - 1, items.removeAt(idx))
+            idx--
+            dragOffset += me.size
+        }
+    }
+
+    // Автопрокрутка, когда тащим трек к верхнему или нижнему краю.
+    LaunchedEffect(draggingKey) {
+        while (draggingKey != null) {
+            val info = listState.layoutInfo
+            val me = info.visibleItemsInfo.firstOrNull { it.key == draggingKey }
+            if (me != null) {
+                val top = me.offset + dragOffset
+                val bottom = top + me.size
+                val edge = me.size * 0.8f
+                val delta = when {
+                    top < info.viewportStartOffset + edge -> -14f
+                    bottom > info.viewportEndOffset - edge -> 14f
+                    else -> 0f
+                }
+                if (delta != 0f) {
+                    val used = listState.scrollBy(delta)
+                    dragOffset += used
+                    checkSwap()
+                }
+            }
+            delay(16)
+        }
+    }
+
+    LazyColumn(state = listState, modifier = modifier) {
+        itemsIndexed(items, key = { _, q -> q.key }) { i, q ->
+            val dragging = q.key == draggingKey
+            val cur = q.key == currentKey
+            val past = currentPos >= 0 && i < currentPos
+            var swipe by remember(q.key) { mutableFloatStateOf(0f) }
+            var swiping by remember(q.key) { mutableStateOf(false) }
+            var rowWidth by remember { mutableFloatStateOf(1f) }
+            val shownSwipe by animateFloatAsState(
+                swipe,
+                if (swiping) snap() else spring(dampingRatio = 0.8f, stiffness = 500f),
+                label = "swipe",
+            )
+            val lift by animateFloatAsState(if (dragging) 1f else 0f, tween(150), label = "lift")
+
+            Box(
+                (if (dragging) Modifier else Modifier.animateItem())
+                    .fillMaxWidth()
+                    .height(62.dp)
+                    .zIndex(if (dragging) 1f else 0f)
+                    .onSizeChanged { rowWidth = it.width.toFloat() }
+                    .graphicsLayer {
+                        translationY = if (dragging) dragOffset else 0f
+                        val sc = 1f + 0.03f * lift
+                        scaleX = sc
+                        scaleY = sc
+                        shadowElevation = 14.dp.toPx() * lift
+                        shape = RoundedCornerShape(14.dp * lift)
+                        clip = lift > 0.01f
                     }
+            ) {
+                // Красная подложка, которая открывается при смахивании вправо.
+                Row(
+                    Modifier
+                        .matchParentSize()
+                        .background(Color(0xFFC0392B).copy(alpha = (shownSwipe / (rowWidth * 0.35f)).coerceIn(0f, 1f)))
+                        .padding(start = 24.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(LIcons.Trash, null, Modifier.size(20.dp), tint = Color.White)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Убрать", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                }
+                Row(
+                    Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { translationX = shownSwipe }
+                        .background(if (dragging) Color(0xFF241D2E) else Color(0xFF141019))
+                        .background(if (cur) Color(0x14FFFFFF) else Color.Transparent)
+                        .pointerInput(q.key) {
+                            detectHorizontalDragGestures(
+                                onDragStart = { swiping = true },
+                                onDragEnd = {
+                                    swiping = false
+                                    if (swipe > rowWidth * 0.35f) {
+                                        swipe = rowWidth
+                                        scope.launch {
+                                            delay(170)
+                                            val idx = items.indexOfFirst { it.key == q.key }
+                                            if (idx >= 0) vm.removeAt(idx)
+                                        }
+                                    } else {
+                                        swipe = 0f
+                                    }
+                                },
+                                onDragCancel = {
+                                    swiping = false
+                                    swipe = 0f
+                                },
+                            ) { change, d ->
+                                if (draggingKey != null) return@detectHorizontalDragGestures
+                                change.consume()
+                                swipe = max(0f, swipe + d)
+                            }
+                        }
+                        .pointerInput(q.key) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = {
+                                    draggingKey = q.key
+                                    dragFrom = items.indexOfFirst { it.key == q.key }
+                                    dragOffset = 0f
+                                },
+                                onDragEnd = {
+                                    val to = items.indexOfFirst { it.key == q.key }
+                                    if (dragFrom >= 0 && to >= 0 && dragFrom != to) vm.moveItem(dragFrom, to)
+                                    draggingKey = null
+                                    dragOffset = 0f
+                                },
+                                onDragCancel = {
+                                    draggingKey = null
+                                    dragOffset = 0f
+                                    items.clear()
+                                    items.addAll(keyed(p.queue))
+                                },
+                            ) { change, amount ->
+                                change.consume()
+                                dragOffset += amount.y
+                                checkSwap()
+                            }
+                        }
+                        .clickable { items.indexOfFirst { it.key == q.key }.takeIf { it >= 0 }?.let { vm.skipTo(it) } }
+                        .padding(start = 20.dp, end = 8.dp)
+                        .graphicsLayer { alpha = if (past && !dragging) 0.5f else 1f },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Cover(q.entry.mediaId, Modifier.size(44.dp), corner = 11.dp, sizePx = 128)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            q.entry.title,
+                            fontSize = 15.sp,
+                            fontWeight = if (cur) FontWeight.Bold else FontWeight.Medium,
+                            color = if (cur) accent else LC.Text,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(q.entry.artist, fontSize = 13.sp, color = LC.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    if (cur) {
+                        Icon(if (p.isPlaying) LIcons.Pause else LIcons.Play, null, Modifier.padding(end = 6.dp).size(18.dp), tint = accent)
+                    }
+                    Icon(
+                        LIcons.DragHandle,
+                        "Удерживай, чтобы переставить",
+                        Modifier.padding(12.dp).size(20.dp),
+                        tint = if (dragging) accent else LC.Faint,
+                    )
                 }
             }
         }
