@@ -179,12 +179,12 @@ fun HomeScreen(vm: MainViewModel, nav: Nav, actions: TrackActions, bottomPad: Dp
                         .fillMaxWidth()
                         .padding(horizontal = 4.dp),
                 )
-                ContinueCard(vm, p, last, onOpenPlayer)
             }
         }
     }
 }
 
+@Suppress("unused")
 @Composable
 private fun ContinueCard(vm: MainViewModel, p: PlayerState, last: TrackEntity?, onOpen: () -> Unit) {
     val accent = LocalAccent.current
