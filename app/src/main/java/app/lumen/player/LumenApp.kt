@@ -51,6 +51,7 @@ class AppGraph(val context: Context) {
     val sleepTimer = SleepTimer(appScope, player)
     val eq = EqController(prefs)
     val beats = app.lumen.player.playback.BeatAnalyzer(context)
+    val recs = app.lumen.player.data.RecommendationsRepository(context, db.dao(), prefs)
 
     private var observerRegistered = false
     private var rescanJob: Job? = null

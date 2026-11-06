@@ -57,6 +57,11 @@ class Prefs(context: Context) {
         get() = sp.getFloat("beatIntensity", 0.5f)
         set(v) = sp.edit().putFloat("beatIntensity", v).apply()
 
+    /** Рекомендации, которые пользователь скрыл. */
+    var hiddenRecs: Set<String>
+        get() = sp.getStringSet("hiddenRecs", emptySet())?.toSet() ?: emptySet()
+        set(v) = sp.edit().putStringSet("hiddenRecs", v).apply()
+
     var queue: List<String>
         get() = sp.getString("queue", "").orEmpty().split('\n').filter { it.isNotBlank() }
         set(v) = sp.edit().putString("queue", v.joinToString("\n")).apply()

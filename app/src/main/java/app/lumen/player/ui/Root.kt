@@ -127,6 +127,7 @@ sealed interface Dest {
     data class Artist(val name: String) : Dest
     data class Folder(val path: String, val name: String) : Dest
     data object Stats : Dest
+    data object Recs : Dest
 }
 
 class Nav(
@@ -237,7 +238,7 @@ private const val BACK_LYRICS = 2
 private const val BACK_PLAYER = 3
 private const val BACK_NAV = 4
 
-private val TAB_ORDER = listOf(Dest.Home, Dest.Library, Dest.Favorites, Dest.Settings)
+private val TAB_ORDER = listOf(Dest.Home, Dest.Library, Dest.Recs, Dest.Favorites, Dest.Settings)
 
 @Composable
 private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
@@ -421,6 +422,7 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                         Dest.Favorites -> FavoritesScreen(vm, nav, actions, bottomPad)
                         Dest.Settings -> SettingsScreen(vm, bottomPad, onOpenStats = { nav.open(Dest.Stats) })
                         Dest.Stats -> app.lumen.player.ui.screens.StatsScreen(vm, nav, bottomPad)
+                        Dest.Recs -> app.lumen.player.ui.screens.RecsScreen(vm, bottomPad)
                         is Dest.Album -> AlbumScreen(vm, d.key, nav, actions, bottomPad)
                         is Dest.Artist -> ArtistScreen(vm, d.name, nav, actions, bottomPad)
                         is Dest.Folder -> FolderScreen(vm, d.path, d.name, nav, actions, bottomPad)
@@ -663,6 +665,7 @@ private class NavEntry(val dest: Dest, val icon: ImageVector, val label: String)
 private val NAV_ENTRIES = listOf(
     NavEntry(Dest.Home, LIcons.Home, "Главная"),
     NavEntry(Dest.Library, LIcons.Library, "Библиотека"),
+    NavEntry(Dest.Recs, LIcons.Sparkle, "Для тебя"),
     NavEntry(Dest.Favorites, LIcons.HeartOutline, "Любимое"),
     NavEntry(Dest.Settings, LIcons.Sliders, "Настройки"),
 )

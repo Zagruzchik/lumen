@@ -688,6 +688,36 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ---------- рекомендации ----------
+
+    val recs = MutableStateFlow(g.recs.cached() ?: app.lumen.player.data.RecsState())
+    private var recsJob: Job? = null
+
+    /** Обновляем, если кэш старше суток (или по кнопке). Секции появляются по мере готовности. */
+    fun refreshRecs(force: Boolean = false) {
+        if (recsJob?.isActive == true) return
+        val cur = recs.value
+        if (!force && cur.sections.isNotEmpty() && System.currentTimeMillis() - cur.updatedAt < 24L * 3600 * 1000) return
+        recs.value = cur.copy(loading = true, offline = false)
+        recsJob = viewModelScope.launch {
+            val result = runCatching {
+                g.recs.build { partial -> if (partial.isNotEmpty()) recs.value = recs.value.copy(sections = partial, loading = true) }
+            }
+            val built = result.getOrNull()
+            recs.value = when {
+                built != null && built.sections.isNotEmpty() -> built.copy(loading = false)
+                else -> recs.value.copy(loading = false, offline = true)
+            }
+        }
+    }
+
+    fun hideRec(item: app.lumen.player.data.RecItem) {
+        g.prefs.hiddenRecs = g.prefs.hiddenRecs + item.key
+        recs.value = recs.value.copy(
+            sections = recs.value.sections.map { s -> s.copy(items = s.items.filter { it.key != item.key }) }.filter { it.items.isNotEmpty() }
+        )
+    }
+
     fun album(key: String) = dao.album(key)
     fun albumTracks(key: String) = dao.albumTracks(key)
     fun artistTracks(name: String) = dao.artistTracks(name)

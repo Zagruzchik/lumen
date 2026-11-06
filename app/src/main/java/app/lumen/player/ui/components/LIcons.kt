@@ -61,6 +61,7 @@ object LIcons {
     val Trash = stroke("trash", "M4 7h16", "M9 7V4h6v3", "M6 7l1 13h10l1-13")
     val Person = stroke("person", circle(12f, 8f, 4f), "M4 20c1.5-4 4.5-6 8-6s6.5 2 8 6")
     val Disc = stroke("disc", circle(12f, 12f, 9f), circle(12f, 12f, 2.5f))
+    val Sparkle = stroke("sparkle", "M11 3l1.9 5.1L18 10l-5.1 1.9L11 17l-1.9-5.1L4 10l5.1-1.9z", "M19 15l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z")
     val ArrowUp = stroke("arrow_up", "M12 19V5", "M6 11l6-6 6 6")
     val ArrowDown = stroke("arrow_down", "M12 5v14", "M6 13l6 6 6-6")
     val DragHandle = stroke("drag", "M5 9h14", "M5 15h14")
