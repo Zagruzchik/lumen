@@ -378,7 +378,9 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
     val hasCurrent = p.currentId != null
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     // На главной мини-плеер крупнее и с кнопками «назад/вперёд»; в остальных разделах — обычный.
-    val onHome = stack.size == 1 && stack.first() == Dest.Home
+    val homeTop by vm.homeAtTop.collectAsStateWithLifecycle()
+    // Большой — только на первом экране главной; при прокрутке вниз плавно сжимается.
+    val onHome = stack.size == 1 && stack.first() == Dest.Home && homeTop
     val miniBig by animateFloatAsState(
         if (onHome) 1f else 0f,
         tween(480, easing = androidx.compose.animation.core.FastOutSlowInEasing),
@@ -801,7 +803,6 @@ private fun MiniPlayer(
                 tint = if (fav) accent else LC.Dim,
                 iconSize = 22.dp,
             )
-            MiniSkip(LIcons.Prev, "Предыдущий", big) { vm.previous() }
             Box(
                 Modifier
                     .size((48f + 6f * big).dp)
@@ -812,7 +813,6 @@ private fun MiniPlayer(
             ) {
                 Icon(if (p.isPlaying) LIcons.Pause else LIcons.Play, null, Modifier.size(22.dp), tint = Color(0xFF0B0B12))
             }
-            MiniSkip(LIcons.Next, "Следующий", big) { vm.next() }
         }
         Box(
             Modifier

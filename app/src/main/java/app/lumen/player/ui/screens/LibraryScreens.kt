@@ -129,6 +129,16 @@ fun HomeScreen(vm: MainViewModel, nav: Nav, actions: TrackActions, bottomPad: Dp
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val floors = remember(listState) { HomeFloors(listState, scope) }
+    // Сообщаем, виден ли первый экран: от этого зависит размер мини-плеера.
+    androidx.compose.runtime.LaunchedEffect(listState, searchOpen, tracks.isEmpty()) {
+        if (searchOpen || tracks.isEmpty()) {
+            vm.homeAtTop.value = searchOpen.not() && tracks.isEmpty()
+            return@LaunchedEffect
+        }
+        androidx.compose.runtime.snapshotFlow {
+            listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset < floors.heroPx * 0.35f
+        }.collect { vm.homeAtTop.value = it }
+    }
     // Страховка: если прокрутка остановилась между этажами — доводим до ближайшего.
     androidx.compose.runtime.LaunchedEffect(listState) {
         androidx.compose.runtime.snapshotFlow { listState.isScrollInProgress }.collect { moving ->

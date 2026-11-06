@@ -541,6 +541,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** true — карточка перевёрнута на «обратную сторону луны». */
     val moonSide = MutableStateFlow(false)
+
+    /** Главная на первом «этаже» (видна кнопка) — мини-плеер крупный. */
+    val homeAtTop = MutableStateFlow(true)
     fun setMoonSide(v: Boolean) {
         moonSide.value = v
     }
