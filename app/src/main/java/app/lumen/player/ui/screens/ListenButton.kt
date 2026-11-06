@@ -75,26 +75,28 @@ fun ListenButton(
     vm: MainViewModel,
     colors: CoverColors,
     playing: Boolean,
+    hasQueue: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
-    val beat = rememberBeatSignal(vm)
+    val active = app.lumen.player.ui.components.LocalHomeActive.current
+    val beat = rememberBeatSignal(vm, active)
     val a by animateColorAsState(colors.a, tween(900), label = "la")
     val b by animateColorAsState(colors.b, tween(900), label = "lb")
     val c by animateColorAsState(colors.c, tween(900), label = "lc")
     val acc by animateColorAsState(colors.accent, tween(900), label = "lacc")
 
-    val t = rememberInfiniteTransition(label = "listen")
-    val spin by t.animateFloat(0f, 360f, infiniteRepeatable(tween(16000, easing = LinearEasing)), label = "spin")
-    val breath by t.animateFloat(0f, 1f, infiniteRepeatable(tween(3400, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "breath")
-    val ringPhase by t.animateFloat(0f, 1f, infiniteRepeatable(tween(4200, easing = LinearEasing)), label = "rings")
     // Непрерывные часы (секунды): у всех вращений и мерцаний нет «шва» на перезапуске цикла.
     val clock = remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
-    androidx.compose.runtime.LaunchedEffect(Unit) {
+    // Все движения кнопки — от одних часов (один источник кадров вместо четырёх).
+    // Если главная закрыта плеером — часы стоят и ничего не перерисовывается.
+    androidx.compose.runtime.LaunchedEffect(active) {
+        if (!active) return@LaunchedEffect
+        val base = clock.floatValue
         val start = androidx.compose.runtime.withFrameNanos { it }
-        while (true) androidx.compose.runtime.withFrameNanos { clock.floatValue = (it - start) / 1_000_000_000f }
+        while (true) androidx.compose.runtime.withFrameNanos { clock.floatValue = base + (it - start) / 1_000_000_000f }
     }
     // Сглаженная сила удара: быстро нарастает, медленно спадает — без рывков.
     val smooth = remember { floatArrayOf(0f, 0f) } // [уровень, прошлое время]
@@ -126,8 +128,11 @@ fun ListenButton(
         ) {
             Canvas(Modifier.fillMaxSize()) {
                 val cx = center
-                val R = size.minDimension * 0.40f * (1f + 0.02f * breath)
                 val now = clock.floatValue
+                val spin = (now * 22.5f) % 360f
+                val breath = 0.5f - 0.5f * cos(now * 2f * PI.toFloat() / 6.8f)
+                val ringPhase = (now / 4.2f) % 1f
+                val R = size.minDimension * 0.40f * (1f + 0.02f * breath)
                 val dt = (now - smooth[1]).coerceIn(0f, 0.1f)
                 smooth[1] = now
                 val raw = beat.level().coerceIn(0f, 1f)
@@ -273,7 +278,11 @@ fun ListenButton(
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    if (playing) "Играет" else "Слушать\nмузыку",
+                    when {
+                        playing -> "Играет"
+                        hasQueue -> "Пауза"
+                        else -> "Слушать"
+                    },
                     fontSize = 27.sp,
                     lineHeight = 29.sp,
                     fontWeight = FontWeight.Black,

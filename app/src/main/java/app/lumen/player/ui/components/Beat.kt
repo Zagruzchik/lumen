@@ -66,8 +66,11 @@ class BeatSignal {
     }
 }
 
+/** Видна ли сейчас главная (не закрыта развёрнутым плеером). */
+val LocalHomeActive = androidx.compose.runtime.compositionLocalOf { true }
+
 @Composable
-fun rememberBeatSignal(vm: MainViewModel): BeatSignal {
+fun rememberBeatSignal(vm: MainViewModel, active: Boolean = true): BeatSignal {
     val sig = remember { BeatSignal() }
     val beats by vm.beats.collectAsStateWithLifecycle()
     val flashesOn by vm.beatFlashes.collectAsStateWithLifecycle()
@@ -79,7 +82,9 @@ fun rememberBeatSignal(vm: MainViewModel): BeatSignal {
         sig.intensity = intensity
         sig.playing = p.isPlaying
     }
-    LaunchedEffect(Unit) {
+    LaunchedEffect(active) {
+        // Невидимые экраны не тратят кадры на ритм.
+        if (!active) return@LaunchedEffect
         var basePos = vm.position()
         var baseT = withFrameMillis { it }
         var lastPoll = baseT

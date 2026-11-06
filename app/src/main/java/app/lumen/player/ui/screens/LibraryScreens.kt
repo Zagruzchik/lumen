@@ -202,6 +202,7 @@ fun HomeScreen(vm: MainViewModel, nav: Nav, actions: TrackActions, bottomPad: Dp
                                 vm = vm,
                                 colors = colors,
                                 playing = p.isPlaying,
+                                hasQueue = p.queue.isNotEmpty(),
                                 onClick = {
                                     if (p.queue.isNotEmpty()) vm.toggle() else vm.playLoved(true)
                                 },
@@ -1047,7 +1048,7 @@ private fun SearchResults(
  */
 @Composable
 private fun LumenBrand(vm: MainViewModel, colors: app.lumen.player.ui.theme.CoverColors) {
-    val beat = app.lumen.player.ui.components.rememberBeatSignal(vm)
+    val beat = app.lumen.player.ui.components.rememberBeatSignal(vm, app.lumen.player.ui.components.LocalHomeActive.current)
     val a by androidx.compose.animation.animateColorAsState(colors.a, androidx.compose.animation.core.tween(900), label = "ba")
     val c by androidx.compose.animation.animateColorAsState(colors.c, androidx.compose.animation.core.tween(900), label = "bc")
     val acc by androidx.compose.animation.animateColorAsState(colors.accent, androidx.compose.animation.core.tween(900), label = "bacc")

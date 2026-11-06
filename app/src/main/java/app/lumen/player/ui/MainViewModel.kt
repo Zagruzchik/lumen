@@ -121,6 +121,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // ---------- воспроизведение ----------
 
     fun play(list: List<TrackEntity>, index: Int) {
+        // Нажатие на трек, который уже играет, — пауза/продолжение, а не перезапуск.
+        val t = list.getOrNull(index)
+        if (t != null && t.uri == player.value.currentId) {
+            conn.toggle()
+            return
+        }
         lovedMode.value = 0
         conn.playTracks(list, index)
     }
@@ -140,7 +146,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun seekTo(ms: Long) = conn.seekTo(ms)
     fun toggleShuffle() = conn.toggleShuffle()
     fun cycleRepeat() = conn.cycleRepeat()
-    fun skipTo(i: Int) = conn.skipTo(i)
+    fun skipTo(i: Int) {
+        if (i == player.value.index && player.value.currentId != null) conn.toggle() else conn.skipTo(i)
+    }
     fun removeAt(i: Int) = conn.removeAt(i)
     fun moveItem(from: Int, to: Int) = conn.moveItem(from, to)
     fun position(): Long = conn.position

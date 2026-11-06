@@ -47,7 +47,10 @@ fun Modifier.glassBlur(state: HazeState, tint: Color = Color(0x660E0A16)): Modif
             blurRadius = 28.dp,
             noiseFactor = 0.06f,
         ),
-    )
+    ) {
+        // Размываем уменьшенную вдвое картинку: на радиусе 28dp разницы не видно, а работы в 4 раза меньше.
+        inputScale = dev.chrisbanes.haze.HazeInputScale.Fixed(0.5f)
+    }
 
 /** Волнистая полоса прогресса в стиле Android 13: волна «бежит», пока играет музыка. */
 @Composable

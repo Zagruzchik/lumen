@@ -255,6 +255,8 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
     // 0 — свёрнут в мини-плеер, 1 — полноэкранный плеер. Значение ведёт палец, потом пружина.
     val expand = remember { Animatable(0f) }
     val playerVisible by remember { derivedStateOf { expand.value > 0.001f } }
+    // Когда плеер раскрыт целиком, главная под ним не анимируется.
+    val homeActive by remember { derivedStateOf { expand.value < 0.98f } }
     val playerExpanded by remember { derivedStateOf { expand.targetValue > 0.5f } }
     var screenH by remember { mutableFloatStateOf(2000f) }
 
@@ -426,7 +428,9 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                     label = "nav",
                 ) { d ->
                     when (d) {
-                        Dest.Home -> HomeScreen(vm, nav, actions, bottomPad, onOpenPlayer = { openPlayer() })
+                        Dest.Home -> androidx.compose.runtime.CompositionLocalProvider(
+                            app.lumen.player.ui.components.LocalHomeActive provides homeActive,
+                        ) { HomeScreen(vm, nav, actions, bottomPad, onOpenPlayer = { openPlayer() }) }
                         Dest.Library -> LibraryScreen(vm, nav, actions, libTab, { libTab = it }, bottomPad)
                         Dest.Favorites -> FavoritesScreen(vm, nav, actions, bottomPad)
                         Dest.Settings -> SettingsScreen(vm, bottomPad, onOpenStats = { nav.open(Dest.Stats) })
@@ -548,7 +552,7 @@ fun AmbientBackground(colors: CoverColors, modifier: Modifier = Modifier.fillMax
     }
 }
 
-private const val MINI_EXTRA = 22f
+private const val MINI_EXTRA = 44f
 
 /** Кнопка «назад/вперёд» мини-плеера: плавно раскрывается по ширине на главной. */
 @Composable
@@ -569,11 +573,22 @@ private fun MiniSkip(icon: androidx.compose.ui.graphics.vector.ImageVector, labe
 
 @Composable
 private fun MiniInfo(id: String, title: String, artist: String, big: Float, modifier: Modifier = Modifier) {
-    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Cover(id, Modifier.size((48f + 16f * big).dp), corner = (13f + 3f * big).dp, sizePx = 192)
-        Spacer(Modifier.width(12.dp))
+    Row(
+        modifier.fillMaxWidth().padding(start = (9f + 3f * big).dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Cover(id, Modifier.size((48f + 24f * big).dp), corner = (13f + 4f * big).dp, sizePx = 192)
+        Spacer(Modifier.width((12f + 2f * big).dp))
         Column(Modifier.weight(1f)) {
-            Text(title, fontSize = (15f + 1f * big).sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                title,
+                fontSize = (15f + 1f * big).sp,
+                lineHeight = 19.sp,
+                fontWeight = FontWeight.SemiBold,
+                // На главной плеер выше — название целиком, в две строки.
+                maxLines = if (big > 0.5f) 2 else 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             Text(artist, fontSize = 13.sp, color = LC.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
@@ -724,7 +739,7 @@ private fun MiniPlayer(
         Row(
             Modifier
                 .fillMaxSize()
-                .padding(start = (9f + 3f * big).dp, end = (8f + 2f * big).dp),
+                .padding(end = (8f + 2f * big).dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
@@ -732,41 +747,40 @@ private fun MiniPlayer(
                     .weight(1f)
                     .fillMaxHeight()
                     .onSizeChanged { areaW = it.width.toFloat().coerceAtLeast(1f) }
-                    // Края области мягко растворяются, пока карточки едут, — никакой «обрезанной» линии.
-                    .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+                    // Слева область упирается в скруглённый край карточки, справа — постоянная
+                    // мягкая растушёвка перед кнопками. Она не включается и не выключается, поэтому не «мигает».
+                    .graphicsLayer {
+                        compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen
+                        clip = true
+                    }
                     .drawWithContent {
                         drawContent()
-                        val m = (kotlin.math.abs(shownOff()) / areaW * 5f).coerceIn(0f, 1f)
-                        if (m > 0.001f) {
-                            val fl = 18.dp.toPx() / size.width
-                            val fr = 36.dp.toPx() / size.width
-                            val edge = Color.Black.copy(alpha = 1f - m)
-                            drawRect(
-                                Brush.horizontalGradient(
-                                    0f to edge,
-                                    fl to Color.Black,
-                                    1f - fr to Color.Black,
-                                    1f to edge,
-                                ),
-                                blendMode = androidx.compose.ui.graphics.BlendMode.DstIn,
-                            )
-                        }
+                        val fr = 22.dp.toPx() / size.width
+                        drawRect(
+                            Brush.horizontalGradient(
+                                0f to Color.Black,
+                                1f - fr to Color.Black,
+                                1f to Color.Transparent,
+                            ),
+                            blendMode = androidx.compose.ui.graphics.BlendMode.DstIn,
+                        )
                     },
                 contentAlignment = Alignment.CenterStart,
             ) {
                 val curEntry = p.queue.getOrNull(p.index)?.takeIf { it.mediaId == id }
                     ?.let { if (it.title.isBlank()) it.copy(title = p.title, artist = p.artist) else it }
                     ?: app.lumen.player.playback.QueueEntry(id, p.title, p.artist)
-                val o = shownOff()
                 // Три карточки — предыдущая, текущая, следующая — каждая со своим ключом:
                 // после переключения «следующая» просто становится текущей, ничего не перерисовывается.
+                // Положение читается только при отрисовке — во время свайпа нет перекомпоновки.
+                val dup = prevE != null && prevE.mediaId == nextE?.mediaId
                 val slots = buildList {
-                    if (prevE != null && (o >= 0f || prevE.mediaId != nextE?.mediaId) && prevE.mediaId != id) add(-1 to prevE)
+                    if (prevE != null && prevE.mediaId != id) add(-1 to prevE)
                     add(0 to curEntry)
-                    if (nextE != null && (o < 0f || prevE?.mediaId != nextE.mediaId) && nextE.mediaId != id) add(1 to nextE)
+                    if (nextE != null && nextE.mediaId != id) add(1 to nextE)
                 }
                 slots.forEach { (slot, e) ->
-                    androidx.compose.runtime.key(e.mediaId) {
+                    androidx.compose.runtime.key(if (dup && slot != 0) "${e.mediaId}#$slot" else e.mediaId) {
                         MiniInfo(e.mediaId, e.title, e.artist, big, Modifier.graphicsLayer {
                             val x = shownOff() + slot * areaW
                             val d = (kotlin.math.abs(x) / areaW).coerceIn(0f, 1f)
