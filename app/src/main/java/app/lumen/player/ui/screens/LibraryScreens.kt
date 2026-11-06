@@ -87,7 +87,6 @@ import app.lumen.player.ui.theme.LC
 import app.lumen.player.ui.theme.LocalAccent
 import java.util.Calendar
 import kotlinx.coroutines.launch
-import androidx.compose.foundation.gestures.animateScrollBy
 
 @Composable
 private fun topInset(): Dp = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
@@ -134,8 +133,7 @@ fun HomeScreen(vm: MainViewModel, nav: Nav, actions: TrackActions, bottomPad: Dp
     androidx.compose.runtime.LaunchedEffect(listState) {
         androidx.compose.runtime.snapshotFlow { listState.isScrollInProgress }.collect { moving ->
             if (!moving && listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset > 0) {
-                val h = listState.layoutInfo.viewportSize.height
-                floors.goTo(if (listState.firstVisibleItemScrollOffset > h / 2) 1 else 0)
+                floors.goTo(if (listState.firstVisibleItemScrollOffset > floors.heroPx / 2) 1 else 0)
             }
         }
     }
@@ -179,7 +177,11 @@ fun HomeScreen(vm: MainViewModel, nav: Nav, actions: TrackActions, bottomPad: Dp
                 2 -> Column(Modifier.fillMaxSize().padding(top = 12.dp)) {
                     EmptyLibrary(scanning, onRescan = { vm.rescan() }, onSettings = { nav.tab(Dest.Settings, null) })
                 }
-                else -> LazyColumn(
+                else -> androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+                val heroH = maxHeight
+                val heroPx = with(androidx.compose.ui.platform.LocalDensity.current) { heroH.toPx() }
+                floors.heroPx = heroPx
+                LazyColumn(
                     Modifier
                         .fillMaxSize()
                         .nestedScroll(floors.connection),
@@ -188,11 +190,12 @@ fun HomeScreen(vm: MainViewModel, nav: Nav, actions: TrackActions, bottomPad: Dp
                 ) {
                     // Первый экран: только большая кнопка (и мини-плеер снизу).
                     item(key = "hero") {
+                        // Ровно в высоту экрана: нижний этаж целиком за краем, ничего не выглядывает.
                         Column(
                             Modifier
-                                .fillParentMaxHeight()
+                                .height(heroH)
                                 .fillMaxWidth()
-                                .padding(bottom = bottomPad - 8.dp),
+                                .padding(top = 34.dp, bottom = bottomPad - 8.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             ListenButton(
@@ -283,6 +286,7 @@ fun HomeScreen(vm: MainViewModel, nav: Nav, actions: TrackActions, bottomPad: Dp
                             TrackRow(t, t.uri == p.currentId, t.uri in favs, actions, onClick = { vm.play(forgotten, i) })
                         }
                     }
+                }
                 }
             }
         }
@@ -816,41 +820,48 @@ private fun durationLabel(ms: Long) = formatMs(ms)
 
 /**
  * Главная из двух «этажей»: верхний — кнопка, нижний — всё остальное.
- * Любое движение на верхнем этаже плавно довозит до нужного этажа целиком,
- * промежуточных положений нет. Снизу, упёршись в верх нижнего этажа и потянув ещё,
- * так же плавно возвращаемся к кнопке. Внутри нижнего этажа — обычная прокрутка.
+ * Пока палец на экране, верхний этаж не двигается — запоминаем только направление.
+ * Как только палец отпущен, плавно довозим до нужного этажа целиком.
+ * Снизу, упёршись в начало нижнего этажа и потянув вниз, так же возвращаемся к кнопке.
  */
 private class HomeFloors(
     private val list: androidx.compose.foundation.lazy.LazyListState,
     private val scope: kotlinx.coroutines.CoroutineScope,
 ) {
+    var heroPx = 1f
     private var animating = false
+    private var pending: Int? = null
 
+    /** Для кнопки «листай вниз» и страховки. */
     fun goTo(floor: Int) {
         if (animating) return
-        val h = list.layoutInfo.viewportSize.height.toFloat()
-        if (h <= 0f) return
+        scope.launch { glide(floor) }
+    }
+
+    private suspend fun glide(floor: Int) {
         val idx = list.firstVisibleItemIndex
-        val off = list.firstVisibleItemScrollOffset.toFloat()
         if (idx > 1) return
-        // Верхний этаж ровно в высоту экрана, значит нижний начинается на h.
-        val pos = if (idx == 0) off else h + off
-        val dist = (if (floor == 0) 0f else h) - pos
+        val pos = if (idx == 0) list.firstVisibleItemScrollOffset.toFloat() else heroPx + list.firstVisibleItemScrollOffset
+        val dist = (if (floor == 0) 0f else heroPx) - pos
         if (kotlin.math.abs(dist) < 1f) return
         animating = true
-        scope.launch {
-            try {
-                list.animateScrollBy(
+        try {
+            // Приоритет как у пальца — чтобы никакая инерция не перебила доводку.
+            list.scroll(androidx.compose.foundation.MutatePriority.UserInput) {
+                var done = 0f
+                androidx.compose.animation.core.animate(
+                    0f,
                     dist,
-                    androidx.compose.animation.core.tween(
-                        if (floor == 1) 720 else 680,
+                    animationSpec = androidx.compose.animation.core.tween(
+                        700,
                         easing = androidx.compose.animation.core.CubicBezierEasing(0.22f, 1f, 0.36f, 1f),
                     ),
-                )
-                list.scrollToItem(floor, 0)
-            } finally {
-                animating = false
+                ) { v, _ ->
+                    done += scrollBy(v - done)
+                }
             }
+        } finally {
+            animating = false
         }
     }
 
@@ -864,231 +875,37 @@ private class HomeFloors(
             val off = list.firstVisibleItemScrollOffset
             val user = source == androidx.compose.ui.input.nestedscroll.NestedScrollSource.UserInput
             if (idx == 0) {
-                // Верхний этаж: вручную не двигаем — только доводка.
                 if (user) {
-                    if (available.y < -1.5f) goTo(1)
-                    else if (available.y > 1.5f && off > 0) goTo(0)
+                    if (available.y < -1f) pending = 1
+                    else if (available.y > 1f) pending = if (off > 0) 0 else null
                 }
                 return available
             }
             if (idx == 1 && available.y > 0f) {
                 if (off == 0) {
-                    if (user && available.y > 1.5f) goTo(0)
+                    if (user && available.y > 1f) pending = 0
                     return available
                 }
-                // Прокрутка вверх не проскакивает на верхний этаж — упирается в начало нижнего.
+                // Прокрутка вверх упирается в начало нижнего этажа и не проскакивает к кнопке.
                 if (available.y > off) return androidx.compose.ui.geometry.Offset(0f, available.y - off)
             }
+            if (user && available.y < 0f && pending == 0) pending = null
             return androidx.compose.ui.geometry.Offset.Zero
         }
 
         override suspend fun onPreFling(available: androidx.compose.ui.unit.Velocity): androidx.compose.ui.unit.Velocity {
-            return if (animating || list.firstVisibleItemIndex == 0) available else androidx.compose.ui.unit.Velocity.Zero
-        }
-    }
-}
-
-
-/**
- * «lumen by CheKavo». CheKavo — переливающийся градиент из цветов обложки
- * с мягким неоновым ореолом; на ударах слегка вздрагивает и вспыхивает.
- */
-@Composable
-private fun LumenBrand(vm: MainViewModel, colors: app.lumen.player.ui.theme.CoverColors) {
-    val beat = app.lumen.player.ui.components.rememberBeatSignal(vm)
-    val a by androidx.compose.animation.animateColorAsState(colors.a, androidx.compose.animation.core.tween(900), label = "ba")
-    val c by androidx.compose.animation.animateColorAsState(colors.c, androidx.compose.animation.core.tween(900), label = "bc")
-    val acc by androidx.compose.animation.animateColorAsState(colors.accent, androidx.compose.animation.core.tween(900), label = "bacc")
-    val t = androidx.compose.animation.core.rememberInfiniteTransition(label = "brand")
-    val shift by t.animateFloat(
-        0f,
-        1f,
-        androidx.compose.animation.core.infiniteRepeatable(
-            androidx.compose.animation.core.tween(5200, easing = androidx.compose.animation.core.LinearEasing),
-        ),
-        label = "shift",
-    )
-    Row(verticalAlignment = Alignment.Bottom) {
-        Text("lumen", fontSize = 27.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.5).sp)
-        Text(
-            " by ",
-            fontSize = 14.sp,
-            color = LC.Dim,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.padding(bottom = 4.dp),
-        )
-        Box(
-            Modifier
-                .graphicsLayer {
-                    val lv = beat.level().coerceIn(0f, 1f)
-                    val sc = 1f + 0.07f * lv
-                    scaleX = sc
-                    scaleY = sc
-                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.6f)
-                }
-                .drawBehind {
-                    val lv = beat.level().coerceIn(0f, 1f)
-                    val r = size.width * 0.7f
-                    drawCircle(
-                        Brush.radialGradient(
-                            listOf(acc.copy(alpha = 0.16f + 0.3f * lv), Color.Transparent),
-                            center,
-                            r,
-                        ),
-                        radius = r,
-                        center = center,
-                    )
-                }
-        ) {
-            val w = 520f
-            val x0 = -w + shift * w * 2f
-            Text(
-                "CheKavo",
-                fontSize = 27.sp,
-                fontWeight = FontWeight.Black,
-                letterSpacing = (-0.3).sp,
-                style = TextStyle(
-                    brush = Brush.linearGradient(
-                        listOf(acc, a, Color.White, c, acc),
-                        start = androidx.compose.ui.geometry.Offset(x0, 0f),
-                        end = androidx.compose.ui.geometry.Offset(x0 + w, 60f),
-                        tileMode = androidx.compose.ui.graphics.TileMode.Mirror,
-                    ),
-                    shadow = androidx.compose.ui.graphics.Shadow(acc.copy(alpha = 0.55f), blurRadius = 18f),
-                ),
-            )
-        }
-    }
-}
-
-
-/**
- * Поиск: сначала треки из библиотеки, затем — найденное в сети (Deezer).
- * Тап по треку из сети — поиск его в интернете. Без запроса показывается история:
- * треки, которые были включены из поиска.
- */
-@Composable
-private fun SearchResults(
-    vm: MainViewModel,
-    query: String,
-    results: List<TrackEntity>,
-    currentId: String?,
-    favs: Set<String>,
-    actions: TrackActions,
-    bottomPad: Dp,
-    modifier: Modifier = Modifier,
-) {
-    val ctx = androidx.compose.ui.platform.LocalContext.current
-    val history by vm.searchHistory.collectAsStateWithLifecycle()
-    val online by vm.onlineResults.collectAsStateWithLifecycle()
-    val onlineLoading by vm.onlineLoading.collectAsStateWithLifecycle()
-    val onlineError by vm.onlineError.collectAsStateWithLifecycle()
-    val accent = LocalAccent.current
-    val q = query.trim()
-
-    LazyColumn(modifier, contentPadding = PaddingValues(bottom = bottomPad)) {
-        if (q.isEmpty()) {
-            if (history.isEmpty()) {
-                item(key = "hEmpty") {
-                    Column(
-                        Modifier.fillMaxWidth().padding(top = 70.dp, start = 32.dp, end = 32.dp).animateItem(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Icon(LIcons.Search, null, Modifier.size(40.dp), tint = LC.Dim.copy(alpha = 0.5f))
-                        Spacer(Modifier.height(14.dp))
-                        Text("Здесь будет история поиска", color = LC.Dim, fontSize = 16.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
-                    }
-                }
-            } else {
-                item(key = "hHead") { SectionHeader("История поиска", "Очистить") { vm.clearSearchHistory() } }
-                itemsIndexed(history, key = { _, t -> "h:" + t.uri }) { i, t ->
-                    Box(Modifier.animateItem()) {
-                        TrackRow(t, t.uri == currentId, t.uri in favs, actions, onClick = { vm.playFromSearch(history, i) })
-                    }
-                }
+            val target = pending
+            pending = null
+            if (target != null) {
+                glide(target)
+                return available
             }
-            return@LazyColumn
-        }
-
-        if (results.isNotEmpty()) {
-            item(key = "lHead") { SectionHeader("В библиотеке") }
-            itemsIndexed(results, key = { _, t -> "s:" + t.uri }) { i, t ->
-                TrackRow(t, t.uri == currentId, t.uri in favs, actions, onClick = { vm.playFromSearch(results, i) })
+            if (animating) return available
+            if (list.firstVisibleItemIndex == 0) {
+                if (list.firstVisibleItemScrollOffset > 0) glide(if (list.firstVisibleItemScrollOffset > heroPx / 2) 1 else 0)
+                return available
             }
-        }
-
-        item(key = "oHead") {
-            Row(Modifier.fillMaxWidth().padding(end = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.weight(1f)) { SectionHeader("В сети") }
-                if (onlineLoading) CircularProgressIndicator(Modifier.size(18.dp), color = accent, strokeWidth = 2.dp)
-            }
-        }
-        val list = online
-        when {
-            list == null && !onlineLoading -> {}
-            onlineError && list.isNullOrEmpty() -> item(key = "oErr") {
-                Text(
-                    "Нет связи — показаны только треки из библиотеки",
-                    color = LC.Dim,
-                    fontSize = 14.sp,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
-                )
-            }
-            list != null && list.isEmpty() && !onlineLoading -> item(key = "oNone") {
-                Text(
-                    "В сети ничего нового не нашлось",
-                    color = LC.Dim,
-                    fontSize = 14.sp,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
-                )
-            }
-            list != null -> items(list, key = { "o:" + it.key }) { r ->
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .animateItem()
-                        .clickable(onClickLabel = "Найти в интернете") { searchWeb(ctx, r.query) }
-                        .padding(horizontal = 20.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RemoteCover(r.cover, r.key, RoundedCornerShape(12.dp), Modifier.size(52.dp))
-                    Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(r.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(
-                            if (r.reason.isNotBlank()) "${r.artist} · ${r.reason}" else r.artist,
-                            fontSize = 13.sp,
-                            color = LC.Dim,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    Icon(LIcons.Search, "Найти в интернете", Modifier.size(20.dp), tint = LC.Dim)
-                }
-            }
-        }
-        item(key = "web") {
-            Row(
-                Modifier
-                    .padding(horizontal = 20.dp, vertical = 12.dp)
-                    .fillMaxWidth()
-                    .glass(RoundedCornerShape(18.dp))
-                    .clickable { searchWeb(ctx, q) }
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(LIcons.Search, null, Modifier.size(20.dp), tint = accent)
-                Spacer(Modifier.width(12.dp))
-                Text(
-                    "Искать «$q» в интернете",
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-            }
+            return androidx.compose.ui.unit.Velocity.Zero
         }
     }
 }
