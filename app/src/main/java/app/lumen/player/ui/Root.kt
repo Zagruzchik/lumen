@@ -341,7 +341,7 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
             Modifier
                 .fillMaxSize()
                 .graphicsLayer {
-                    val e = expand.value
+                    val e = expand.value.coerceIn(0f, 1f)
                     val s = 1f - 0.06f * e
                     scaleX = s
                     scaleY = s
@@ -384,7 +384,7 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                         onDrag = { dragPlayer(it) },
                         onDragEnd = { settlePlayer(it) },
                         modifier = Modifier.graphicsLayer {
-                            val e = expand.value
+                            val e = expand.value.coerceIn(0f, 1f)
                             alpha = 1f - (e * 2.5f).coerceAtMost(1f)
                             translationY = -e * 160.dp.toPx()
                         },
@@ -394,7 +394,7 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                     root = stack.first(),
                     haze = haze,
                     onSelect = { nav.tab(it, null) },
-                    modifier = Modifier.graphicsLayer { translationY = expand.value * size.height },
+                    modifier = Modifier.graphicsLayer { translationY = expand.value.coerceIn(0f, 1f) * size.height },
                 )
             }
         }
@@ -412,7 +412,7 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                 onQueue = { queueOpen = true },
                 onTimer = { timerOpen = true },
                 modifier = Modifier.graphicsLayer {
-                    val e = expand.value
+                    val e = expand.value.coerceIn(0f, 1f)
                     translationY = (1f - e) * size.height
                     alpha = (e * 3f).coerceAtMost(1f)
                     shape = RoundedCornerShape(((1f - e) * 32f).dp)
