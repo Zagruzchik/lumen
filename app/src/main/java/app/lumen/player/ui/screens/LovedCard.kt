@@ -66,7 +66,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.lumen.player.ui.MainViewModel
 import app.lumen.player.ui.components.LIcons
-import app.lumen.player.ui.components.rememberBeatLevel
+import app.lumen.player.ui.components.BeatSignal
+import app.lumen.player.ui.components.CircleContour
+import app.lumen.player.ui.components.RoundRectContour
+import app.lumen.player.ui.components.drawBeatContour
+import app.lumen.player.ui.components.rememberBeatSignal
 import app.lumen.player.ui.theme.CoverColors
 import kotlin.math.PI
 import kotlin.math.abs
@@ -104,7 +108,7 @@ fun LovedHero(
 ) {
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
-    val beat = rememberBeatLevel(vm)
+    val beat = rememberBeatSignal(vm)
     val scope = rememberCoroutineScope()
     // Угол поворота ведёт палец; «база» — угол текущей стороны (кратен 180°).
     val rot = remember { Animatable(if (moon) 180f else 0f) }
@@ -113,6 +117,8 @@ fun LovedHero(
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val press by animateFloatAsState(if (pressed) 0.97f else 1f, spring(dampingRatio = 0.45f, stiffness = 600f), label = "press")
+
+    fun side(): Float = if ((((base / 180f).roundToInt() % 2) + 2) % 2 == 1) -1f else 1f
 
     fun settle(velocity: Float) {
         val delta = rot.value - base
@@ -155,12 +161,13 @@ fun LovedHero(
                         angle = rot.value
                         scope.launch { rot.stop() }
                     },
-                    onDragEnd = { settle(tracker.calculateVelocity().x) },
+                    onDragEnd = { settle(side() * tracker.calculateVelocity().x) },
                     onDragCancel = { settle(0f) },
                 ) { change, d ->
                     change.consume()
                     tracker.addPointerInputChange(change)
-                    angle = (angle + d / width * 180f).coerceIn(base - 180f, base + 180f)
+                    // На обороте мы смотрим на карточку «сзади» — направление поворота зеркалится.
+                    angle = (angle + side() * d / width * 180f).coerceIn(base - 180f, base + 180f)
                     val next = angle
                     scope.launch { rot.snapTo(next) }
                 }
@@ -196,7 +203,7 @@ fun LovedHero(
 private fun NeonFace(
     colors: CoverColors,
     moonMode: Boolean,
-    beat: MutableFloatState,
+    beat: BeatSignal,
     title: String,
     subtitle: String,
     hint: String,
@@ -218,38 +225,18 @@ private fun NeonFace(
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val orbCenterY = maxHeight * 0.40f
         Canvas(Modifier.fillMaxSize()) {
-            val l = beat.floatValue
-            val inset = 16.dp.toPx()
+            val inset = 22.dp.toPx()
             val panelSize = Size(size.width - inset * 2, size.height - inset * 2)
             val tl = Offset(inset, inset)
-            val corner = CornerRadius(38.dp.toPx())
-            // Градиент рамки «вращается»: концы линейного градиента ходят по кругу.
-            val ang = spin * PI.toFloat() / 180f
-            val rr = size.maxDimension * 0.6f
-            val cc = center
-            val neon = Brush.linearGradient(
-                listOf(a, acc, c, b, a),
-                start = cc + Offset(cos(ang) * rr, sin(ang) * rr),
-                end = cc - Offset(cos(ang) * rr, sin(ang) * rr),
-            )
-
-            // Неоновое свечение: несколько слоёв обводки, на бит — ярче и шире.
-            for (i in 5 downTo 1) {
-                drawRoundRect(
-                    neon,
-                    topLeft = tl,
-                    size = panelSize,
-                    cornerRadius = corner,
-                    alpha = (0.05f * (6 - i)) * (0.55f + 0.5f * l + 0.15f * breath),
-                    style = Stroke(width = (2f + i * (5f + 3f * l)).dp.toPx()),
-                )
-            }
-            // Тёмное «стекло» внутри.
-            drawRoundRect(Color(0xE60A0812), topLeft = tl, size = panelSize, cornerRadius = corner)
-            // Цветной туман внутри панели.
+            val cornerPx = 38.dp.toPx()
+            val corner = CornerRadius(cornerPx)
+            val palette = listOf(a, acc, c, b)
             val fog = Offset(size.width / 2f, orbCenterY.toPx())
+
+            // Тёмное «стекло» и мягкий цветной туман внутри.
+            drawRoundRect(Color(0xE60A0812), topLeft = tl, size = panelSize, cornerRadius = corner)
             drawRoundRect(
-                Brush.radialGradient(listOf(acc.copy(alpha = 0.22f + 0.12f * l), Color.Transparent), fog, size.maxDimension * 0.7f),
+                Brush.radialGradient(listOf(acc.copy(alpha = 0.2f + 0.05f * breath), Color.Transparent), fog, size.maxDimension * 0.7f),
                 topLeft = tl,
                 size = panelSize,
                 cornerRadius = corner,
@@ -257,35 +244,49 @@ private fun NeonFace(
             if (moonMode) {
                 stars.forEachIndexed { i, (sx, sy, r) ->
                     val al = 0.25f + 0.75f * ((twinkle + i * 0.137f) % 1f)
-                    drawCircle(Color.White.copy(alpha = al * (0.7f + 0.3f * l)), r.dp.toPx(), Offset(tl.x + sx * panelSize.width, tl.y + sy * panelSize.height))
+                    drawCircle(Color.White.copy(alpha = al), r.dp.toPx(), Offset(tl.x + sx * panelSize.width, tl.y + sy * panelSize.height))
                 }
             }
-            // Основная неоновая линия.
-            drawRoundRect(
-                neon,
-                topLeft = tl,
-                size = panelSize,
-                cornerRadius = corner,
-                alpha = 0.88f + 0.12f * l,
-                style = Stroke(width = (2.5f + 0.8f * l).dp.toPx()),
+
+            // Волны по контуру панели под бит.
+            drawBeatContour(
+                contour = RoundRectContour(tl.x, tl.y, tl.x + panelSize.width, tl.y + panelSize.height, cornerPx),
+                sig = beat,
+                palette = palette,
+                spinDeg = spin,
+                strokeWidth = 2.6.dp.toPx(),
+                baseAmp = 1.6.dp.toPx(),
+                beatAmp = 7.dp.toPx(),
+                rippleAmp = 11.dp.toPx(),
+                shockGap = 18.dp.toPx(),
             )
 
             // Шар в центре.
-            val R = min(size.width, size.height) * 0.24f * (1f + 0.05f * l + 0.03f * breath)
+            val R = min(size.width, size.height) * 0.22f * (1f + 0.025f * breath)
             drawCircle(
-                Brush.radialGradient(listOf(acc.copy(alpha = 0.3f + 0.22f * l), Color.Transparent), fog, R * 2.4f),
-                R * 2.4f,
+                Brush.radialGradient(listOf(acc.copy(alpha = 0.3f), Color.Transparent), fog, R * 2.3f),
+                R * 2.3f,
                 fog,
                 blendMode = BlendMode.Plus,
             )
             if (moonMode) {
                 drawMoonOrb(fog, R)
             } else {
-                drawColorOrb(fog, R, ang, a, b, c, acc, l)
+                drawColorOrb(fog, R, spin * PI.toFloat() / 180f, a, b, c, acc, 0f)
             }
-            // Кольцо вокруг шара.
-            drawCircle(neon, R * (1.22f + 0.03f * l), fog, alpha = 0.6f + 0.3f * l, style = Stroke((2f + 1f * l).dp.toPx()))
-            drawCircle(neon, R * (1.45f + 0.08f * l), fog, alpha = 0.18f + 0.22f * l, style = Stroke(1.5.dp.toPx()))
+            // Волновое кольцо вокруг шара — как визуализатор.
+            drawBeatContour(
+                contour = CircleContour(fog, R * 1.3f),
+                sig = beat,
+                palette = palette,
+                spinDeg = -spin * 1.4f,
+                strokeWidth = 2.2.dp.toPx(),
+                baseAmp = 1.2.dp.toPx(),
+                beatAmp = 6.dp.toPx(),
+                rippleAmp = 9.dp.toPx(),
+                shockGap = 26.dp.toPx(),
+                samples = 200,
+            )
         }
 
         // Значок воспроизведения в центре шара.

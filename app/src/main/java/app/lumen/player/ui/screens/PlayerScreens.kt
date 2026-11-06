@@ -102,7 +102,10 @@ import app.lumen.player.ui.components.PillButton
 import app.lumen.player.ui.components.TrackActions
 import app.lumen.player.ui.components.TrackMenu
 import app.lumen.player.ui.components.WavySlider
-import app.lumen.player.ui.components.rememberBeatLevel
+import app.lumen.player.ui.components.BeatSignal
+import app.lumen.player.ui.components.RoundRectContour
+import app.lumen.player.ui.components.drawBeatContour
+import app.lumen.player.ui.components.rememberBeatSignal
 import app.lumen.player.ui.components.formatMs
 import app.lumen.player.ui.components.glass
 import app.lumen.player.ui.components.pluralRu
@@ -165,34 +168,6 @@ private fun CoverBackdrop(uri: String?, colors: CoverColors) {
                 .background(
                     Brush.verticalGradient(listOf(Color(0x330A0610), Color(0x8C0A0610), Color(0xE00A0610)))
                 )
-        )
-    }
-}
-
-/** Вспышки под бит: свет из центра и подсветка краёв экрана цветом акцента. */
-@Composable
-private fun BeatFlashLayer(level: androidx.compose.runtime.MutableFloatState, accent: Color) {
-    androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
-        val l = level.floatValue
-        if (l < 0.01f) return@Canvas
-        val w = size.width
-        val h = size.height
-        val burstC = Offset(w / 2f, h * 0.36f)
-        drawCircle(
-            Brush.radialGradient(listOf(accent.copy(alpha = 0.32f * l), Color.Transparent), burstC, w * (0.75f + 0.15f * l)),
-            radius = w * (0.75f + 0.15f * l),
-            center = burstC,
-            blendMode = BlendMode.Plus,
-        )
-        drawRect(
-            Brush.radialGradient(
-                0f to Color.Transparent,
-                0.62f to Color.Transparent,
-                1f to accent.copy(alpha = 0.32f * l),
-                center = Offset(w / 2f, h / 2f),
-                radius = kotlin.math.max(w, h) * 0.72f,
-            ),
-            blendMode = BlendMode.Plus,
         )
     }
 }
@@ -301,7 +276,7 @@ fun PlayerScreen(
     val lyricsRes by vm.lyrics.collectAsStateWithLifecycle()
     val accent = LocalAccent.current
 
-    val beatLevel = rememberBeatLevel(vm)
+    val beat = rememberBeatSignal(vm)
 
     val found = lyricsRes as? LyricsResult.Found
     LaunchedEffect(found == null) { if (found == null && lyricsFull) onLyricsFull(false) }
@@ -335,7 +310,6 @@ fun PlayerScreen(
             )
     ) {
         CoverBackdrop(p.currentId, colors)
-        BeatFlashLayer(beatLevel, accent)
 
         Column(
             Modifier
@@ -381,7 +355,7 @@ fun PlayerScreen(
                 label = "stage",
             ) { s ->
                 when (s) {
-                    is Stage.CoverStage -> CoverArea(vm, p, accent, s.note, beatLevel)
+                    is Stage.CoverStage -> CoverArea(vm, p, accent, s.note, beat)
                     is Stage.Inline -> InlineLyrics(s.lines, s.synced, position) { onLyricsFull(true) }
                     is Stage.Full -> LyricsList(
                         lines = s.lines,
@@ -469,11 +443,16 @@ private fun CoverArea(
     p: PlayerState,
     accent: Color,
     note: String?,
-    beatLevel: androidx.compose.runtime.MutableFloatState,
+    beat: BeatSignal,
 ) {
     val density = LocalDensity.current
+    val cc by vm.coverColors.collectAsStateWithLifecycle()
+    val spin by rememberInfiniteTransition(label = "coverSpin").animateFloat(
+        0f, 360f, infiniteRepeatable(tween(12000, easing = androidx.compose.animation.core.LinearEasing)), label = "spin",
+    )
     BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        val side = min(maxWidth.value, maxHeight.value).dp
+        // Оставляем место по краям под волны контура.
+        val side = (min(maxWidth.value, maxHeight.value) - 36f).coerceAtLeast(120f).dp
         val pulse by rememberInfiniteTransition(label = "glow").animateFloat(
             initialValue = 0.32f,
             targetValue = 0.6f,
@@ -497,12 +476,25 @@ private fun CoverArea(
                     val r = size.minDimension * 0.78f
                     drawCircle(
                         Brush.radialGradient(
-                            listOf(accent.copy(alpha = (glow + 0.35f * beatLevel.floatValue).coerceAtMost(1f)), Color.Transparent),
+                            listOf(accent.copy(alpha = glow * 0.8f), Color.Transparent),
                             c,
-                            r * (1f + 0.07f * beatLevel.floatValue),
+                            r,
                         ),
                         radius = r,
                         center = c,
+                    )
+                    // Неоновые волны по контуру обложки — бегут и вздымаются под бит.
+                    val pad = 12.dp.toPx()
+                    drawBeatContour(
+                        contour = RoundRectContour(-pad, -pad, size.width + pad, size.height + pad, 30.dp.toPx() + pad),
+                        sig = beat,
+                        palette = listOf(cc.a, cc.accent, cc.c, cc.b),
+                        spinDeg = spin,
+                        strokeWidth = 2.4.dp.toPx(),
+                        baseAmp = 1.3.dp.toPx(),
+                        beatAmp = 6.dp.toPx(),
+                        rippleAmp = 10.dp.toPx(),
+                        shockGap = 20.dp.toPx(),
                     )
                 }
         ) {
@@ -512,9 +504,6 @@ private fun CoverArea(
                     .fillMaxSize()
                     .graphicsLayer {
                         translationX = coverX
-                        val beat = 1f + 0.02f * beatLevel.floatValue
-                        scaleX = beat
-                        scaleY = beat
                         rotationZ = coverX / 40f
                         alpha = 1f - min(0.4f, abs(coverX) / 1200f)
                     }
