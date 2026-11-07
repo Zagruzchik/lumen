@@ -167,6 +167,8 @@ private fun LockScreen(conn: PlayerConnection, onUnlock: () -> Unit) {
         }
     }
     val accent by animateColorAsState(Color(accentInt).copy(alpha = 1f), tween(700), label = "lockAcc")
+    val favs by remember { g.dao.favoriteUris() }.collectAsStateWithLifecycle(initialValue = emptyList())
+    val fav = id != null && id in favs
     val backdrop = id?.let { Artwork.peek(it, 256) }
 
     // Жест «вверх — разблокировать»: экран тянется за пальцем и мягко уезжает.
@@ -236,6 +238,14 @@ private fun LockScreen(conn: PlayerConnection, onUnlock: () -> Unit) {
                         Text(p.title, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(p.artist, fontSize = 14.sp, color = Color.White.copy(alpha = 0.7f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
+                    Spacer(Modifier.width(10.dp))
+                    // Длительность справа от названия.
+                    Text(
+                        app.lumen.player.ui.components.formatMs(p.durationMs),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White.copy(alpha = 0.75f),
+                    )
                 }
                 Spacer(Modifier.height(10.dp))
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -261,15 +271,27 @@ private fun LockScreen(conn: PlayerConnection, onUnlock: () -> Unit) {
                         }
                     }
                 }
+                // Перемотка: полоса-комета, едет вслед за движением пальца.
+                app.lumen.player.ui.components.CometSlider(
+                    fraction = if (p.durationMs > 0) position.toFloat() / p.durationMs else 0f,
+                    onSeek = { f -> conn.seekTo((f * p.durationMs).toLong()) },
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+                Row(Modifier.fillMaxWidth()) {
+                    app.lumen.player.ui.components.RollingText(app.lumen.player.ui.components.formatMs(position), 12.sp, Color.White.copy(alpha = 0.6f))
+                    Spacer(Modifier.weight(1f))
+                    app.lumen.player.ui.components.RollingText("−" + app.lumen.player.ui.components.formatMs((p.durationMs - position).coerceAtLeast(0L)), 12.sp, Color.White.copy(alpha = 0.6f))
+                }
                 Row(
-                    Modifier.fillMaxWidth().padding(vertical = 14.dp),
+                    Modifier.fillMaxWidth().padding(vertical = 10.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    LockBtn(LIcons.Shuffle, 24, "Перемешать", tint = if (p.shuffle) accent else Color.White.copy(alpha = 0.75f)) { conn.toggleShuffle() }
                     LockBtn(LIcons.Prev, 30, "Предыдущий") { conn.previous() }
                     Box(
                         Modifier
-                            .size(76.dp)
+                            .size(70.dp)
                             .clip(CircleShape)
                             .background(Color.White)
                             .clickable { conn.toggle() },
@@ -278,6 +300,13 @@ private fun LockScreen(conn: PlayerConnection, onUnlock: () -> Unit) {
                         Icon(if (p.isPlaying) LIcons.Pause else LIcons.Play, null, Modifier.size(32.dp), tint = Color(0xFF0B0B12))
                     }
                     LockBtn(LIcons.Next, 30, "Следующий") { conn.next() }
+                    LockBtn(if (fav) LIcons.Heart else LIcons.HeartOutline, 24, "Любимое", tint = if (fav) accent else Color.White.copy(alpha = 0.75f)) {
+                        val u = id ?: return@LockBtn
+                        scope.launch(Dispatchers.IO) {
+                            if (g.dao.favoriteCount(u) > 0) g.dao.removeFavorite(u)
+                            else g.dao.addFavorite(app.lumen.player.data.FavoriteEntity(u, System.currentTimeMillis()))
+                        }
+                    }
                 }
                 val bob by rememberInfiniteTransition(label = "unlock").animateFloat(
                     0f, 1f, infiniteRepeatable(tween(1300, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "bob",
@@ -295,11 +324,17 @@ private fun LockScreen(conn: PlayerConnection, onUnlock: () -> Unit) {
 }
 
 @Composable
-private fun LockBtn(icon: androidx.compose.ui.graphics.vector.ImageVector, sizeDp: Int, label: String, onClick: () -> Unit) {
+private fun LockBtn(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    sizeDp: Int,
+    label: String,
+    tint: Color = Color.White,
+    onClick: () -> Unit,
+) {
     Box(
-        Modifier.size(60.dp).clip(CircleShape).clickable(onClickLabel = label, onClick = onClick),
+        Modifier.size(56.dp).clip(CircleShape).clickable(onClickLabel = label, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, label, Modifier.size(sizeDp.dp), tint = Color.White)
+        Icon(icon, label, Modifier.size(sizeDp.dp), tint = tint)
     }
 }

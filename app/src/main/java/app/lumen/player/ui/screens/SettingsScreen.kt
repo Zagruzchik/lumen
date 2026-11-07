@@ -123,6 +123,7 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
     val flashes by vm.beatFlashes.collectAsStateWithLifecycle()
     val intensity by vm.beatIntensity.collectAsStateWithLifecycle()
     val crossfade by vm.crossfadeSec.collectAsStateWithLifecycle()
+    val cfSoft by vm.crossfadeSoft.collectAsStateWithLifecycle()
     val upd by vm.updateState.collectAsStateWithLifecycle()
     val autoUpd by vm.autoUpdate.collectAsStateWithLifecycle()
     var importing by remember { mutableStateOf(false) }
@@ -345,6 +346,36 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
                                 activeTrackColor = LocalAccent.current,
                                 inactiveTrackColor = Color(0x26FFFFFF),
                             ),
+                        )
+                        var soft by remember(cfSoft) { mutableFloatStateOf(cfSoft) }
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                            Text("Мягкость перехода", fontSize = 15.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                            Text(
+                                when {
+                                    soft < 0.33f -> "Резко"
+                                    soft < 0.7f -> "Сбалансированно"
+                                    else -> "Очень плавно"
+                                },
+                                fontSize = 14.sp,
+                                color = LocalAccent.current,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                        Slider(
+                            value = soft,
+                            onValueChange = { soft = it },
+                            onValueChangeFinished = { vm.setCrossfadeSoft(soft) },
+                            valueRange = 0f..1f,
+                            colors = SliderDefaults.colors(
+                                thumbColor = Color.White,
+                                activeTrackColor = LocalAccent.current,
+                                inactiveTrackColor = Color(0x26FFFFFF),
+                            ),
+                        )
+                        Text(
+                            "Длительность — насколько рано начинается переход. Мягкость — как плавно одна песня растворяется в другой.",
+                            fontSize = 12.sp,
+                            color = LC.Faint,
                         )
                     }
                 }

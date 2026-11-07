@@ -50,6 +50,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.border
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.animateFloat
@@ -449,27 +454,50 @@ private fun EmptyLibrary(scanning: Boolean, onRescan: () -> Unit, onSettings: ()
 
 @Composable
 private fun LibraryHeader(tab: Int, onTab: (Int) -> Unit) {
-    Column {
-        Text(
-            "Библиотека",
-            fontSize = 28.sp,
-            fontWeight = FontWeight.ExtraBold,
-            modifier = Modifier.padding(horizontal = 20.dp),
+    Column(Modifier.padding(horizontal = 20.dp)) { LibraryTitle(tab) }
+}
+
+/** Заголовок раздела: «Библиотека» и текущая категория (сама категория выбирается снизу). */
+@Composable
+private fun LibraryTitle(tab: Int) {
+    Text("Библиотека", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
+    androidx.compose.animation.AnimatedContent(
+        targetState = tab,
+        transitionSpec = {
+            androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(260)) togetherWith
+                androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(160))
+        },
+        label = "libTitle",
+    ) { t ->
+        Text(LIB_CATS.firstOrNull { it.first == t }?.second ?: "Папки", fontSize = 15.sp, color = LC.Dim)
+    }
+    Spacer(Modifier.height(10.dp))
+}
+
+/** Категории библиотеки в нижней панели: номер вкладки → название. */
+private val LIB_CATS = listOf(4 to "Плейлисты", 0 to "Треки", 1 to "Альбомы", 2 to "Артисты")
+
+@Composable
+fun LibraryScreen(
+    vm: MainViewModel,
+    nav: Nav,
+    actions: TrackActions,
+    tab: Int,
+    onTab: (Int) -> Unit,
+    bottomPad: Dp,
+) {
+    Box(Modifier.fillMaxSize()) {
+        LibraryContent(vm, nav, actions, tab, onTab, bottomPad + 78.dp)
+        CategoryDock(
+            tab = tab,
+            onTab = onTab,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = bottomPad - 6.dp),
         )
-        Spacer(Modifier.height(14.dp))
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 20.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            val tabs = listOf("Треки", "Альбомы", "Исполнители", "Папки", "Плейлисты")
-            itemsIndexed(tabs) { i, name -> LChip(name, tab == i) { onTab(i) } }
-        }
-        Spacer(Modifier.height(10.dp))
     }
 }
 
 @Composable
-fun LibraryScreen(
+private fun LibraryContent(
     vm: MainViewModel,
     nav: Nav,
     actions: TrackActions,
@@ -573,16 +601,7 @@ fun LibraryScreen(
 
 @Composable
 private fun LibraryHeaderNoPad(tab: Int, onTab: (Int) -> Unit) {
-    Column {
-        Text("Библиотека", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
-        Spacer(Modifier.height(14.dp))
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            itemsIndexed(listOf("Треки", "Альбомы", "Исполнители", "Папки")) { i, name ->
-                LChip(name, tab == i) { onTab(i) }
-            }
-        }
-        Spacer(Modifier.height(10.dp))
-    }
+    Column { LibraryTitle(tab) }
 }
 
 // ======================= КОЛЛЕКЦИИ =======================
@@ -1156,5 +1175,92 @@ private fun WrappedTeaser(onClick: () -> Unit) {
             Text("Минуты, любимые песни и открытия — в историях", fontSize = 13.sp, color = Color.White.copy(alpha = 0.85f))
         }
         Icon(LIcons.Sparkle, null, Modifier.size(28.dp), tint = Color.White)
+    }
+}
+
+
+/**
+ * Стеклянная панель категорий снизу. Выезжает при входе в библиотеку.
+ * Можно тапнуть, а можно зажать и вести пальцем — подсветка едет следом, выбор — при отпускании.
+ */
+@Composable
+private fun CategoryDock(tab: Int, onTab: (Int) -> Unit, modifier: Modifier = Modifier) {
+    val accent = LocalAccent.current
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val enter = remember { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(Unit) { enter.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.8f, stiffness = 260f)) }
+    val selIndex = LIB_CATS.indexOfFirst { it.first == tab }.coerceAtLeast(0)
+    var hover by remember { mutableIntStateOf(-1) }
+    val shownIndex = if (hover >= 0) hover else selIndex
+    val pos by androidx.compose.animation.core.animateFloatAsState(
+        shownIndex.toFloat(),
+        androidx.compose.animation.core.spring(dampingRatio = 0.75f, stiffness = 420f),
+        label = "dockPos",
+    )
+    val pressed by androidx.compose.animation.core.animateFloatAsState(if (hover >= 0) 1f else 0f, androidx.compose.animation.core.tween(160), label = "dockPress")
+    val onTabNow by androidx.compose.runtime.rememberUpdatedState(onTab)
+    val shape = RoundedCornerShape(26.dp)
+    Box(
+        modifier
+            .padding(horizontal = 14.dp)
+            .fillMaxWidth()
+            .height(60.dp)
+            .graphicsLayer {
+                translationY = (1f - enter.value) * 140.dp.toPx()
+                alpha = enter.value
+                val s = 1f + 0.02f * pressed
+                scaleX = s
+                scaleY = s
+            }
+            .clip(shape)
+            .background(Brush.verticalGradient(listOf(Color(0xCC2A2335), Color(0xE6161219))))
+            .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(alpha = 0.35f), Color.White.copy(alpha = 0.05f), accent.copy(alpha = 0.3f))), shape)
+            .pointerInput(Unit) {
+                val n = LIB_CATS.size
+                fun idx(x: Float) = (x / (size.width / n.toFloat())).toInt().coerceIn(0, n - 1)
+                androidx.compose.foundation.gestures.awaitEachGesture {
+                    val down = androidx.compose.foundation.gestures.awaitFirstDown()
+                    hover = idx(down.position.x)
+                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                    while (true) {
+                        val ev = awaitPointerEvent()
+                        val ch = ev.changes.firstOrNull() ?: break
+                        if (!ch.pressed) break
+                        ch.consume()
+                        val i = idx(ch.position.x)
+                        if (i != hover) {
+                            hover = i
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                        }
+                    }
+                    val pick = hover
+                    hover = -1
+                    if (pick >= 0) onTabNow(LIB_CATS[pick].first)
+                }
+            }
+            .padding(5.dp),
+    ) {
+        // Подсветка выбранной категории — едет за пальцем.
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+            val w = maxWidth / LIB_CATS.size
+            Box(
+                Modifier
+                    .graphicsLayer { translationX = w.toPx() * pos }
+                    .width(w)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(21.dp))
+                    .background(Brush.verticalGradient(listOf(accent.copy(alpha = 0.42f), accent.copy(alpha = 0.22f))))
+                    .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(21.dp))
+            )
+        }
+        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+            LIB_CATS.forEachIndexed { i, (_, name) ->
+                val on = i == shownIndex
+                val c by androidx.compose.animation.animateColorAsState(if (on) Color.White else LC.Dim, androidx.compose.animation.core.tween(200), label = "dockC")
+                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    Text(name, fontSize = 14.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Medium, color = c, maxLines = 1)
+                }
+            }
+        }
     }
 }

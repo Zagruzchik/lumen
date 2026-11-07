@@ -720,9 +720,39 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var beatsPrefetch: Job? = null
 
     val crossfadeSec = MutableStateFlow(g.prefs.crossfadeMs / 1000)
+    val crossfadeSoft = MutableStateFlow(g.prefs.crossfadeSoft)
+    fun setCrossfadeSoft(v: Float) {
+        g.prefs.crossfadeSoft = v.coerceIn(0f, 1f)
+        crossfadeSoft.value = g.prefs.crossfadeSoft
+    }
     /** Открытая поверх всего карточка для трека: «в плейлист» или «изменить теги». */
     val sheetTrack = MutableStateFlow<SheetTrack?>(null)
     val newPlaylistPrompt = MutableStateFlow(false)
+    /** Трек, который положим в новый плейлист сразу после создания. */
+    var pendingPlaylistUri: String? = null
+
+    /** Меню плейлистов на удержании лайка. */
+    val quickMenu = app.lumen.player.ui.components.QuickMenuState()
+    val quickToast = MutableStateFlow<String?>(null)
+
+    /** Последние плейлисты для быстрого меню (до 6). */
+    fun quickLists() = playlists.value.take(6)
+
+    fun quickPick(i: Int) {
+        val uri = quickMenu.uri ?: return
+        if (i == app.lumen.player.ui.components.QuickMenuState.NEW) {
+            pendingPlaylistUri = uri
+            newPlaylistPrompt.value = true
+            return
+        }
+        val pl = quickLists().getOrNull(i) ?: return
+        addToPlaylist(pl.id, listOf(uri))
+        quickToast.value = "Добавлено в «${pl.name}»"
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(1800)
+            if (quickToast.value?.contains(pl.name) == true) quickToast.value = null
+        }
+    }
 
     // ---------- плейлисты ----------
 

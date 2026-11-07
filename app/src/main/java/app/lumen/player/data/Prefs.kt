@@ -89,6 +89,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("autoUpdate", true)
         set(v) = sp.edit().putBoolean("autoUpdate", v).apply()
 
+    /** Мягкость кроссфейда: 0 — переход резче, ближе к концу; 1 — максимально плавный. */
+    var crossfadeSoft: Float
+        get() = sp.getFloat("crossfadeSoft", 0.75f)
+        set(v) = sp.edit().putFloat("crossfadeSoft", v).apply()
+
     var crossfadeMs: Int
         get() = sp.getInt("crossfadeMs", 0)
         set(v) = sp.edit().putInt("crossfadeMs", v).apply()

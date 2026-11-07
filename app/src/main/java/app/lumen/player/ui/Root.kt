@@ -29,6 +29,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -539,9 +540,45 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
         val newPl by vm.newPlaylistPrompt.collectAsStateWithLifecycle()
         AnimatedVisibility(newPl, enter = fadeIn(tween(200)), exit = fadeOut(tween(180))) {
             app.lumen.player.ui.screens.NameDialog("Новый плейлист", "", "Создать", { name ->
-                vm.createPlaylist(name) { id -> nav.open(Dest.Playlist(id)) }
+                val pending = vm.pendingPlaylistUri
+                vm.pendingPlaylistUri = null
+                if (pending != null) {
+                    vm.createPlaylist(name, listOf(pending)) { }
+                    vm.quickToast.value = "Плейлист «${name.trim()}» создан"
+                } else {
+                    vm.createPlaylist(name) { id -> nav.open(Dest.Playlist(id)) }
+                }
                 vm.newPlaylistPrompt.value = false
             }, { vm.newPlaylistPrompt.value = false })
+        }
+        // Меню плейлистов на удержании лайка и короткое подтверждение «Добавлено».
+        val qLists by vm.playlists.collectAsStateWithLifecycle()
+        app.lumen.player.ui.components.QuickPlaylistMenu(
+            vm.quickMenu,
+            qLists.take(6).map { it.name to it.trackCount },
+            onPick = { vm.quickPick(it) },
+        )
+        val qToast by vm.quickToast.collectAsStateWithLifecycle()
+        var lastToast by remember { mutableStateOf("") }
+        qToast?.let { lastToast = it }
+        AnimatedVisibility(
+            qToast != null,
+            enter = fadeIn(tween(200)) + slideInVertically(spring(dampingRatio = 0.8f)) { -it },
+            exit = fadeOut(tween(260)) + slideOutVertically(tween(260)) { -it },
+            modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 12.dp),
+        ) {
+            Row(
+                Modifier
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color(0xEE231C2C))
+                    .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(20.dp))
+                    .padding(horizontal = 18.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(LIcons.Check, null, Modifier.size(18.dp), tint = LocalAccent.current)
+                Spacer(Modifier.width(10.dp))
+                Text(lastToast, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            }
         }
         val updSheet by vm.updateSheet.collectAsStateWithLifecycle()
         AnimatedVisibility(updSheet, enter = fadeIn(tween(260)), exit = fadeOut(tween(220))) {

@@ -78,6 +78,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -99,6 +100,10 @@ import app.lumen.player.ui.components.Badge
 import app.lumen.player.ui.components.Cover
 import app.lumen.player.ui.components.IconBtn
 import app.lumen.player.ui.components.LIcons
+import app.lumen.player.ui.components.pressBounce
+import app.lumen.player.ui.components.likeWithPlaylists
+import app.lumen.player.ui.components.RollingText
+import app.lumen.player.ui.components.GlassRoundButton
 import app.lumen.player.ui.components.PillButton
 import app.lumen.player.ui.components.TrackActions
 import app.lumen.player.ui.components.TrackMenu
@@ -222,21 +227,6 @@ internal fun Modifier.fadeEdges(top: Dp, bottom: Dp): Modifier = this
             blendMode = BlendMode.DstIn,
         )
     }
-
-/** Нажатие «проседает» и пружинит обратно. */
-@Composable
-private fun Modifier.pressBounce(interaction: MutableInteractionSource): Modifier {
-    val pressed by interaction.collectIsPressedAsState()
-    val s by animateFloatAsState(
-        if (pressed) 0.86f else 1f,
-        spring(dampingRatio = 0.45f, stiffness = 700f),
-        label = "press",
-    )
-    return this.graphicsLayer {
-        scaleX = s
-        scaleY = s
-    }
-}
 
 private sealed interface Stage {
     val kind: Int
@@ -922,9 +912,9 @@ private fun FullControls(
             modifier = Modifier.fillMaxWidth(),
         )
         Row(Modifier.fillMaxWidth()) {
-            Text(formatMs(position), fontSize = 12.sp, color = LC.Dim)
+            RollingText(formatMs(position), 12.sp, LC.Dim)
             Spacer(Modifier.weight(1f))
-            Text("−" + formatMs(max(0L, dur - position)), fontSize = 12.sp, color = LC.Dim)
+            RollingText("−" + formatMs(max(0L, dur - position)), 12.sp, LC.Dim)
         }
 
         Spacer(Modifier.height(8.dp))
@@ -939,18 +929,16 @@ private fun FullControls(
             }
         }
         val sleepLabel = sleepAt?.let { "${max(1L, (it - now + 59_999) / 60_000)} мин" } ?: "Таймер"
+        // Круглые стеклянные кнопки.
         Row(
-            Modifier
-                .fillMaxWidth()
-                .height(70.dp)
-                .glass(RoundedCornerShape(24.dp), Color(0x1AFFFFFF), Color(0x2EFFFFFF)),
+            Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            BarItem(LIcons.Lyrics, "Текст", showLyrics) { vm.toggleShowLyrics() }
-            BarItem(LIcons.Queue, "Очередь", false, onQueue)
-            BarItem(LIcons.Moon, sleepLabel, sleepAt != null, onTimer)
-            BarItem(LIcons.Disc, "Альбом", false, onAlbum)
+            GlassRoundButton(LIcons.Lyrics, "Текст", showLyrics) { vm.toggleShowLyrics() }
+            GlassRoundButton(LIcons.Queue, "Очередь", false, onClick = onQueue)
+            GlassRoundButton(LIcons.Moon, sleepLabel, sleepAt != null, onClick = onTimer)
+            GlassRoundButton(LIcons.Disc, "Альбом", false, onClick = onAlbum)
         }
         Spacer(Modifier.height(14.dp))
     }
@@ -998,9 +986,9 @@ private fun CompactControls(
             modifier = Modifier.fillMaxWidth(),
         )
         Row(Modifier.fillMaxWidth()) {
-            Text(formatMs(position), fontSize = 11.sp, color = LC.Dim)
+            RollingText(formatMs(position), 11.sp, LC.Dim)
             Spacer(Modifier.weight(1f))
-            Text("−" + formatMs(max(0L, dur - position)), fontSize = 11.sp, color = LC.Dim)
+            RollingText("−" + formatMs(max(0L, dur - position)), 11.sp, LC.Dim)
         }
         TransportRow(vm, p, accent, playSize = 60.dp, sideSize = 52.dp, withModes = true)
     }
@@ -1009,21 +997,37 @@ private fun CompactControls(
 @Composable
 private fun FavButton(p: PlayerState, favs: Set<String>, accent: Color, vm: MainViewModel, size: Dp) {
     val fav = p.currentId != null && p.currentId in favs
-    val interaction = remember { MutableInteractionSource() }
     val heartScale by animateFloatAsState(
         if (fav) 1f else 0.9f,
         spring(dampingRatio = 0.35f, stiffness = 500f),
         label = "heart",
     )
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    var coords by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
+    val idNow by rememberUpdatedState(p.currentId)
+    val qm = vm.quickMenu
+    val held by animateFloatAsState(if (qm.open) 1f else 0f, spring(dampingRatio = 0.5f, stiffness = 500f), label = "held")
     Box(
         Modifier
             .size(size)
-            .pressBounce(interaction)
+            .onGloballyPositioned { coords = it }
+            .graphicsLayer {
+                val s = 1f + 0.12f * held
+                scaleX = s
+                scaleY = s
+            }
             .clip(CircleShape)
             .background(Color(0x1FFFFFFF))
-            .clickable(interaction, null, role = Role.Button, onClickLabel = if (fav) "Убрать из любимого" else "В любимое") {
-                p.currentId?.let { vm.toggleFavorite(it) }
-            },
+            // Тап — лайк; удержание — меню плейлистов, выбор одним движением пальца.
+            .likeWithPlaylists(
+                state = qm,
+                uri = { idNow },
+                coords = { coords },
+                onTap = { idNow?.let { vm.toggleFavorite(it) } },
+                onPick = { i -> vm.quickPick(i) },
+                onLongPressHaptic = { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress) },
+                onHoverHaptic = { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove) },
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
