@@ -419,8 +419,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------- перенос медиатеки на ПК ----------
 
-    /** Экспорт всей медиатеки в JSON: треки с путями и тегами, любимое, статистика, исключения, настройки. */
-    fun exportLibrary(target: Uri, onDone: (Boolean, Int) -> Unit) {
+    /** Ход экспорта/импорта: подпись и прогресс 0..1 (null — ничего не идёт). */
+    val transfer = MutableStateFlow<Pair<String, Float>?>(null)
+
+    /** Сколько места займут сами треки в архиве. */
+    fun musicBytes(): Long = tracks.value.sumOf { it.size.coerceAtLeast(0L) }
+
+    /**
+     * Экспорт всего в один ZIP: library.json (треки с путями и тегами, любимое, статистика,
+     * история, исключённые папки, настройки), сохранённые тексты песен и — по желанию — сами треки.
+     */
+    fun exportLibrary(target: Uri, withMusic: Boolean, onDone: (Boolean, Int) -> Unit) {
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
@@ -430,7 +439,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     val root = org.json.JSONObject()
                     root.put("app", "Lumen")
                     root.put("format", 1)
-                    root.put("appVersion", "0.4.0")
+                    root.put("appVersion", g.updates.currentName)
+                    root.put("format", 2)
                     root.put("exportedAt", System.currentTimeMillis())
                     root.put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
                     val arr = org.json.JSONArray()
@@ -484,15 +494,199 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             .put("eqLevels", org.json.JSONArray(g.prefs.eqLevels))
                             .put("bassStrength", g.prefs.bassStrength)
                             .put("beatFlashes", g.prefs.beatFlashes)
+                            .put("beatIntensity", g.prefs.beatIntensity.toDouble())
+                            .put("crossfadeMs", g.prefs.crossfadeMs)
+                            .put("eqPreset", g.prefs.eqPreset)
+                            .put("showLyrics", g.prefs.showLyrics)
+                            .put("autoUpdate", g.prefs.autoUpdate)
                             .put("playStarts", g.prefs.playStarts),
                     )
-                    getApplication<Application>().contentResolver.openOutputStream(target)?.use { out ->
-                        out.write(root.toString(2).toByteArray(Charsets.UTF_8))
-                    } ?: error("no stream")
+                    writeBackupZip(target, root, arr, tracksAll, withMusic)
                     tracksAll.size
                 }
             }
+            transfer.value = null
             onDone(result.isSuccess, result.getOrDefault(0))
+        }
+    }
+
+    private fun writeBackupZip(
+        target: Uri,
+        root: org.json.JSONObject,
+        arr: org.json.JSONArray,
+        tracksAll: List<TrackEntity>,
+        withMusic: Boolean,
+    ) {
+        val app = getApplication<Application>()
+        val cr = app.contentResolver
+        // Имена файлов треков внутри архива: music/<папка>/<файл>, без повторов.
+        val names = HashSet<String>()
+        val files = arrayOfNulls<String>(tracksAll.size)
+        if (withMusic) {
+            tracksAll.forEachIndexed { i, t ->
+                val folder = safeName(t.folderName.ifBlank { "Музыка" })
+                val base = safeName(t.path.substringAfterLast('/').ifBlank { "${t.artist} - ${t.title}" })
+                var name = "music/$folder/$base"
+                var k = 2
+                while (!names.add(name.lowercase())) {
+                    name = "music/$folder/${base.substringBeforeLast('.')} ($k).${base.substringAfterLast('.', "mp3")}"
+                    k++
+                }
+                files[i] = name
+                arr.getJSONObject(i).put("file", name)
+            }
+        }
+        root.put("withMusic", withMusic)
+        val lyricsDir = java.io.File(app.filesDir, "lyrics")
+        val lyricFiles = lyricsDir.listFiles()?.filter { it.isFile } ?: emptyList()
+        val totalBytes = (if (withMusic) tracksAll.sumOf { it.size.coerceAtLeast(0L) } else 0L) +
+            lyricFiles.sumOf { it.length() } + 1
+        var done = 0L
+        fun report(label: String) {
+            transfer.value = label to (done.toFloat() / totalBytes).coerceIn(0f, 1f)
+        }
+        report("Собираю архив…")
+        val out = cr.openOutputStream(target) ?: error("no stream")
+        java.util.zip.ZipOutputStream(java.io.BufferedOutputStream(out, 256 * 1024)).use { zip ->
+            zip.setLevel(java.util.zip.Deflater.BEST_COMPRESSION)
+            zip.putNextEntry(java.util.zip.ZipEntry("library.json"))
+            zip.write(root.toString(2).toByteArray(Charsets.UTF_8))
+            zip.closeEntry()
+            lyricFiles.forEach { f ->
+                zip.putNextEntry(java.util.zip.ZipEntry("lyrics/${f.name}"))
+                f.inputStream().use { it.copyTo(zip) }
+                zip.closeEntry()
+                done += f.length()
+            }
+            report("Тексты песен сохранены")
+            if (withMusic) {
+                // Аудио уже сжато — пишем без повторного сжатия, так в разы быстрее.
+                zip.setLevel(java.util.zip.Deflater.NO_COMPRESSION)
+                val buf = ByteArray(256 * 1024)
+                tracksAll.forEachIndexed { i, t ->
+                    val name = files[i] ?: return@forEachIndexed
+                    val inp = runCatching { cr.openInputStream(Uri.parse(t.uri)) }.getOrNull() ?: return@forEachIndexed
+                    inp.use {
+                        zip.putNextEntry(java.util.zip.ZipEntry(name))
+                        var lastReport = 0L
+                        while (true) {
+                            val n = it.read(buf)
+                            if (n < 0) break
+                            zip.write(buf, 0, n)
+                            done += n
+                            if (done - lastReport > 2_000_000) {
+                                lastReport = done
+                                report("Треки: ${i + 1} из ${tracksAll.size}")
+                            }
+                        }
+                        zip.closeEntry()
+                    }
+                }
+            }
+        }
+        transfer.value = "Готово" to 1f
+    }
+
+    private fun safeName(s: String): String =
+        s.replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001f]"), "_").trim().take(120).ifBlank { "_" }
+
+    /**
+     * Читает файл бэкапа. ZIP: тексты песен кладутся к себе, треки, которых нет на телефоне,
+     * сохраняются в «Музыка/Lumen», после чего медиатека пересканируется. Возвращает library.json.
+     * Старый формат (просто JSON) тоже понимаем.
+     */
+    private suspend fun readBackup(source: Uri): String {
+        val app = getApplication<Application>()
+        val cr = app.contentResolver
+        val head = cr.openInputStream(source)?.use { s -> ByteArray(2).also { s.read(it) } } ?: error("no stream")
+        if (!(head[0] == 'P'.code.toByte() && head[1] == 'K'.code.toByte())) {
+            return cr.openInputStream(source)?.bufferedReader()?.use { it.readText() } ?: error("no stream")
+        }
+        val total = runCatching {
+            cr.openAssetFileDescriptor(source, "r")?.use { it.length }
+        }.getOrNull()?.takeIf { it > 0 } ?: -1L
+        var json: String? = null
+        var lib: org.json.JSONObject? = null
+        val haveKeys: HashSet<String> =
+            dao.allTracksOnce().mapTo(HashSet()) { "${normalize(it.title)}|${normalize(it.artist)}|${it.durationMs / 2000}" }
+        val byFile = HashMap<String, org.json.JSONObject>()
+        var savedMusic = 0
+        val lyricsDir = java.io.File(app.filesDir, "lyrics").apply { mkdirs() }
+        val counting = object : java.io.FilterInputStream(cr.openInputStream(source) ?: error("no stream")) {
+            var read = 0L
+            override fun read(): Int = super.read().also { if (it >= 0) read++ }
+            override fun read(b: ByteArray, off: Int, len: Int): Int = super.read(b, off, len).also { if (it > 0) read += it }
+        }
+        transfer.value = "Распаковываю архив…" to 0f
+        java.util.zip.ZipInputStream(java.io.BufferedInputStream(counting, 256 * 1024)).use { zip ->
+            while (true) {
+                val e = zip.nextEntry ?: break
+                val name = e.name
+                when {
+                    e.isDirectory || name.contains("..") -> Unit
+                    name == "library.json" -> {
+                        json = zip.readBytes().toString(Charsets.UTF_8)
+                        lib = runCatching { org.json.JSONObject(json!!) }.getOrNull()
+                        lib?.optJSONArray("tracks")?.let { a ->
+                            for (i in 0 until a.length()) {
+                                val o = a.getJSONObject(i)
+                                o.optString("file").takeIf { it.isNotBlank() }?.let { byFile[it] = o }
+                            }
+                        }
+                    }
+                    name.startsWith("lyrics/") -> {
+                        val f = java.io.File(lyricsDir, name.removePrefix("lyrics/").substringAfterLast('/'))
+                        if (!f.exists()) f.outputStream().use { zip.copyTo(it) }
+                    }
+                    name.startsWith("music/") && Build.VERSION.SDK_INT >= 29 -> {
+                        val o = byFile[name]
+                        val key = o?.let { "${normalize(it.optString("title"))}|${normalize(it.optString("artist"))}|${it.optLong("durationMs") / 2000}" }
+                        if (key == null || key !in haveKeys) {
+                            val folder = name.removePrefix("music/").substringBeforeLast('/', "")
+                            val file = name.substringAfterLast('/')
+                            val mime = o?.optString("mime")?.takeIf { it.startsWith("audio/") }
+                                ?: android.webkit.MimeTypeMap.getSingleton()
+                                    .getMimeTypeFromExtension(file.substringAfterLast('.', "").lowercase()) ?: "audio/mpeg"
+                            if (saveToMusic(file, mime, folder, zip)) savedMusic++
+                        }
+                    }
+                }
+                zip.closeEntry()
+                if (total > 0) {
+                    transfer.value = (if (savedMusic > 0) "Переношу треки: $savedMusic" else "Распаковываю архив…") to
+                        (counting.read.toFloat() / total).coerceIn(0f, 0.95f)
+                }
+            }
+        }
+        if (savedMusic > 0) {
+            transfer.value = "Добавляю треки в медиатеку…" to 0.97f
+            kotlinx.coroutines.delay(1500) // даём MediaStore проиндексировать новые файлы
+            g.scanner.scan()
+        }
+        return json ?: error("not a Lumen backup")
+    }
+
+    /** Сохраняет трек в «Музыка/Lumen/<папка>» через MediaStore (Android 10+). */
+    private fun saveToMusic(file: String, mime: String, folder: String, input: java.io.InputStream): Boolean {
+        val cr = getApplication<Application>().contentResolver
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.Audio.Media.DISPLAY_NAME, file)
+            put(android.provider.MediaStore.Audio.Media.MIME_TYPE, mime)
+            put(
+                android.provider.MediaStore.Audio.Media.RELATIVE_PATH,
+                "Music/Lumen" + (if (folder.isNotBlank()) "/$folder" else "") + "/",
+            )
+            put(android.provider.MediaStore.Audio.Media.IS_PENDING, 1)
+        }
+        val coll = android.provider.MediaStore.Audio.Media.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val uri = runCatching { cr.insert(coll, values) }.getOrNull() ?: return false
+        return try {
+            cr.openOutputStream(uri)?.use { input.copyTo(it, 256 * 1024) } ?: error("no out")
+            cr.update(uri, android.content.ContentValues().apply { put(android.provider.MediaStore.Audio.Media.IS_PENDING, 0) }, null, null)
+            true
+        } catch (t: Throwable) {
+            runCatching { cr.delete(uri, null, null) }
+            false
         }
     }
 
@@ -749,8 +943,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val res = withContext(Dispatchers.IO) {
                 runCatching {
-                    val text = getApplication<Application>().contentResolver.openInputStream(source)
-                        ?.bufferedReader()?.use { it.readText() } ?: error("no stream")
+                    val text = readBackup(source)
                     val root = org.json.JSONObject(text)
                     require(root.optString("app") == "Lumen") { "not a Lumen file" }
                     val local = dao.allTracksOnce()
@@ -814,13 +1007,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         if (st.has("skipShort")) g.prefs.skipShort = st.optBoolean("skipShort")
                         if (st.has("beatFlashes")) g.prefs.beatFlashes = st.optBoolean("beatFlashes")
                         if (st.has("playStarts")) g.prefs.playStarts = maxOf(g.prefs.playStarts, st.optInt("playStarts"))
+                        if (st.has("beatIntensity")) g.prefs.beatIntensity = st.optDouble("beatIntensity").toFloat()
+                        if (st.has("crossfadeMs")) g.prefs.crossfadeMs = st.optInt("crossfadeMs")
+                        if (st.has("showLyrics")) g.prefs.showLyrics = st.optBoolean("showLyrics")
+                        if (st.has("autoUpdate")) g.prefs.autoUpdate = st.optBoolean("autoUpdate")
                     }
                     matched to arr.length()
                 }
             }
+            transfer.value = null
             onlineLyrics.value = g.prefs.onlineLyrics
             skipShort.value = g.prefs.skipShort
             beatFlashes.value = g.prefs.beatFlashes
+            beatIntensity.value = g.prefs.beatIntensity
+            crossfadeSec.value = g.prefs.crossfadeMs / 1000
+            autoUpdate.value = g.prefs.autoUpdate
+            showLyrics.value = g.prefs.showLyrics
             val (m, t) = res.getOrDefault(0 to 0)
             onDone(res.isSuccess, m, t)
         }

@@ -52,6 +52,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -107,6 +109,8 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
     var foldersOpen by rememberSaveable { mutableStateOf(false) }
     var eqOpen by rememberSaveable { mutableStateOf(false) }
     var exporting by remember { mutableStateOf(false) }
+    var withMusic by rememberSaveable { mutableStateOf(false) }
+    val transfer by vm.transfer.collectAsStateWithLifecycle()
     val bulk by vm.lyricsBulk.collectAsStateWithLifecycle()
     val flashes by vm.beatFlashes.collectAsStateWithLifecycle()
     val intensity by vm.beatIntensity.collectAsStateWithLifecycle()
@@ -121,7 +125,7 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
                 importing = false
                 Toast.makeText(
                     ctx,
-                    if (ok) "Импорт готов: найдено $matched из $total треков" else "Это не файл медиатеки Lumen",
+                    if (ok) "Импорт готов: найдено $matched из $total треков" else "Это не архив Lumen",
                     Toast.LENGTH_LONG,
                 ).show()
             }
@@ -144,14 +148,14 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
             vm.addFolder(uri.toString())
         }
     }
-    val exportFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+    val exportFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
         if (uri != null) {
             exporting = true
-            vm.exportLibrary(uri) { ok, count ->
+            vm.exportLibrary(uri, withMusic) { ok, count ->
                 exporting = false
                 Toast.makeText(
                     ctx,
-                    if (ok) "Готово: ${pluralRu(count, "трек", "трека", "треков")} в файле" else "Не удалось сохранить файл",
+                    if (ok) "Архив готов: ${pluralRu(count, "трек", "трека", "треков")}" else "Не удалось сохранить архив",
                     Toast.LENGTH_LONG,
                 ).show()
             }
@@ -527,42 +531,75 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
         item {
             Card {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Перенос медиатеки на ПК", fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text("Экспорт и импорт", fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     if (exporting) CircularProgressIndicator(color = LocalAccent.current, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                 }
                 Text(
-                    "Сохрани всю медиатеку в один файл: треки с путями и тегами, любимое, статистику прослушиваний, " +
-                        "исключённые папки и настройки. Программа Lumen для ПК по этому файлу перенесёт музыку и библиотеку целиком.",
+                    "Всё упаковывается в один ZIP-архив: медиатека с тегами, любимое, статистика и история прослушиваний, " +
+                        "скрытые папки, настройки и сохранённые тексты песен. Архив открывается и на телефоне, и в Lumen для ПК.",
                     fontSize = 13.sp,
                     color = LC.Dim,
                 )
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(6.dp))
+                ToggleRow(
+                    "Вместе с самими треками",
+                    "Музыкальные файлы тоже попадут в архив — около ${humanSize(vm.musicBytes())}",
+                    withMusic,
+                ) { withMusic = it }
+                Spacer(Modifier.height(10.dp))
                 PillButton(
-                    "Экспортировать медиатеку",
+                    "Экспортировать в архив",
                     LIcons.Plus,
                     {
-                        val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-                        exportFile.launch("lumen-library-$date.json")
+                        if (transfer == null) {
+                            val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+                            exportFile.launch("lumen-$date.zip")
+                        }
                     },
                     Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    PillButton(
-                        "Импортировать из файла",
-                        LIcons.Refresh,
-                        { importFile.launch(arrayOf("application/json", "application/octet-stream", "text/plain", "*/*")) },
-                        Modifier.weight(1f),
-                        primary = false,
-                    )
-                    if (importing) {
-                        Spacer(Modifier.width(10.dp))
-                        CircularProgressIndicator(color = LocalAccent.current, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                PillButton(
+                    "Импортировать из архива",
+                    LIcons.Refresh,
+                    { if (transfer == null) importFile.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/json", "application/octet-stream", "*/*")) },
+                    Modifier.fillMaxWidth(),
+                    primary = false,
+                )
+                androidx.compose.animation.AnimatedVisibility(
+                    transfer != null,
+                    enter = androidx.compose.animation.expandVertically() + androidx.compose.animation.fadeIn(),
+                    exit = androidx.compose.animation.shrinkVertically() + androidx.compose.animation.fadeOut(),
+                ) {
+                    val t = transfer
+                    val p by androidx.compose.animation.core.animateFloatAsState(t?.second ?: 1f, tween(400), label = "tr")
+                    Column(Modifier.padding(top = 14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(t?.first ?: "Готово", fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                            Text("${(p * 100).roundToInt()}%", fontSize = 14.sp, color = LocalAccent.current, fontWeight = FontWeight.SemiBold)
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(8.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0x1FFFFFFF))
+                        ) {
+                            Box(
+                                Modifier
+                                    .fillMaxWidth(p.coerceIn(0.02f, 1f))
+                                    .height(8.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(LocalAccent.current)
+                            )
+                        }
                     }
                 }
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(8.dp))
                 Text(
-                    "Импорт вернёт любимое, статистику и историю прослушиваний, исключённые папки и настройки. Треки сопоставляются по пути, а если его нет — по названию, исполнителю и длительности.",
+                    "Импорт вернёт всё из архива. Треки сопоставляются по пути, а если его нет — по названию, исполнителю и длительности. " +
+                        "Если в архиве есть треки, которых нет на телефоне, они сохранятся в «Музыка/Lumen». Старые .json-файлы тоже открываются.",
                     fontSize = 12.sp,
                     color = LC.Faint,
                 )
