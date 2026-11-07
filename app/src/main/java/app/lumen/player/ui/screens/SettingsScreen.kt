@@ -29,6 +29,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.togetherWith
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.draw.clip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Slider
@@ -100,7 +104,8 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
     val eq by vm.eq.collectAsStateWithLifecycle()
     val allFolders by vm.allFolders.collectAsStateWithLifecycle()
     val excluded by vm.excludedFolders.collectAsStateWithLifecycle()
-    var showAllFolders by remember { mutableStateOf(false) }
+    var foldersOpen by rememberSaveable { mutableStateOf(false) }
+    var eqOpen by rememberSaveable { mutableStateOf(false) }
     var exporting by remember { mutableStateOf(false) }
     val bulk by vm.lyricsBulk.collectAsStateWithLifecycle()
     val flashes by vm.beatFlashes.collectAsStateWithLifecycle()
@@ -297,19 +302,18 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
 
         // ---------- эквалайзер ----------
         item {
-            Card {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Эквалайзер", fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                        Text(
-                            if (eq.available) "${eq.bands.size} полос, работает для всей музыки в Lumen"
-                            else "Включи любой трек — эквалайзер подключится к плееру",
-                            fontSize = 13.sp,
-                            color = LC.Dim,
-                        )
-                    }
-                    LSwitch(eq.enabled && eq.available, enabled = eq.available) { vm.eqSetEnabled(it) }
-                }
+            ExpandableCard(
+                title = "Эквалайзер",
+                subtitle = when {
+                    !eq.available -> "Включи любой трек — эквалайзер подключится к плееру"
+                    !eq.enabled -> "Выключен · ${eq.bands.size} полос"
+                    eq.preset >= 0 -> "Включён · ${eq.presets.getOrNull(eq.preset) ?: "пресет"}"
+                    else -> "Включён · своя настройка"
+                },
+                expanded = eqOpen,
+                onToggle = { eqOpen = !eqOpen },
+                trailing = { LSwitch(eq.enabled && eq.available, enabled = eq.available) { vm.eqSetEnabled(it) } },
+            ) {
                 if (eq.available) {
                     Spacer(Modifier.height(14.dp))
                     LazyRow(
@@ -418,25 +422,31 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
 
         // ---------- исключённые папки ----------
         item {
-            Card(Modifier.animateContentSize()) {
-                Text("Исключённые папки", fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                val hiddenCount = allFolders.count { it.folder in excluded }
+            val hiddenCount = allFolders.count { it.folder in excluded }
+            ExpandableCard(
+                title = "Скрытые папки",
+                subtitle = if (allFolders.isEmpty()) "Папки появятся после сканирования"
+                else "Скрыто $hiddenCount из ${allFolders.size} · нажми, чтобы выбрать",
+                expanded = foldersOpen,
+                onToggle = { foldersOpen = !foldersOpen },
+            ) {
+                Spacer(Modifier.height(6.dp))
                 Text(
-                    "Все папки, где найдены звуки. Выключи папку — её треки пропадут из приложения. " +
-                        "Скрыто: $hiddenCount из ${allFolders.size}.",
+                    "Выключи папку — её треки пропадут из приложения. Файлы на телефоне не трогаются.",
                     fontSize = 13.sp,
                     color = LC.Dim,
                 )
-                Spacer(Modifier.height(8.dp))
-                val shown = if (showAllFolders) allFolders else allFolders.take(6)
-                shown.forEach { f ->
+                Spacer(Modifier.height(6.dp))
+                allFolders.forEach { f ->
                     val hidden = f.folder in excluded
+                    val dim by androidx.compose.animation.core.animateFloatAsState(if (hidden) 0.5f else 1f, tween(260), label = "fdim")
                     Row(
                         Modifier
                             .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
                             .clickable { vm.setFolderHidden(f.folder, !hidden) }
                             .padding(vertical = 8.dp)
-                            .graphicsLayer { alpha = if (hidden) 0.5f else 1f },
+                            .graphicsLayer { alpha = dim },
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(LIcons.Folder, null, Modifier.size(20.dp), tint = if (hidden) LC.Dim else LocalAccent.current)
@@ -454,16 +464,6 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
                         Spacer(Modifier.width(8.dp))
                         LSwitch(!hidden) { show -> vm.setFolderHidden(f.folder, !show) }
                     }
-                }
-                if (allFolders.size > 6) {
-                    Spacer(Modifier.height(6.dp))
-                    PillButton(
-                        if (showAllFolders) "Свернуть" else "Показать все (${allFolders.size})",
-                        null,
-                        { showAllFolders = !showAllFolders },
-                        Modifier.fillMaxWidth(),
-                        primary = false,
-                    )
                 }
             }
         }
@@ -572,7 +572,7 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
         item {
             Card {
                 Text("О приложении", fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                Text("Lumen 0.4.0", fontSize = 14.sp, color = LC.Dim)
+                Text("Lumen ${vm.versionName}", fontSize = 14.sp, color = LC.Dim)
                 Text("Тексты песен: lrclib.net", fontSize = 14.sp, color = LC.Dim)
                 Text("Никакой рекламы и слежки — всё работает на телефоне.", fontSize = 14.sp, color = LC.Dim)
             }
@@ -691,5 +691,71 @@ private fun ToggleRow(title: String, subtitle: String, checked: Boolean, onChang
         }
         Spacer(Modifier.width(12.dp))
         LSwitch(checked) { onChange(it) }
+    }
+}
+
+/**
+ * Раскрывающаяся карточка: шапка с названием и кратким статусом, стрелка плавно
+ * поворачивается, содержимое мягко выезжает вниз и так же уезжает обратно.
+ */
+@Composable
+private fun ExpandableCard(
+    title: String,
+    subtitle: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    trailing: (@Composable () -> Unit)? = null,
+    content: @Composable () -> Unit,
+) {
+    val rot by androidx.compose.animation.core.animateFloatAsState(
+        if (expanded) 180f else 0f,
+        androidx.compose.animation.core.spring(dampingRatio = 0.8f, stiffness = 300f),
+        label = "chev",
+    )
+    Card {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .clickable(onClickLabel = if (expanded) "Свернуть" else "Развернуть", onClick = onToggle),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f).padding(vertical = 2.dp)) {
+                Text(title, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                androidx.compose.animation.AnimatedContent(
+                    subtitle,
+                    transitionSpec = {
+                        androidx.compose.animation.fadeIn(tween(220)) togetherWith androidx.compose.animation.fadeOut(tween(160))
+                    },
+                    label = "sub",
+                ) { t -> Text(t, fontSize = 13.sp, color = LC.Dim) }
+            }
+            if (trailing != null) {
+                Spacer(Modifier.width(8.dp))
+                trailing()
+            }
+            Spacer(Modifier.width(6.dp))
+            Icon(
+                LIcons.Down,
+                null,
+                Modifier
+                    .size(22.dp)
+                    .graphicsLayer { rotationZ = rot },
+                tint = LC.Dim,
+            )
+        }
+        androidx.compose.animation.AnimatedVisibility(
+            expanded,
+            enter = androidx.compose.animation.expandVertically(
+                androidx.compose.animation.core.spring(dampingRatio = 0.9f, stiffness = 260f),
+                expandFrom = Alignment.Top,
+            ) + androidx.compose.animation.fadeIn(tween(260, delayMillis = 60)),
+            exit = androidx.compose.animation.shrinkVertically(
+                androidx.compose.animation.core.spring(dampingRatio = 1f, stiffness = 320f),
+                shrinkTowards = Alignment.Top,
+            ) + androidx.compose.animation.fadeOut(tween(160)),
+        ) {
+            Column { content() }
+        }
     }
 }
