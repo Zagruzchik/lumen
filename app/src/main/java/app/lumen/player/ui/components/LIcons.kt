@@ -75,5 +75,6 @@ object LIcons {
     val Rules = stroke("rules", "M4 6h9", "M4 12h6", "M4 18h9", circle(17f, 6f, 2f), circle(14f, 12f, 2f), circle(17f, 18f, 2f))
     val Trim = stroke("trim", circle(6f, 6f, 2.5f), circle(6f, 18f, 2.5f), "M8 7.5L20 18", "M8 16.5L20 6")
     val Share = stroke("share", circle(18f, 5f, 2.5f), circle(6f, 12f, 2.5f), circle(18f, 19f, 2.5f), "M8.2 10.8l7.6-4.4", "M8.2 13.2l7.6 4.4")
+    val Car = stroke("car", "M5 16V11l2-5h10l2 5v5", "M3 16h18v3H3z", circle(7.5f, 13.2f, 1f), circle(16.5f, 13.2f, 1f))
     val Info = stroke("info", circle(12f, 12f, 9f), "M12 11v6", "M12 7.5v.5")
 }

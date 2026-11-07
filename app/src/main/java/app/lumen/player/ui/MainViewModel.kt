@@ -1,5 +1,7 @@
 package app.lumen.player.ui
 
+import app.lumen.player.playback.LumenAlarm
+import app.lumen.player.playback.AlarmConfig
 import app.lumen.player.data.SmartRules
 import app.lumen.player.data.SmartEngine
 import app.lumen.player.data.SmartContext
@@ -1220,6 +1222,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     val trimTrack = MutableStateFlow<TrackEntity?>(null)
+
+    // ---------- машина, будильник, ночные часы ----------
+
+    val carMode = MutableStateFlow(false)
+    val alarm = MutableStateFlow(LumenAlarm.load(g.prefs))
+
+    fun setAlarm(c: AlarmConfig) {
+        val wasOn = alarm.value.enabled
+        alarm.value = c
+        LumenAlarm.save(g.prefs, c)
+        LumenAlarm.schedule(getApplication<Application>(), g.prefs)
+        if (c.enabled && !wasOn) toast(app.lumen.player.ui.screens.alarmSubtitle(c))
+    }
+
+    val nightClock = MutableStateFlow(g.prefs.nightClock)
+    fun setNightClock(v: Boolean) { g.prefs.nightClock = v; nightClock.value = v }
 
     // ---------- цитаты и караоке ----------
 

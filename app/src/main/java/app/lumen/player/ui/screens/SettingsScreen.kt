@@ -557,6 +557,23 @@ fun SettingsScreen(
             }
         }
 
+        // ---------- будильник ----------
+        item { Card { AlarmSection(vm) } }
+
+        // ---------- в машине и ночью ----------
+        item {
+            Card {
+                AutoSection(onCarMode = { vm.carMode.value = true })
+                Spacer(Modifier.height(8.dp))
+                val nightOn by vm.nightClock.collectAsStateWithLifecycle()
+                ToggleRow(
+                    "Ночные часы на зарядке",
+                    "Телефон заряжается и минуту не трогают — Lumen показывает крупные тусклые часы и то, что играет",
+                    nightOn,
+                ) { vm.setNightClock(it) }
+            }
+        }
+
         // ---------- библиотека ----------
         item {
             Card {

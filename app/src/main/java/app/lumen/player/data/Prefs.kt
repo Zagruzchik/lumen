@@ -154,4 +154,13 @@ class Prefs(context: Context) {
     var karaoke: Boolean
         get() = sp.getBoolean("karaoke", true)
         set(v) = sp.edit().putBoolean("karaoke", v).apply()
+
+    /** Музыкальный будильник (JSON, см. LumenAlarm). */
+    var alarm: String
+        get() = sp.getString("alarm", "").orEmpty()
+        set(v) = sp.edit().putString("alarm", v).apply()
+
+    var nightClock: Boolean
+        get() = sp.getBoolean("nightClock", false)
+        set(v) = sp.edit().putBoolean("nightClock", v).apply()
 }

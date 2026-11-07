@@ -22,6 +22,8 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionResult
 import androidx.media3.session.MediaSessionService
+import androidx.media3.session.MediaLibraryService
+import androidx.media3.session.LibraryResult
 import app.lumen.player.R
 import app.lumen.player.data.Artwork
 import app.lumen.player.data.FavoriteEntity
@@ -49,13 +51,15 @@ private val CMD_SHUFFLE = SessionCommand(ACTION_SHUFFLE, Bundle.EMPTY)
 internal const val ACTION_SLEEP_END = "lumen.SLEEP_END"
 internal const val ACTION_AB = "lumen.AB"
 private val CMD_AB = SessionCommand(ACTION_AB, Bundle.EMPTY)
+internal const val ACTION_ALARM = "lumen.ALARM"
+private val CMD_ALARM = SessionCommand(ACTION_ALARM, Bundle.EMPTY)
 private val CMD_SLEEP_END = SessionCommand(ACTION_SLEEP_END, Bundle.EMPTY)
 /** Целевая громкость выравнивания (средняя энергия), дБ. */
 private const val TARGET_LOUDNESS_DB = -15f
 
 @OptIn(UnstableApi::class)
-class PlaybackService : MediaSessionService() {
-    private var session: MediaSession? = null
+class PlaybackService : MediaLibraryService() {
+    private var session: MediaLibraryService.MediaLibrarySession? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var pendingPlayCount: String? = null
     private var favorites: Set<String> = emptySet()
@@ -115,6 +119,7 @@ class PlaybackService : MediaSessionService() {
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (!isPlaying && alarmAnim?.isRunning == true) { alarmAnim?.cancel(); mix?.fade = 1f }
                 val now = android.os.SystemClock.elapsedRealtime()
                 if (!isPlaying) saveLongPosition(player)
                 requestTileUpdate()
@@ -220,10 +225,66 @@ class PlaybackService : MediaSessionService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 
-        session = MediaSession.Builder(this, lumen)
-            .setSessionActivity(openApp)
-            .setBitmapLoader(ArtworkBitmapLoader(applicationContext))
-            .setCallback(object : MediaSession.Callback {
+        session = MediaLibraryService.MediaLibrarySession.Builder(this, lumen, object : MediaLibraryService.MediaLibrarySession.Callback {
+                // ---------- Android Auto: дерево медиатеки и поиск ----------
+                override fun onGetLibraryRoot(
+                    session: MediaLibraryService.MediaLibrarySession,
+                    browser: MediaSession.ControllerInfo,
+                    params: MediaLibraryService.LibraryParams?,
+                ): ListenableFuture<LibraryResult<MediaItem>> =
+                    Futures.immediateFuture(LibraryResult.ofItem(AutoLibrary.root(), params))
+
+                override fun onGetChildren(
+                    session: MediaLibraryService.MediaLibrarySession,
+                    browser: MediaSession.ControllerInfo,
+                    parentId: String,
+                    page: Int,
+                    pageSize: Int,
+                    params: MediaLibraryService.LibraryParams?,
+                ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = scope.future {
+                    val all = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                        runCatching { AutoLibrary.children(applicationContext.graph.dao, parentId) }.getOrDefault(emptyList())
+                    }
+                    val from = (page.coerceAtLeast(0) * pageSize.coerceAtLeast(1)).coerceAtMost(all.size)
+                    val to = (from + pageSize.coerceAtLeast(1)).coerceAtMost(all.size)
+                    LibraryResult.ofItemList(ImmutableList.copyOf(if (pageSize > 0 && pageSize < Int.MAX_VALUE) all.subList(from, to) else all), params)
+                }
+
+                override fun onGetItem(
+                    session: MediaLibraryService.MediaLibrarySession,
+                    browser: MediaSession.ControllerInfo,
+                    mediaId: String,
+                ): ListenableFuture<LibraryResult<MediaItem>> = scope.future {
+                    val t = kotlinx.coroutines.withContext(Dispatchers.IO) { applicationContext.graph.dao.byUri(AutoLibrary.uriOf(mediaId)) }
+                    if (t != null) LibraryResult.ofItem(t.toMediaItem(), null)
+                    else LibraryResult.ofError(LibraryResult.RESULT_ERROR_BAD_VALUE)
+                }
+
+                override fun onSearch(
+                    session: MediaLibraryService.MediaLibrarySession,
+                    browser: MediaSession.ControllerInfo,
+                    query: String,
+                    params: MediaLibraryService.LibraryParams?,
+                ): ListenableFuture<LibraryResult<Void>> {
+                    scope.launch {
+                        val n = kotlinx.coroutines.withContext(Dispatchers.IO) { AutoLibrary.search(applicationContext.graph.dao, query).size }
+                        session.notifySearchResultChanged(browser, query, n, params)
+                    }
+                    return Futures.immediateFuture(LibraryResult.ofVoid())
+                }
+
+                override fun onGetSearchResult(
+                    session: MediaLibraryService.MediaLibrarySession,
+                    browser: MediaSession.ControllerInfo,
+                    query: String,
+                    page: Int,
+                    pageSize: Int,
+                    params: MediaLibraryService.LibraryParams?,
+                ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = scope.future {
+                    val list = kotlinx.coroutines.withContext(Dispatchers.IO) { AutoLibrary.search(applicationContext.graph.dao, query) }
+                    LibraryResult.ofItemList(ImmutableList.copyOf(AutoLibrary.searchItems(query, list)), params)
+                }
+
                 // Кнопка «играть» с виджета/гарнитуры, когда приложение было закрыто:
                 // поднимаем последнюю очередь (или «Самое любимое») и продолжаем.
                 override fun onPlaybackResumption(
@@ -254,11 +315,12 @@ class PlaybackService : MediaSessionService() {
                     session: MediaSession,
                     controller: MediaSession.ControllerInfo,
                 ): MediaSession.ConnectionResult {
-                    val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
+                    val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS.buildUpon()
                         .add(CMD_FAVORITE)
                         .add(CMD_SHUFFLE)
                         .add(CMD_SLEEP_END)
                         .add(CMD_AB)
+                        .add(CMD_ALARM)
                         .build()
                     return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                         .setAvailableSessionCommands(commands)
@@ -278,6 +340,7 @@ class PlaybackService : MediaSessionService() {
                             sleepAtEnd = args.getBoolean("on", false)
                             exo?.pauseAtEndOfMediaItems = sleepAtEnd
                         }
+                        ACTION_ALARM -> startAlarm(args.getString("source") ?: "play:loved", args.getLong("ramp", 60_000L))
                         ACTION_AB -> {
                             val a = args.getLong("a", -1L)
                             val b = args.getLong("b", -1L)
@@ -304,6 +367,17 @@ class PlaybackService : MediaSessionService() {
                     startIndex: Int,
                     startPositionMs: Long,
                 ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+                    // Выбор из машины: разворачиваем в целый список (альбом, плейлист, «Самое любимое»).
+                    val single = mediaItems.singleOrNull()?.mediaId
+                    if (single != null && (single.startsWith("ctx:") || single.startsWith("play:"))) {
+                        return scope.future {
+                            val ex = kotlinx.coroutines.withContext(Dispatchers.IO) { AutoLibrary.expand(applicationContext.graph.dao, single) }
+                            val list = ex?.first.orEmpty()
+                            if (list.isEmpty()) throw IllegalStateException("empty")
+                            originalOrder = null
+                            MediaSession.MediaItemsWithStartPosition(list.map { it.toMediaItem() }, ex!!.second, 0L)
+                        }
+                    }
                     val resolved = resolve(mediaItems)
                     val start = if (startIndex == C.INDEX_UNSET) 0 else startIndex.coerceIn(0, (resolved.size - 1).coerceAtLeast(0))
                     // Новая очередь: если перемешивание включено — выбранный трек первым, остальные вразнобой.
@@ -330,6 +404,8 @@ class PlaybackService : MediaSessionService() {
                     return Futures.immediateFuture(resolve(mediaItems).toMutableList())
                 }
             })
+            .setSessionActivity(openApp)
+            .setBitmapLoader(ArtworkBitmapLoader(applicationContext))
             .build()
 
         updateNotificationButtons()
@@ -437,6 +513,44 @@ class PlaybackService : MediaSessionService() {
                 } else {
                     g.dao.clearPosition(id)
                 }
+            }
+        }
+    }
+
+    // ---------- будильник ----------
+
+    private var alarmAnim: android.animation.ValueAnimator? = null
+
+    /** Будильник: тихо включаем музыку и плавно поднимаем громкость. */
+    fun startAlarm(source: String, rampMs: Long) {
+        val p = exo ?: return
+        val m = mix ?: return
+        scope.launch {
+            val dao = applicationContext.graph.dao
+            val ex = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                runCatching { AutoLibrary.expand(dao, source) }.getOrNull()
+                    ?: (dao.mostLoved() to 0)
+            }
+            val list = ex.first.ifEmpty { kotlinx.coroutines.withContext(Dispatchers.IO) { dao.mostLoved() } }
+            if (list.isEmpty()) return@launch
+            // Громкость медиа: не даём будильнику быть беззвучным.
+            runCatching {
+                val am = getSystemService(android.media.AudioManager::class.java)
+                val max = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+                val cur = am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+                if (cur < max / 2) am.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, max / 2, 0)
+            }
+            alarmAnim?.cancel()
+            m.fade = 0f
+            p.setMediaItems(list.map { it.toMediaItem() }, ex.second.coerceIn(0, list.lastIndex), 0L)
+            p.prepare()
+            p.play()
+            alarmAnim = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+                duration = rampMs.coerceIn(5_000L, 600_000L)
+                interpolator = android.view.animation.LinearInterpolator()
+                // Громкость на слух растёт по кривой: начинаем совсем тихо.
+                addUpdateListener { m.fade = (it.animatedValue as Float).let { x -> x * x } }
+                start()
             }
         }
     }
@@ -557,6 +671,7 @@ class PlaybackService : MediaSessionService() {
         val p = sessionPlayer ?: return
         if (exo?.isPlaying == true) p.pause() else p.play()
     }
+    fun sessionPause() = sessionPlayer?.pause()
     fun skipNext() = sessionPlayer?.seekToNextMediaItem()
     fun skipPrev() = sessionPlayer?.seekToPrevious()
     private var crossfader: Crossfader? = null
@@ -565,8 +680,14 @@ class PlaybackService : MediaSessionService() {
     private var reordering = false
 
     private fun resolve(items: List<MediaItem>): List<MediaItem> = items.map { item ->
-        if (item.localConfiguration != null) item
-        else item.buildUpon().setUri(Uri.parse(item.mediaId)).build()
+        when {
+            item.localConfiguration != null -> item
+            item.mediaId.startsWith("ctx:") -> {
+                val uri = AutoLibrary.uriOf(item.mediaId)
+                item.buildUpon().setMediaId(uri).setUri(Uri.parse(uri)).build()
+            }
+            else -> item.buildUpon().setUri(Uri.parse(item.mediaId)).build()
+        }
     }
 
     private fun itemsOf(p: Player): List<MediaItem> = List(p.mediaItemCount) { p.getMediaItemAt(it) }
@@ -700,7 +821,7 @@ class PlaybackService : MediaSessionService() {
         s.setCustomLayout(ImmutableList.of(favButton, shuffleButton))
     }
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibraryService.MediaLibrarySession? = session
 
     /** Лайк и перемешивание с виджета — напрямую, без лишних подключений. */
     fun handleWidgetAction(action: String) {

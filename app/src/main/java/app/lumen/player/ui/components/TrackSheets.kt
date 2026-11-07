@@ -155,6 +155,7 @@ fun TrackMenuSheet(
     sheetModifier: Modifier = Modifier,
     onSound: (() -> Unit)? = null,
     onTrim: ((TrackEntity) -> Unit)? = null,
+    onCar: (() -> Unit)? = null,
 ) {
     val t = req.track
     val a = req.actions
@@ -168,6 +169,7 @@ fun TrackMenuSheet(
         Spacer(Modifier.height(6.dp))
         Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState())) {
             if (req.fromPlayer && onSound != null) SheetItem(LIcons.Wave, "Скорость, тон и повтор A–B") { run(onSound) }
+            if (req.fromPlayer && onCar != null) SheetItem(LIcons.Car, "Автомобильный режим") { run(onCar) }
             SheetItem(LIcons.PlayNext, "Играть следующим") { run { a.onPlayNext(t) } }
             SheetItem(LIcons.Queue, "В конец очереди") { run { a.onEnqueue(t) } }
             a.onAddToPlaylist?.let { f -> SheetItem(LIcons.Playlist, "В плейлист…") { run { f(t) } } }

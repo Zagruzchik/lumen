@@ -59,6 +59,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -420,11 +421,37 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
     )
     val bottomPad = navBottom + 68.dp + (if (hasCurrent) 80.dp + (MINI_EXTRA * miniBig).dp else 0.dp) + 16.dp
 
+    // Ночные часы: зарядка + минута без касаний.
+    val nightOn by vm.nightClock.collectAsStateWithLifecycle()
+    val charging = app.lumen.player.ui.screens.rememberCharging()
+    // Время последнего касания хранится не в состоянии Compose — касания не вызывают перерисовку.
+    val lastTouch = remember { longArrayOf(System.currentTimeMillis()) }
+    var nightShown by remember { mutableStateOf(false) }
+    LaunchedEffect(nightOn, charging) {
+        nightShown = false
+        lastTouch[0] = System.currentTimeMillis()
+        while (nightOn && charging) {
+            kotlinx.coroutines.delay(3_000L)
+            if (!nightShown && System.currentTimeMillis() - lastTouch[0] > 60_000L) nightShown = true
+        }
+    }
+    if (nightOn && charging) app.lumen.player.ui.screens.KeepScreenOn()
+    val carOn by vm.carMode.collectAsStateWithLifecycle()
+
     Box(
         Modifier
             .fillMaxSize()
             .background(Color.Black)
             .onSizeChanged { screenH = it.height.toFloat().coerceAtLeast(1f) }
+            .pointerInput(Unit) {
+                // Только наблюдаем за касаниями (ничего не перехватываем) — для ночных часов.
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                        lastTouch[0] = System.currentTimeMillis()
+                    }
+                }
+            }
     ) {
         // Основной экран слегка «уходит вглубь», пока выезжает плеер.
         Box(
@@ -560,12 +587,23 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                     r,
                     onClose = { vm.trackMenu.value = null },
                     onSound = { vm.soundSheet.value = true },
+                    onCar = { vm.carMode.value = true },
                     onTrim = { vm.trimTrack.value = it },
                     sheetModifier = Modifier.animateEnterExit(
                         enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 380f)) { it },
                         exit = slideOutVertically(tween(220)) { it },
                     ),
                 )
+            }
+        }
+        // Автомобильный режим и ночные часы — поверх всего.
+        AnimatedVisibility(carOn, enter = fadeIn(tween(300)), exit = fadeOut(tween(250))) {
+            app.lumen.player.ui.screens.CarModeScreen(vm) { vm.carMode.value = false }
+        }
+        AnimatedVisibility(nightShown && !carOn, enter = fadeIn(tween(1500)), exit = fadeOut(tween(400))) {
+            app.lumen.player.ui.screens.NightClock(vm) {
+                nightShown = false
+                lastTouch[0] = System.currentTimeMillis()
             }
         }
         // Карточка-цитата из текста песни.
