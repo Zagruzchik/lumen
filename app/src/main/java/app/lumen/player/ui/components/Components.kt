@@ -247,6 +247,9 @@ class TrackActions(
     val onEdit: ((TrackEntity) -> Unit)? = null,
     /** Только внутри плейлиста. */
     val onRemoveFromPlaylist: ((TrackEntity) -> Unit)? = null,
+    val onInfo: ((TrackEntity) -> Unit)? = null,
+    /** Открыть нижнее меню трека (с действиями того экрана, откуда открыли). */
+    val onMenu: ((TrackEntity, Boolean, TrackActions) -> Unit)? = null,
 )
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -264,7 +267,7 @@ fun TrackRow(
     Row(
         Modifier
             .fillMaxWidth()
-            .combinedClickable(onClick = onClick, onLongClick = { menu = true })
+            .combinedClickable(onClick = onClick, onLongClick = { actions.onMenu?.invoke(t, fav, actions) ?: run { menu = true } })
             .padding(start = 20.dp, end = 8.dp)
             .height(62.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -290,7 +293,7 @@ fun TrackRow(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                "${t.artist} · ${formatLabel(t.mime, t.uri)}",
+                if (LocalShowFormat.current) "${t.artist} · ${formatLabel(t.mime, t.uri)}" else t.artist,
                 fontSize = 13.sp,
                 color = LC.Dim,
                 maxLines = 1,
@@ -305,7 +308,7 @@ fun TrackRow(
             Text(formatMs(t.durationMs), fontSize = 13.sp, color = LC.Faint)
         }
         Box {
-            IconBtn(LIcons.More, "Действия", { menu = true }, glass = false, tint = LC.Dim)
+            IconBtn(LIcons.More, "Действия", { actions.onMenu?.invoke(t, fav, actions) ?: run { menu = true } }, glass = false, tint = LC.Dim)
             TrackMenu(menu, { menu = false }, t, fav, actions)
         }
     }
@@ -386,15 +389,17 @@ fun AlbumTile(a: AlbumRow, onClick: () -> Unit, modifier: Modifier = Modifier, c
                 sizePx = 384,
                 seed = a.albumKey,
             )
-            Box(
-                Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(8.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0x73000000))
-                    .padding(horizontal = 7.dp, vertical = 2.dp)
-            ) {
-                Text(formatLabel(a.mime), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            if (LocalShowFormat.current) {
+                Box(
+                    Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(8.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0x73000000))
+                        .padding(horizontal = 7.dp, vertical = 2.dp)
+                ) {
+                    Text(formatLabel(a.mime), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                }
             }
         }
         Spacer(Modifier.height(8.dp))

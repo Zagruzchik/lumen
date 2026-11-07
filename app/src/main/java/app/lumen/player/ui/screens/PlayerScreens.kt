@@ -198,7 +198,7 @@ private fun sampleRateLabel(sr: Int): String =
 
 @Composable
 private fun QualityBadges(q: AudioQuality?, fallbackSampleRate: Int) {
-    if (q == null) return
+    if (q == null || !app.lumen.player.ui.components.LocalShowFormat.current) return
     val sr = if (q.sampleRate > 0) q.sampleRate else fallbackSampleRate
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         Badge(q.format)
@@ -445,7 +445,10 @@ private fun PlayerTopBar(
             )
         }
         Box {
-            IconBtn(LIcons.MoreH, "Меню трека", { menu = true })
+            IconBtn(LIcons.MoreH, "Меню трека", {
+                val t = track
+                if (t != null && actions.onMenu != null) actions.onMenu.invoke(t, t.uri in favs, actions) else menu = true
+            })
             track?.let { TrackMenu(menu, { menu = false }, it, it.uri in favs, actions) }
         }
     }
@@ -947,15 +950,30 @@ private fun FullControls(
                 modifier = Modifier.weight(1f),
                 label = "titles",
             ) { _ ->
-                Column {
-                    Text(p.title, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, modifier = Modifier.basicMarquee())
+                // Название → альбом, исполнитель → артист. Область нажатия — вся ширина до кнопки лайка.
+                Column(Modifier.fillMaxWidth()) {
+                    Text(
+                        p.title,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClickLabel = "Открыть альбом", onClick = onAlbum)
+                            .basicMarquee(),
+                    )
                     Text(
                         p.artist,
                         fontSize = 16.sp,
                         color = LC.Dim,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.clickable(onClick = onArtist),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClickLabel = "Открыть исполнителя", onClick = onArtist)
+                            .padding(vertical = 2.dp),
                     )
                 }
             }

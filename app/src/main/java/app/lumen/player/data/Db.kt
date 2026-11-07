@@ -395,6 +395,12 @@ abstract class LibraryDao {
     )
     abstract suspend fun topAlbumsIn(from: Long, to: Long, n: Int): List<TopName>
 
+    @Query(
+        """SELECT COUNT(*) AS plays, COALESCE(SUM(listenedMs), 0) AS listenedMs,
+           MIN(startedAt) AS firstAt, MAX(startedAt) AS lastAt FROM listens WHERE uri = :uri"""
+    )
+    abstract suspend fun trackListenStats(uri: String): TrackListenStats
+
     @Query("SELECT startedAt, listenedMs FROM listens WHERE startedAt >= :from AND startedAt < :to")
     abstract suspend fun listenTimesIn(from: Long, to: Long): List<ListenTime>
 
@@ -587,3 +593,5 @@ fun applyOverride(t: TrackEntity, o: TrackOverride): TrackEntity {
         year = o.year ?: t.year,
     )
 }
+
+data class TrackListenStats(val plays: Int, val listenedMs: Long, val firstAt: Long?, val lastAt: Long?)

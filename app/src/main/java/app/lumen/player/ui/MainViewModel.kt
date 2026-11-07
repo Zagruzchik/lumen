@@ -731,6 +731,45 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Открытая поверх всего карточка для трека: «в плейлист» или «изменить теги». */
     val sheetTrack = MutableStateFlow<SheetTrack?>(null)
     val newPlaylistPrompt = MutableStateFlow(false)
+    val trackMenu = MutableStateFlow<app.lumen.player.ui.components.TrackMenuRequest?>(null)
+    val infoTrack = MutableStateFlow<TrackEntity?>(null)
+    val showFormat = MutableStateFlow(g.prefs.showFormat)
+    fun setShowFormat(v: Boolean) { g.prefs.showFormat = v; showFormat.value = v }
+
+    suspend fun trackInfo(t: TrackEntity): app.lumen.player.ui.components.TrackInfo = withContext(Dispatchers.IO) {
+        val q = readQuality(t.uri, t)
+        var channels = 0
+        runCatching {
+            val ex = android.media.MediaExtractor()
+            try {
+                ex.setDataSource(getApplication(), Uri.parse(t.uri), null)
+                for (i in 0 until ex.trackCount) {
+                    val f = ex.getTrackFormat(i)
+                    if (f.getString(android.media.MediaFormat.KEY_MIME)?.startsWith("audio/") == true) {
+                        channels = f.getInteger(android.media.MediaFormat.KEY_CHANNEL_COUNT)
+                        break
+                    }
+                }
+            } finally {
+                ex.release()
+            }
+        }
+        val st = dao.trackListenStats(t.uri)
+        app.lumen.player.ui.components.TrackInfo(
+            path = t.path,
+            sizeBytes = t.size,
+            format = q.format,
+            bitrate = t.bitrate,
+            sampleRate = q.sampleRate,
+            bits = q.bits,
+            channels = channels,
+            plays = st.plays,
+            listenedMs = st.listenedMs,
+            firstPlayed = st.firstAt,
+            lastPlayed = st.lastAt,
+            dateAdded = t.dateAdded,
+        )
+    }
     /** Трек, который положим в новый плейлист сразу после создания. */
     var pendingPlaylistUri: String? = null
 

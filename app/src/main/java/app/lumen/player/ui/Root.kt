@@ -149,8 +149,11 @@ fun LumenRoot(vm: MainViewModel) {
     val coverAccent by animateColorAsState(colors.accent, tween(700), label = "accent")
     // «Обратная сторона луны» меняет акцент всего приложения резко, без плавного перехода.
     val accent = if (moon) app.lumen.player.ui.screens.MoonAccent else coverAccent
+    val showFormat by vm.showFormat.collectAsStateWithLifecycle()
     LumenTheme(accent) {
-        PermissionGate(vm) { MainScaffold(vm, colors) }
+        androidx.compose.runtime.CompositionLocalProvider(app.lumen.player.ui.components.LocalShowFormat provides showFormat) {
+            PermissionGate(vm) { MainScaffold(vm, colors) }
+        }
     }
 }
 
@@ -377,6 +380,8 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
             onAddToPlaylist = { vm.sheetTrack.value = app.lumen.player.ui.SheetTrack(it, edit = false) },
             onPlaySimilar = { vm.playSimilar(it) },
             onEdit = { vm.sheetTrack.value = app.lumen.player.ui.SheetTrack(it, edit = true) },
+            onInfo = { vm.infoTrack.value = it },
+            onMenu = { t, fav, a -> vm.trackMenu.value = app.lumen.player.ui.components.TrackMenuRequest(t, fav, a) },
         )
     }
 
@@ -519,6 +524,38 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                         scaleY = sc
                     },
             )
+        }
+        // Нижние шторки: меню трека и информация о треке.
+        val menuReq by vm.trackMenu.collectAsStateWithLifecycle()
+        var lastMenu by remember { mutableStateOf<app.lumen.player.ui.components.TrackMenuRequest?>(null) }
+        if (menuReq != null) lastMenu = menuReq
+        AnimatedVisibility(menuReq != null, enter = fadeIn(tween(220)), exit = fadeOut(tween(200))) {
+            lastMenu?.let { r ->
+                app.lumen.player.ui.components.TrackMenuSheet(
+                    r,
+                    onClose = { vm.trackMenu.value = null },
+                    sheetModifier = Modifier.animateEnterExit(
+                        enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 380f)) { it },
+                        exit = slideOutVertically(tween(220)) { it },
+                    ),
+                )
+            }
+        }
+        val infoT by vm.infoTrack.collectAsStateWithLifecycle()
+        var lastInfo by remember { mutableStateOf<app.lumen.player.data.TrackEntity?>(null) }
+        if (infoT != null) lastInfo = infoT
+        AnimatedVisibility(infoT != null, enter = fadeIn(tween(220)), exit = fadeOut(tween(200))) {
+            lastInfo?.let { t ->
+                app.lumen.player.ui.components.TrackInfoSheet(
+                    t,
+                    load = { vm.trackInfo(it) },
+                    onClose = { vm.infoTrack.value = null },
+                    sheetModifier = Modifier.animateEnterExit(
+                        enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 380f)) { it },
+                        exit = slideOutVertically(tween(220)) { it },
+                    ),
+                )
+            }
         }
         val sheet by vm.sheetTrack.collectAsStateWithLifecycle()
         var lastSheet by remember { mutableStateOf<app.lumen.player.ui.SheetTrack?>(null) }

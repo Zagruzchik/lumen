@@ -70,4 +70,5 @@ object LIcons {
     val Playlist = stroke("playlist", "M4 6h12", "M4 11h12", "M4 16h7", "M17 14v6", circle(15f, 20f, 2f), "M17 14l4-1")
     val Edit = stroke("edit", "M4 20h4L19 9l-4-4L4 16z", "M13.5 6.5l4 4")
     val Wave = stroke("wave", "M3 12h2", "M7 8v8", "M11 5v14", "M15 9v6", "M19 11v2")
+    val Info = stroke("info", circle(12f, 12f, 9f), "M12 11v6", "M12 7.5v.5")
 }

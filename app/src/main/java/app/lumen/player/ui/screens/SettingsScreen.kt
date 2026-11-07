@@ -113,6 +113,7 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
     var withMusic by rememberSaveable { mutableStateOf(false) }
     val transfer by vm.transfer.collectAsStateWithLifecycle()
     val smartQ by vm.smartQueue.collectAsStateWithLifecycle()
+    val showFmt by vm.showFormat.collectAsStateWithLifecycle()
     val norm by vm.normalize.collectAsStateWithLifecycle()
     val fadeP by vm.fadePause.collectAsStateWithLifecycle()
     val resumeL by vm.resumeLong.collectAsStateWithLifecycle()
@@ -266,6 +267,17 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
                     Text("Проверять при запуске", fontSize = 15.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
                     LSwitch(autoUpd) { vm.setAutoUpdate(it) }
                 }
+            }
+        }
+
+        // ---------- интерфейс ----------
+        item {
+            Card {
+                ToggleRow(
+                    "Показывать формат файла",
+                    "Метки FLAC, MP3 и качество звука в плеере, списках, альбомах и плейлистах",
+                    showFmt,
+                ) { vm.setShowFormat(it) }
             }
         }
 

@@ -136,6 +136,14 @@ fun HomeScreen(vm: MainViewModel, nav: Nav, actions: TrackActions, bottomPad: Dp
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val floors = remember(listState) { HomeFloors(listState, scope) }
+    // «Назад», когда главная пролистана вниз, — сначала плавно к кнопке.
+    val scrolledDown by remember { androidx.compose.runtime.derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0 } }
+    androidx.activity.compose.BackHandler(enabled = !searchOpen && scrolledDown) {
+        scope.launch {
+            if (listState.firstVisibleItemIndex > 1) listState.scrollToItem(1)
+            floors.goTo(0)
+        }
+    }
     // Сообщаем, виден ли первый экран: от этого зависит размер мини-плеера.
     androidx.compose.runtime.LaunchedEffect(listState, searchOpen, tracks.isEmpty()) {
         if (searchOpen || tracks.isEmpty()) {
@@ -647,7 +655,7 @@ fun AlbumScreen(vm: MainViewModel, key: String, nav: Nav, actions: TrackActions,
         link = a?.albumArtist,
         onLink = { a?.let { nav.open(Dest.Artist(app.lumen.player.data.Artists.split(it.albumArtist).first())) } },
         subtitle = subtitle,
-        badge = tracks.firstOrNull()?.let { formatLabel(it.mime, it.uri) },
+        badge = tracks.firstOrNull()?.takeIf { app.lumen.player.ui.components.LocalShowFormat.current }?.let { formatLabel(it.mime, it.uri) },
         coverUri = a?.coverUri ?: tracks.firstOrNull()?.uri,
         seed = key,
         round = false,

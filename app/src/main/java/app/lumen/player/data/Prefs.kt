@@ -84,6 +84,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("lockScreen", false)
         set(v) = sp.edit().putBoolean("lockScreen", v).apply()
 
+    /** Показывать бейджи формата (FLAC/MP3). */
+    var showFormat: Boolean
+        get() = sp.getBoolean("showFormat", true)
+        set(v) = sp.edit().putBoolean("showFormat", v).apply()
+
     /** Проверять обновления при запуске. */
     var autoUpdate: Boolean
         get() = sp.getBoolean("autoUpdate", true)
