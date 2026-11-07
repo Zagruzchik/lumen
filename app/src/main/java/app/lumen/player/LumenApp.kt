@@ -52,6 +52,7 @@ class AppGraph(val context: Context) {
     val eq = EqController(prefs)
     val beats = app.lumen.player.playback.BeatAnalyzer(context)
     val recs = app.lumen.player.data.RecommendationsRepository(context, db.dao(), prefs)
+    val updates = app.lumen.player.data.UpdateRepository(context)
 
     private var observerRegistered = false
     private var rescanJob: Job? = null

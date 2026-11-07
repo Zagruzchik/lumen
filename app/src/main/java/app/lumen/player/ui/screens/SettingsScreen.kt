@@ -106,6 +106,8 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
     val flashes by vm.beatFlashes.collectAsStateWithLifecycle()
     val intensity by vm.beatIntensity.collectAsStateWithLifecycle()
     val crossfade by vm.crossfadeSec.collectAsStateWithLifecycle()
+    val upd by vm.updateState.collectAsStateWithLifecycle()
+    val autoUpd by vm.autoUpdate.collectAsStateWithLifecycle()
     var importing by remember { mutableStateOf(false) }
     val importFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -204,6 +206,47 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
                             inactiveTrackColor = Color(0x26FFFFFF),
                         ),
                     )
+                }
+            }
+        }
+
+        // ---------- обновления ----------
+        item {
+            Card {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Обновления", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            when (val s = upd) {
+                                is app.lumen.player.ui.UpdateUi.Checking -> "Проверяю…"
+                                is app.lumen.player.ui.UpdateUi.UpToDate -> "У тебя последняя версия · ${vm.versionName}"
+                                is app.lumen.player.ui.UpdateUi.Available -> "Доступна версия ${s.release.versionName}"
+                                is app.lumen.player.ui.UpdateUi.Downloading -> "Загружаю ${s.release.versionName} · ${(s.progress * 100).roundToInt()}%"
+                                is app.lumen.player.ui.UpdateUi.NeedPermission -> "Скачано — нужно разрешение на установку"
+                                is app.lumen.player.ui.UpdateUi.Installing -> "Устанавливаю…"
+                                is app.lumen.player.ui.UpdateUi.Error -> s.message
+                                else -> "Версия ${vm.versionName}"
+                            },
+                            fontSize = 13.sp,
+                            color = LC.Dim,
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    val hasNew = upd is app.lumen.player.ui.UpdateUi.Available || upd is app.lumen.player.ui.UpdateUi.Downloading ||
+                        upd is app.lumen.player.ui.UpdateUi.NeedPermission
+                    PillButton(
+                        if (hasNew) "Открыть" else "Проверить",
+                        null,
+                        {
+                            if (hasNew) vm.updateSheet.value = true else vm.checkUpdates(manual = true)
+                        },
+                        primary = hasNew,
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Проверять при запуске", fontSize = 15.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                    LSwitch(autoUpd) { vm.setAutoUpdate(it) }
                 }
             }
         }

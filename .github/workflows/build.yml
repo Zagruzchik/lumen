@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   build:
@@ -43,6 +44,30 @@ jobs:
           git add -A
           git commit -qm "build ${GITHUB_SHA}"
           git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" ci-out
+
+      - name: Publish OTA update to Supabase
+        if: success() && github.ref == 'refs/heads/main'
+        continue-on-error: true
+        env:
+          FN: https://mplorochmulzbxyiihdq.supabase.co/functions/v1/lumen-publish
+        run: |
+          set -e
+          APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          CODE=$(grep -Eo 'versionCode *= *[0-9]+' app/build.gradle.kts | grep -Eo '[0-9]+')
+          NAME=$(grep -Eo 'versionName *= *"[^"]+"' app/build.gradle.kts | sed -E 's/.*"(.*)"/\1/')
+          SIZE=$(stat -c %s "$APK")
+          SHA=$(sha256sum "$APK" | cut -d' ' -f1)
+          NOTES=$(git log -1 --format=%B | grep -vE '^(Co-Authored-By|Claude-Session):' | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')
+          # Подпись GitHub (OIDC) вместо хранимых секретов.
+          OIDC=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=lumen-ota" | jq -r .value)
+          SIGN=$(jq -n --argjson c "$CODE" '{stage:"sign", version_code:$c}' | curl -sS -X POST "$FN" -H "x-github-oidc: $OIDC" -H "Content-Type: application/json" --data @-)
+          echo "$SIGN" | jq -r '.path // .error'
+          URL=$(echo "$SIGN" | jq -r .signed_url)
+          curl -sS --fail -X PUT "$URL" -H "Content-Type: application/vnd.android.package-archive" -H "x-upsert: true" --data-binary @"$APK" > /dev/null
+          jq -n --argjson c "$CODE" --arg n "$NAME" --arg notes "$NOTES" --argjson s "$SIZE" --arg sha "$SHA" \
+            '{stage:"commit", version_code:$c, version_name:$n, notes:$notes, size_bytes:$s, sha256:$sha}' \
+            | curl -sS --fail -X POST "$FN" -H "x-github-oidc: $OIDC" -H "Content-Type: application/json" --data @-
+          echo "OTA: опубликована $NAME ($CODE)" | tee -a ota.log
 
       - uses: actions/upload-artifact@v4
         if: success()

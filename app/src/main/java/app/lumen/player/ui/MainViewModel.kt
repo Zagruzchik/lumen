@@ -12,6 +12,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.palette.graphics.Palette
+import app.lumen.player.data.Release
+import app.lumen.player.data.UpdateEvents
 import app.lumen.player.data.AlbumRow
 import app.lumen.player.data.Artwork
 import app.lumen.player.data.FavoriteEntity
@@ -502,6 +504,108 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var beatsPrefetch: Job? = null
 
     val crossfadeSec = MutableStateFlow(g.prefs.crossfadeMs / 1000)
+    // ---------- обновления по воздуху ----------
+
+    val updateState = MutableStateFlow<UpdateUi>(UpdateUi.Idle)
+    /** Показывать ли карточку обновления поверх приложения. */
+    val updateSheet = MutableStateFlow(false)
+    val autoUpdate = MutableStateFlow(g.prefs.autoUpdate)
+    val versionName get() = g.updates.currentName
+    private var updateJob: Job? = null
+
+    fun setAutoUpdate(on: Boolean) {
+        g.prefs.autoUpdate = on
+        autoUpdate.value = on
+    }
+
+    fun checkUpdates(manual: Boolean) {
+        val st = updateState.value
+        if (st is UpdateUi.Checking || st is UpdateUi.Downloading || st is UpdateUi.Installing) return
+        viewModelScope.launch {
+            updateState.value = UpdateUi.Checking
+            val r = runCatching { g.updates.latest() }
+            val rel = r.getOrNull()
+            updateState.value = when {
+                r.isFailure -> UpdateUi.Error("Нет связи с сервером обновлений", null)
+                rel != null && rel.versionCode > g.updates.currentCode -> {
+                    updateSheet.value = true
+                    UpdateUi.Available(rel)
+                }
+                else -> UpdateUi.UpToDate
+            }
+            if (!manual && updateState.value !is UpdateUi.Available) updateState.value = UpdateUi.Idle
+        }
+    }
+
+    fun startUpdate() {
+        val rel = when (val st = updateState.value) {
+            is UpdateUi.Available -> st.release
+            is UpdateUi.Error -> st.release ?: return
+            is UpdateUi.NeedPermission -> st.release
+            else -> return
+        }
+        updateJob?.cancel()
+        updateJob = viewModelScope.launch {
+            updateState.value = UpdateUi.Downloading(rel, 0f)
+            val file = try {
+                g.updates.download(rel) { p -> updateState.value = UpdateUi.Downloading(rel, p) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                updateState.value = UpdateUi.Error(e.message ?: "Не удалось скачать", rel)
+                return@launch
+            }
+            installDownloaded(rel, file)
+        }
+    }
+
+    private suspend fun installDownloaded(rel: Release, file: java.io.File) {
+        if (!g.updates.canInstall()) {
+            updateState.value = UpdateUi.NeedPermission(rel, file)
+            return
+        }
+        updateState.value = UpdateUi.Installing(rel)
+        runCatching { g.updates.install(file) }.onFailure {
+            updateState.value = UpdateUi.Error(it.message ?: "Установка не удалась", rel)
+        }
+    }
+
+    /** Вернулись из настроек «Установка неизвестных приложений». */
+    fun onResumeForUpdate() {
+        val st = updateState.value
+        if (st is UpdateUi.NeedPermission && g.updates.canInstall()) {
+            viewModelScope.launch { installDownloaded(st.release, st.file) }
+        }
+    }
+
+    fun cancelUpdate() {
+        updateJob?.cancel()
+        val st = updateState.value
+        val rel = (st as? UpdateUi.Downloading)?.release
+        updateState.value = if (rel != null) UpdateUi.Available(rel) else UpdateUi.Idle
+    }
+
+    fun hideUpdateSheet() {
+        updateSheet.value = false
+    }
+
+    @Suppress("unused")
+    private val updateWatcher = Unit.also {
+        viewModelScope.launch {
+            UpdateEvents.failed.collect { msg ->
+                val st = updateState.value
+                val rel = (st as? UpdateUi.Installing)?.release
+                updateState.value = UpdateUi.Error(msg, rel)
+            }
+        }
+        if (g.prefs.autoUpdate) {
+            viewModelScope.launch {
+                kotlinx.coroutines.delay(2500)
+                checkUpdates(manual = false)
+            }
+        }
+    }
+
     fun setCrossfadeSec(v: Int) {
         val c = v.coerceIn(0, 12)
         g.prefs.crossfadeMs = c * 1000
@@ -882,3 +986,14 @@ data class ListenStats(
     val libraryTracks: Int,
     val favorites: Int,
 )
+
+sealed interface UpdateUi {
+    data object Idle : UpdateUi
+    data object Checking : UpdateUi
+    data object UpToDate : UpdateUi
+    data class Available(val release: Release) : UpdateUi
+    data class Downloading(val release: Release, val progress: Float) : UpdateUi
+    data class NeedPermission(val release: Release, val file: java.io.File) : UpdateUi
+    data class Installing(val release: Release) : UpdateUi
+    data class Error(val message: String, val release: Release?) : UpdateUi
+}

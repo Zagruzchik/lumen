@@ -175,6 +175,7 @@ private fun PermissionGate(vm: MainViewModel, content: @Composable () -> Unit) {
     }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         if (granted()) vm.onPermission(true)
+        vm.onResumeForUpdate()
     }
     val has by vm.hasPermission.collectAsStateWithLifecycle()
     if (has) {
@@ -509,6 +510,17 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                         scaleX = sc
                         scaleY = sc
                     },
+            )
+        }
+        val updSheet by vm.updateSheet.collectAsStateWithLifecycle()
+        AnimatedVisibility(updSheet, enter = fadeIn(tween(260)), exit = fadeOut(tween(220))) {
+            app.lumen.player.ui.screens.UpdateSheet(
+                vm,
+                onClose = { vm.hideUpdateSheet() },
+                sheetModifier = Modifier.animateEnterExit(
+                    enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 360f)) { it },
+                    exit = slideOutVertically(tween(240)) { it },
+                ),
             )
         }
         AnimatedVisibility(timerOpen, enter = fadeIn(tween(220)), exit = fadeOut(tween(220))) {

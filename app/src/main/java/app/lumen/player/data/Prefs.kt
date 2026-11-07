@@ -54,6 +54,11 @@ class Prefs(context: Context) {
 
     /** Сила вспышек под бит, 0..1. */
     /** Кроссфейд между треками, мс (0 — выключен). */
+    /** Проверять обновления при запуске. */
+    var autoUpdate: Boolean
+        get() = sp.getBoolean("autoUpdate", true)
+        set(v) = sp.edit().putBoolean("autoUpdate", v).apply()
+
     var crossfadeMs: Int
         get() = sp.getInt("crossfadeMs", 0)
         set(v) = sp.edit().putInt("crossfadeMs", v).apply()
