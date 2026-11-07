@@ -97,7 +97,14 @@ private fun folderPath(f: FolderRow): String = when {
 }
 
 @Composable
-fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit, onEditTheme: (String) -> Unit = {}) {
+fun SettingsScreen(
+    vm: MainViewModel,
+    bottomPad: Dp,
+    onOpenStats: () -> Unit,
+    onEditTheme: (String) -> Unit = {},
+    onOpen: (app.lumen.player.ui.Dest) -> Unit = {},
+) {
+    val dislikedCount = vm.dislikedTracks.collectAsStateWithLifecycle().value.size
     val ctx = LocalContext.current
     val folders by vm.folderList.collectAsStateWithLifecycle()
     val skipShort by vm.skipShort.collectAsStateWithLifecycle()
@@ -475,7 +482,7 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit, on
             Card {
                 Text("Библиотека", fontSize = 17.sp, fontWeight = FontWeight.Bold)
                 Text(
-                    "${pluralRu(tracks.size, "трек", "трека", "треков")} в медиатеке и выбранных папках",
+                    "${pluralRu(tracks.size, "трек", "трека", "треков")} в медиатеке и выбранных папках. Новые файлы появляются сами.",
                     fontSize = 13.sp,
                     color = LC.Dim,
                 )
@@ -493,6 +500,15 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit, on
                     "Звуки короче 30 секунд не попадут в библиотеку",
                     skipShort,
                 ) { vm.setSkipShort(it) }
+                NavRow(
+                    LIcons.Dislike,
+                    "Не нравится",
+                    if (dislikedCount == 0) "Отмечай через меню трека — они пропадут из подборок"
+                    else "${pluralRu(dislikedCount, "трек", "трека", "треков")} не попадают в подборки и перемешивание",
+                ) { onOpen(app.lumen.player.ui.Dest.Disliked) }
+                NavRow(LIcons.Duplicate, "Поиск дубликатов", "Одинаковые треки в разных файлах и форматах") {
+                    onOpen(app.lumen.player.ui.Dest.Duplicates)
+                }
             }
         }
 
@@ -806,6 +822,26 @@ private fun LSwitch(checked: Boolean, enabled: Boolean = true, onChange: (Boolea
             uncheckedBorderColor = Color(0x33FFFFFF),
         ),
     )
+}
+
+@Composable
+private fun NavRow(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, Modifier.size(22.dp), tint = LocalAccent.current)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            Text(subtitle, fontSize = 12.sp, color = LC.Dim)
+        }
+        Icon(LIcons.Back, null, Modifier.size(18.dp).graphicsLayer { rotationZ = 180f }, tint = LC.Dim)
+    }
 }
 
 @Composable

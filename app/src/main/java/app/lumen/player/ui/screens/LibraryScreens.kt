@@ -560,6 +560,7 @@ private fun LibraryContent(
             val favs by vm.favoriteUris.collectAsStateWithLifecycle()
             val p by vm.player.collectAsStateWithLifecycle()
             val playlists by vm.playlists.collectAsStateWithLifecycle()
+            val smartRows by vm.smartRows.collectAsStateWithLifecycle()
             LazyColumn(
                 Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(top = top, bottom = bottomPad),
@@ -580,7 +581,7 @@ private fun LibraryContent(
                             TrackRow(t, t.uri == p.currentId, t.uri in favs, actions, onClick = { vm.play(tracks, i) })
                         }
                     }
-                    4 -> playlistsTab(vm, nav, playlists) { vm.newPlaylistPrompt.value = true }
+                    4 -> playlistsTab(vm, nav, playlists, smartRows) { vm.newPlaylistPrompt.value = true }
                     2 -> items(artists, key = { it.name }) { a ->
                         Row(
                             Modifier

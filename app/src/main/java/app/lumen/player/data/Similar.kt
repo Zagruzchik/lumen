@@ -14,6 +14,7 @@ object Similar {
         val all = dao.visibleTracksOnce()
         val plays = dao.allPlays().associateBy { it.uri }
         val favs = dao.allFavorites().mapTo(HashSet()) { it.uri }
+        val disliked = dao.allDislikes().mapTo(HashSet()) { it.uri }
         val artists = seeds.map { it.artist.lowercase() }.toSet()
         val albumArtists = seeds.map { it.albumArtist.lowercase() }.toSet()
         val albums = seeds.map { it.albumKey }.toSet()
@@ -21,7 +22,7 @@ object Similar {
         val years = seeds.map { it.year }.filter { it > 0 }
         val rnd = Random(System.nanoTime())
         val scored = all.asSequence()
-            .filter { it.uri !in exclude && seeds.none { s -> s.uri == it.uri } }
+            .filter { it.uri !in exclude && it.uri !in disliked && seeds.none { s -> s.uri == it.uri } }
             .map { t ->
                 var sc = 0.0
                 if (t.artist.lowercase() in artists) sc += 5

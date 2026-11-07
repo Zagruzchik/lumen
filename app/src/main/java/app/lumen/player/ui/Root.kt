@@ -134,6 +134,10 @@ sealed interface Dest {
     data class Playlist(val id: Long) : Dest
     data object Wrapped : Dest
     data class ThemeEditor(val baseId: String) : Dest
+    data object Disliked : Dest
+    data object Duplicates : Dest
+    data class SmartPlaylist(val id: Long) : Dest
+    data class SmartEditor(val id: Long) : Dest
 }
 
 class Nav(
@@ -158,8 +162,12 @@ fun LumenRoot(vm: MainViewModel) {
         else -> coverAccent
     }
     val showFormat by vm.showFormat.collectAsStateWithLifecycle()
+    val disliked by vm.dislikedUris.collectAsStateWithLifecycle()
     LumenTheme(accent) {
-        androidx.compose.runtime.CompositionLocalProvider(app.lumen.player.ui.components.LocalShowFormat provides showFormat) {
+        androidx.compose.runtime.CompositionLocalProvider(
+            app.lumen.player.ui.components.LocalShowFormat provides showFormat,
+            app.lumen.player.ui.components.LocalDisliked provides disliked,
+        ) {
             PermissionGate(vm) { MainScaffold(vm, colors) }
         }
     }
@@ -190,6 +198,7 @@ private fun PermissionGate(vm: MainViewModel, content: @Composable () -> Unit) {
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         if (granted()) vm.onPermission(true)
         vm.onResumeForUpdate()
+        vm.onAppResume()
     }
     val has by vm.hasPermission.collectAsStateWithLifecycle()
     if (has) {
@@ -389,6 +398,7 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
             onPlaySimilar = { vm.playSimilar(it) },
             onEdit = { vm.sheetTrack.value = app.lumen.player.ui.SheetTrack(it, edit = true) },
             onInfo = { vm.infoTrack.value = it },
+            onDislike = { vm.toggleDislike(it) },
             onMenu = { t, fav, a -> vm.trackMenu.value = app.lumen.player.ui.components.TrackMenuRequest(t, fav, a) },
         )
     }
@@ -455,7 +465,7 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                         ) { HomeScreen(vm, nav, actions, bottomPad, onOpenPlayer = { openPlayer() }) }
                         Dest.Library -> LibraryScreen(vm, nav, actions, libTab, { libTab = it }, bottomPad)
                         Dest.Favorites -> FavoritesScreen(vm, nav, actions, bottomPad)
-                        Dest.Settings -> SettingsScreen(vm, bottomPad, onOpenStats = { nav.open(Dest.Stats) }, onEditTheme = { nav.open(Dest.ThemeEditor(it)) })
+                        Dest.Settings -> SettingsScreen(vm, bottomPad, onOpenStats = { nav.open(Dest.Stats) }, onEditTheme = { nav.open(Dest.ThemeEditor(it)) }, onOpen = { nav.open(it) })
                         Dest.Stats -> app.lumen.player.ui.screens.StatsScreen(vm, nav, bottomPad)
                         Dest.Recs -> app.lumen.player.ui.screens.RecsScreen(vm, bottomPad)
                         is Dest.Album -> AlbumScreen(vm, d.key, nav, actions, bottomPad)
@@ -464,6 +474,10 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                         is Dest.Playlist -> app.lumen.player.ui.screens.PlaylistScreen(vm, d.id, nav, actions, bottomPad)
                         Dest.Wrapped -> app.lumen.player.ui.screens.WrappedScreen(vm, nav)
                         is Dest.ThemeEditor -> app.lumen.player.ui.screens.ThemeEditorScreen(d.baseId, nav)
+                        Dest.Disliked -> app.lumen.player.ui.screens.DislikedScreen(vm, nav, actions, bottomPad)
+                        Dest.Duplicates -> app.lumen.player.ui.screens.DuplicatesScreen(vm, nav, bottomPad)
+                        is Dest.SmartPlaylist -> app.lumen.player.ui.screens.SmartPlaylistScreen(vm, d.id, nav, actions, bottomPad)
+                        is Dest.SmartEditor -> app.lumen.player.ui.screens.SmartEditorScreen(vm, d.id, nav)
                     }
                 }
             }

@@ -12,6 +12,7 @@ import app.lumen.player.data.LumenDb
 import app.lumen.player.data.MIGRATION_1_2
 import app.lumen.player.data.MIGRATION_2_3
 import app.lumen.player.data.MIGRATION_3_4
+import app.lumen.player.data.MIGRATION_4_5
 import app.lumen.player.data.LyricsBulkDownloader
 import app.lumen.player.data.LyricsRepository
 import app.lumen.player.data.MediaScanner
@@ -41,7 +42,7 @@ class LumenApp : Application() {
 class AppGraph(val context: Context) {
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val db: LumenDb = Room.databaseBuilder(context, LumenDb::class.java, "lumen.db")
-        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
         .fallbackToDestructiveMigration()
         .build()
     val dao: LibraryDao get() = db.dao()

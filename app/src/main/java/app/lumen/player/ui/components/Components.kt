@@ -33,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -248,6 +249,8 @@ class TrackActions(
     /** Только внутри плейлиста. */
     val onRemoveFromPlaylist: ((TrackEntity) -> Unit)? = null,
     val onInfo: ((TrackEntity) -> Unit)? = null,
+    /** «Не нравится» / вернуть обратно. */
+    val onDislike: ((TrackEntity) -> Unit)? = null,
     /** Открыть нижнее меню трека (с действиями того экрана, откуда открыли). */
     val onMenu: ((TrackEntity, Boolean, TrackActions) -> Unit)? = null,
 )
@@ -264,9 +267,11 @@ fun TrackRow(
 ) {
     val accent = LocalAccent.current
     var menu by remember { mutableStateOf(false) }
+    val disliked = t.uri in LocalDisliked.current
     Row(
         Modifier
             .fillMaxWidth()
+            .graphicsLayer { alpha = if (disliked) 0.42f else 1f }
             .combinedClickable(onClick = onClick, onLongClick = { actions.onMenu?.invoke(t, fav, actions) ?: run { menu = true } })
             .padding(start = 20.dp, end = 8.dp)
             .height(62.dp),

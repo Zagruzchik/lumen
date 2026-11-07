@@ -55,6 +55,9 @@ import kotlinx.coroutines.launch
 /** Показывать ли бейджи формата (FLAC/MP3) по всему приложению. */
 val LocalShowFormat = compositionLocalOf { true }
 
+/** Треки с отметкой «Не нравится» (приглушены в списках). */
+val LocalDisliked = compositionLocalOf<Set<String>> { emptySet() }
+
 /** Запрос на нижнее меню трека: сам трек и действия того экрана, откуда его открыли. */
 data class TrackMenuRequest(val track: TrackEntity, val fav: Boolean, val actions: TrackActions)
 
@@ -164,6 +167,14 @@ fun TrackMenuSheet(req: TrackMenuRequest, onClose: () -> Unit, sheetModifier: Mo
                 if (req.fav) "Убрать из любимого" else "В любимое",
                 tint = if (req.fav) accent else LC.Text,
             ) { run { a.onToggleFav(t) } }
+            a.onDislike?.let { f ->
+                val dis = t.uri in LocalDisliked.current
+                SheetItem(
+                    if (dis) LIcons.HeartOutline else LIcons.Dislike,
+                    if (dis) "Убрать из «Не нравится»" else "Не нравится",
+                    tint = if (dis) LC.Text else LC.Dim,
+                ) { run { f(t) } }
+            }
             SheetItem(LIcons.Disc, "К альбому") { run { a.onOpenAlbum(t) } }
             SheetItem(LIcons.Person, "К исполнителю") { run { a.onOpenArtist(t) } }
             a.onEdit?.let { f -> SheetItem(LIcons.Edit, "Изменить теги и обложку") { run { f(t) } } }

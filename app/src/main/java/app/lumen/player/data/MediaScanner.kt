@@ -35,16 +35,27 @@ class MediaScanner(
     private val _scanning = MutableStateFlow(false)
     val scanning: StateFlow<Boolean> = _scanning
 
+    /** Сколько новых треков нашёл последний пересчёт (не первый) — для подсказки «Новое в библиотеке». */
+    val added = kotlinx.coroutines.flow.MutableSharedFlow<Int>(extraBufferCapacity = 1)
+    @Volatile var lastScanAt = 0L
+        private set
+
     suspend fun scan() = mutex.withLock {
         _scanning.value = true
         try {
             withContext(Dispatchers.IO) {
+                val before = dao.allTracksOnce().mapTo(HashSet()) { it.uri }
                 val ms = runCatching { scanMediaStore() }.getOrNull()
                 if (ms != null) dao.replaceSource(SOURCE_MEDIASTORE, ms)
                 val known = (ms ?: emptyList()).mapTo(HashSet()) { dedupeKey(it.title, it.artist, it.durationMs) }
                 val saf = runCatching { scanFolders(known) }.getOrNull()
                 if (saf != null) dao.replaceSource(SOURCE_FOLDER, saf)
                 autoExclude(ms.orEmpty() + saf.orEmpty())
+                if (before.isNotEmpty()) {
+                    val fresh = (ms.orEmpty() + saf.orEmpty()).count { it.uri !in before }
+                    if (fresh > 0) added.tryEmit(fresh)
+                }
+                lastScanAt = System.currentTimeMillis()
             }
         } finally {
             _scanning.value = false

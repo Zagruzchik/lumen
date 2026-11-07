@@ -1,5 +1,12 @@
 package app.lumen.player.ui
 
+import app.lumen.player.data.SmartRules
+import app.lumen.player.data.SmartEngine
+import app.lumen.player.data.SmartContext
+import app.lumen.player.data.SmartPlaylistEntity
+import app.lumen.player.data.DislikeEntity
+import kotlinx.coroutines.flow.mapLatest
+import android.provider.MediaStore
 import android.app.Application
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
@@ -53,7 +60,7 @@ data class AudioQuality(
     val hiRes: Boolean,
 )
 
-@OptIn(FlowPreview::class)
+@OptIn(FlowPreview::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val g = app.graph
     private val dao = g.dao
@@ -138,7 +145,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun shuffle(list: List<TrackEntity>) {
         lovedMode.value = 0
-        conn.playTracks(list, 0, shuffle = true)
+        val dis = dislikedUris.value
+        val liked = if (dis.isEmpty()) list else list.filter { it.uri !in dis }.ifEmpty { list }
+        conn.playTracks(liked, 0, shuffle = true)
     }
     fun playNext(t: TrackEntity) = conn.playNext(t)
     fun enqueue(t: TrackEntity) = conn.enqueue(t)
@@ -510,6 +519,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     root.put("overrides", ovs)
                     root.put("excludedFolders", org.json.JSONArray(dao.excludedOnce()))
+                    root.put("dislikes", org.json.JSONArray().apply { dao.allDislikes().forEach { d -> index[d.uri]?.let { put(it) } } })
+                    root.put(
+                        "smartPlaylists",
+                        org.json.JSONArray().apply {
+                            dao.allSmartPlaylists().forEach { sp ->
+                                put(org.json.JSONObject().put("name", sp.name).put("rules", sp.rules).put("createdAt", sp.createdAt))
+                            }
+                        },
+                    )
                     root.put(
                         "settings",
                         org.json.JSONObject()
@@ -796,6 +814,177 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ---------- «не нравится» ----------
+
+    val dislikedUris = dao.dislikedUris().map { it.toHashSet() as Set<String> }.state(emptySet())
+    val dislikedTracks = dao.dislikedTracks().state(emptyList())
+
+    fun toast(msg: String) {
+        quickToast.value = msg
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(2200)
+            if (quickToast.value == msg) quickToast.value = null
+        }
+    }
+
+    fun toggleDislike(t: TrackEntity) {
+        viewModelScope.launch {
+            if (t.uri in dislikedUris.value) {
+                dao.removeDislike(t.uri)
+                toast("Трек вернулся в подборки")
+            } else {
+                dao.addDislike(DislikeEntity(t.uri, System.currentTimeMillis()))
+                dao.removeFavorite(t.uri)
+                if (player.value.currentId == t.uri && player.value.queue.size > 1) conn.next()
+                toast("Больше не попадётся в подборках")
+            }
+        }
+    }
+
+    // ---------- умные плейлисты ----------
+
+    private suspend fun smartContext() = withContext(Dispatchers.IO) {
+        SmartContext(
+            plays = dao.allPlays().associateBy { it.uri },
+            favorites = dao.allFavorites().mapTo(HashSet()) { it.uri },
+            disliked = dao.allDislikes().mapTo(HashSet()) { it.uri },
+            format = { formatLabel(it.mime, it.uri) },
+        )
+    }
+
+    private fun daySeed(id: Long) = id * 31 + System.currentTimeMillis() / 86_400_000L
+
+    /** Список умных плейлистов с количеством треков и обложками для коллажа. */
+    val smartRows: StateFlow<List<SmartRow>> =
+        combine(dao.smartPlaylists(), tracks, favoriteUris, dislikedUris) { pls, all, _, _ -> pls to all }
+            .debounce(250)
+            .mapLatest { (pls, all) ->
+                if (pls.isEmpty()) return@mapLatest emptyList()
+                val ctx = smartContext()
+                withContext(Dispatchers.Default) {
+                    pls.map { p ->
+                        val rules = SmartRules.parse(p.rules)
+                        val list = SmartEngine.evaluate(rules, all, ctx, daySeed(p.id))
+                        SmartRow(p.id, p.name, rules, list.size, list.sumOf { it.durationMs }, list.take(4).map { it.uri })
+                    }
+                }
+            }
+            .state(emptyList())
+
+    fun smartPlaylist(id: Long) = dao.smartPlaylist(id)
+
+    fun smartTracks(id: Long): Flow<List<TrackEntity>> =
+        combine(dao.smartPlaylist(id), tracks, favoriteUris, dislikedUris) { p, all, _, _ -> p to all }
+            .debounce(200)
+            .mapLatest { (p, all) ->
+                if (p == null) return@mapLatest emptyList()
+                val ctx = smartContext()
+                withContext(Dispatchers.Default) {
+                    SmartEngine.evaluate(SmartRules.parse(p.rules), all, ctx, daySeed(p.id))
+                }
+            }
+
+    suspend fun smartPreview(rules: SmartRules): List<TrackEntity> {
+        val ctx = smartContext()
+        return withContext(Dispatchers.Default) { SmartEngine.evaluate(rules, tracks.value, ctx, 7) }
+    }
+
+    suspend fun smartOnce(id: Long) = withContext(Dispatchers.IO) { dao.smartPlaylistOnce(id) }
+
+    fun saveSmart(id: Long, name: String, rules: SmartRules, onSaved: (Long) -> Unit) {
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val old = if (id > 0) dao.smartPlaylistOnce(id) else null
+            val newId = dao.putSmartPlaylist(
+                SmartPlaylistEntity(
+                    id = old?.id ?: 0,
+                    name = name.trim().ifBlank { "Умный плейлист" },
+                    rules = rules.toJson(),
+                    createdAt = old?.createdAt ?: now,
+                    updatedAt = now,
+                )
+            )
+            onSaved(if (old != null) old.id else newId)
+        }
+    }
+
+    fun deleteSmart(id: Long) = viewModelScope.launch { dao.deleteSmartPlaylist(id) }
+
+    // ---------- дубликаты ----------
+
+    suspend fun findDuplicates(): List<DupGroup> = withContext(Dispatchers.Default) {
+        val all = withContext(Dispatchers.IO) { dao.visibleTracksOnce() }
+        val ignored = g.prefs.dupIgnored
+        val noise = Regex("[(\\[][^)\\]]*(remaster|explicit|clean|bonus|album version|original mix)[^)\\]]*[)\\]]", RegexOption.IGNORE_CASE)
+        fun key(t: TrackEntity) = normalize(t.title.replace(noise, "")).replace(" ", "") + "|" +
+            normalize(Artists.of(t).firstOrNull() ?: t.artist).replace(" ", "")
+        val out = ArrayList<DupGroup>()
+        all.groupBy(::key).values.filter { it.size > 1 }.forEach { same ->
+            // Внутри одинаковых названий делим по длительности: разница больше 3 секунд — это разные версии.
+            val sorted = same.sortedBy { it.durationMs }
+            var cur = arrayListOf(sorted[0])
+            fun flush() {
+                if (cur.size > 1) {
+                    val id = cur.map { it.uri }.sorted().joinToString("\n").hashCode().toString()
+                    if (id !in ignored) {
+                        val ranked = cur.sortedByDescending { qualityScore(it) }
+                        out += DupGroup(id, ranked, ranked.first().uri)
+                    }
+                }
+            }
+            for (t in sorted.drop(1)) {
+                if (t.durationMs - cur.last().durationMs <= 3000) cur.add(t) else { flush(); cur = arrayListOf(t) }
+            }
+            flush()
+        }
+        out.sortedBy { it.tracks.first().artist.lowercase() + it.tracks.first().title.lowercase() }
+    }
+
+    private fun qualityScore(t: TrackEntity): Double {
+        val f = formatLabel(t.mime, t.uri)
+        val lossless = f in setOf("FLAC", "ALAC", "WAV", "WV")
+        val br = if (t.bitrate > 0) t.bitrate.toDouble() else if (t.durationMs > 0) t.size * 8000.0 / t.durationMs else 0.0
+        return (if (lossless) 1e7 else 0.0) + br
+    }
+
+    fun ignoreDuplicate(id: String) {
+        g.prefs.dupIgnored = g.prefs.dupIgnored + id
+    }
+
+    /** Системный запрос на удаление файлов из медиатеки (Android 11+): пользователь подтверждает сам. */
+    fun deleteRequest(uris: List<String>): android.content.IntentSender? {
+        if (Build.VERSION.SDK_INT < 30) return null
+        val media = uris.filter { it.startsWith("content://media/") }.map { Uri.parse(it) }
+        if (media.isEmpty()) return null
+        return runCatching { MediaStore.createDeleteRequest(getApplication<Application>().contentResolver, media).intentSender }.getOrNull()
+    }
+
+    /** То, что можно удалить без системного окна: файлы из своих папок и старые Android. */
+    suspend fun deleteDirect(uris: List<String>): List<String> = withContext(Dispatchers.IO) {
+        uris.filter { u ->
+            val uri = Uri.parse(u)
+            runCatching {
+                if (u.startsWith("content://media/")) {
+                    Build.VERSION.SDK_INT < 30 && getApplication<Application>().contentResolver.delete(uri, null, null) > 0
+                } else {
+                    android.provider.DocumentsContract.deleteDocument(getApplication<Application>().contentResolver, uri)
+                }
+            }.getOrDefault(false)
+        }
+    }
+
+    /** После удаления: всё (лайки, прослушивания, плейлисты) переходит к оставшемуся файлу. */
+    fun onDuplicatesDeleted(pairs: List<Pair<String, String>>) {
+        if (pairs.isEmpty()) return
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { pairs.forEach { (from, to) -> dao.mergeInto(from, to) } }
+            toast("Удалено: ${pluralRuVm(pairs.size, "файл", "файла", "файлов")}")
+            g.rescan()
+        }
+    }
+
+    private fun pluralRuVm(n: Int, a: String, b: String, c: String) = app.lumen.player.ui.components.pluralRu(n, a, b, c)
+
     // ---------- плейлисты ----------
 
     val playlists = dao.playlists().state(emptyList())
@@ -1053,6 +1242,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Вернулись из настроек «Установка неизвестных приложений». */
+    /** Возврат в приложение: свои папки Android не отслеживает, поэтому заглядываем в них сами. */
+    fun onAppResume() {
+        if (!hasPermission.value) return
+        if (g.prefs.folders.isNotEmpty() && g.scanner.lastScanAt > 0 && System.currentTimeMillis() - g.scanner.lastScanAt > 3 * 60_000L) g.rescan()
+    }
+
     fun onResumeForUpdate() {
         val st = updateState.value
         if (st is UpdateUi.NeedPermission && g.updates.canInstall()) {
@@ -1314,6 +1509,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             dao.byUri(uri)?.let { t -> dao.insertTracks(listOf(app.lumen.player.data.applyOverride(t, ov))) }
                         }
                     }
+                    root.optJSONArray("dislikes")?.let { ds ->
+                        for (i in 0 until ds.length()) {
+                            val uri = mapped.getOrNull(ds.optInt(i, -1)) ?: continue
+                            dao.addDislike(DislikeEntity(uri, System.currentTimeMillis()))
+                        }
+                    }
+                    root.optJSONArray("smartPlaylists")?.let { sps ->
+                        val existing = dao.allSmartPlaylists().map { it.name }.toHashSet()
+                        for (i in 0 until sps.length()) {
+                            val o = sps.getJSONObject(i)
+                            val name = o.optString("name")
+                            if (name.isBlank() || name in existing) continue
+                            val now = System.currentTimeMillis()
+                            dao.putSmartPlaylist(SmartPlaylistEntity(name = name, rules = o.optString("rules"), createdAt = o.optLong("createdAt", now), updatedAt = now))
+                        }
+                    }
                     root.optJSONArray("excludedFolders")?.let { ex ->
                         val list = (0 until ex.length()).map { app.lumen.player.data.ExcludedFolder(ex.getString(it)) }
                         if (list.isNotEmpty()) dao.addExcluded(list)
@@ -1346,6 +1557,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // init в конце: к этому моменту все свойства уже созданы.
     init {
+        viewModelScope.launch {
+            g.scanner.added.collect { n -> toast("Новое в библиотеке: ${pluralRuVm(n, "трек", "трека", "треков")}") }
+        }
         viewModelScope.launch {
             conn.connect()
             restoreQueue()
@@ -1478,6 +1692,18 @@ fun normalize(s: String): String {
     return sb.toString()
         .replace("kh", "h").replace("x", "ks").replace("w", "v").replace("j", "i").replace("y", "i")
 }
+
+data class SmartRow(
+    val id: Long,
+    val name: String,
+    val rules: SmartRules,
+    val count: Int,
+    val durationMs: Long,
+    val covers: List<String>,
+)
+
+/** Группа одинаковых треков: первым идёт лучший по качеству. */
+data class DupGroup(val id: String, val tracks: List<TrackEntity>, val best: String)
 
 fun formatLabel(mime: String, uri: String = ""): String {
     val m = mime.lowercase()

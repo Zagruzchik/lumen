@@ -127,12 +127,27 @@ data class PositionEntity(@PrimaryKey val uri: String, val posMs: Long, val upda
 @Entity(tableName = "loudness")
 data class LoudnessEntity(@PrimaryKey val uri: String, val gainDb: Float)
 
+/** «Не нравится»: такие треки не попадают в перемешивание, умную очередь, похожее и подборки. */
+@Entity(tableName = "dislikes")
+data class DislikeEntity(@PrimaryKey val uri: String, val addedAt: Long)
+
+/** Умный плейлист: состав собирается сам по правилам (JSON, см. SmartRules). */
+@Entity(tableName = "smart_playlists")
+data class SmartPlaylistEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val rules: String,
+    val createdAt: Long,
+    val updatedAt: Long,
+)
+
 @Entity(tableName = "excluded")
 data class ExcludedFolder(@PrimaryKey val folder: String)
 
 /** Трек виден, если его папка не в списке исключений. */
 private const val VISIBLE = "folder NOT IN (SELECT folder FROM excluded)"
 private const val VISIBLE_T = "t.folder NOT IN (SELECT folder FROM excluded)"
+private const val LIKED_T = "t.uri NOT IN (SELECT uri FROM dislikes)"
 
 data class AlbumRow(
     val albumKey: String,
@@ -500,7 +515,7 @@ abstract class LibraryDao {
         """SELECT t.* FROM tracks t
            LEFT JOIN plays p ON p.uri = t.uri
            LEFT JOIN (SELECT uri, SUM(listenedMs) AS ms FROM listens GROUP BY uri) l ON l.uri = t.uri
-           WHERE $VISIBLE_T
+           WHERE $VISIBLE_T AND $LIKED_T
            ORDER BY COALESCE(p.count, 0) DESC, COALESCE(l.ms, 0) DESC, t.title COLLATE NOCASE"""
     )
     abstract suspend fun mostLoved(): List<TrackEntity>
@@ -510,10 +525,85 @@ abstract class LibraryDao {
         """SELECT t.* FROM tracks t
            LEFT JOIN plays p ON p.uri = t.uri
            LEFT JOIN (SELECT uri, SUM(listenedMs) AS ms FROM listens GROUP BY uri) l ON l.uri = t.uri
-           WHERE $VISIBLE_T
+           WHERE $VISIBLE_T AND $LIKED_T
            ORDER BY COALESCE(p.count, 0) ASC, COALESCE(l.ms, 0) ASC, RANDOM()"""
     )
     abstract suspend fun leastLoved(): List<TrackEntity>
+
+    // ---------- «не нравится» ----------
+
+    @Query("SELECT uri FROM dislikes")
+    abstract fun dislikedUris(): Flow<List<String>>
+
+    @Query("SELECT * FROM dislikes")
+    abstract suspend fun allDislikes(): List<DislikeEntity>
+
+    @Query("SELECT t.* FROM tracks t INNER JOIN dislikes d ON d.uri = t.uri WHERE $VISIBLE_T ORDER BY d.addedAt DESC")
+    abstract fun dislikedTracks(): Flow<List<TrackEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun addDislike(d: DislikeEntity)
+
+    @Query("DELETE FROM dislikes WHERE uri = :uri")
+    abstract suspend fun removeDislike(uri: String)
+
+    // ---------- умные плейлисты ----------
+
+    @Query("SELECT * FROM smart_playlists ORDER BY updatedAt DESC")
+    abstract fun smartPlaylists(): Flow<List<SmartPlaylistEntity>>
+
+    @Query("SELECT * FROM smart_playlists WHERE id = :id")
+    abstract fun smartPlaylist(id: Long): Flow<SmartPlaylistEntity?>
+
+    @Query("SELECT * FROM smart_playlists WHERE id = :id")
+    abstract suspend fun smartPlaylistOnce(id: Long): SmartPlaylistEntity?
+
+    @Query("SELECT * FROM smart_playlists")
+    abstract suspend fun allSmartPlaylists(): List<SmartPlaylistEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun putSmartPlaylist(p: SmartPlaylistEntity): Long
+
+    @Query("DELETE FROM smart_playlists WHERE id = :id")
+    abstract suspend fun deleteSmartPlaylist(id: Long)
+
+    // ---------- дубликаты: перенос истории на оставшийся файл ----------
+
+    @Query("UPDATE listens SET uri = :to WHERE uri = :from")
+    abstract suspend fun moveListens(from: String, to: String)
+
+    @Query("UPDATE OR IGNORE playlist_tracks SET uri = :to WHERE uri = :from")
+    abstract suspend fun movePlaylistTracks(from: String, to: String)
+
+    @Query("DELETE FROM playlist_tracks WHERE uri = :uri")
+    abstract suspend fun dropPlaylistTracks(uri: String)
+
+    @Query("DELETE FROM plays WHERE uri = :uri")
+    abstract suspend fun dropPlayStat(uri: String)
+
+    @Query("DELETE FROM tracks WHERE uri = :uri")
+    abstract suspend fun deleteTrack(uri: String)
+
+    /** Удалённый дубликат отдаёт оставшемуся всё: прослушивания, сердечко, место в плейлистах. */
+    @Transaction
+    open suspend fun mergeInto(from: String, to: String) {
+        if (from == to) return
+        moveListens(from, to)
+        movePlaylistTracks(from, to)
+        dropPlaylistTracks(from)
+        val a = playStat(from)
+        if (a != null) {
+            val b = playStat(to)
+            putPlayStat(PlayStatEntity(to, a.count + (b?.count ?: 0), maxOf(a.lastPlayed, b?.lastPlayed ?: 0L)))
+            dropPlayStat(from)
+        }
+        if (favoriteCount(from) > 0) {
+            if (favoriteCount(to) == 0) addFavorite(FavoriteEntity(to, System.currentTimeMillis()))
+            removeFavorite(from)
+        }
+        removeDislike(from)
+        deleteTrack(from)
+    }
 
     @Query("SELECT * FROM lyrics WHERE `key` = :key")
     abstract suspend fun lyrics(key: String): LyricsEntity?
@@ -528,8 +618,9 @@ abstract class LibraryDao {
         ExcludedFolder::class, ListenEntity::class,
         PlaylistEntity::class, PlaylistTrackEntity::class, TrackOverride::class,
         PositionEntity::class, LoudnessEntity::class,
+        DislikeEntity::class, SmartPlaylistEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = false,
 )
 abstract class LumenDb : RoomDatabase() {
@@ -577,6 +668,17 @@ val MIGRATION_3_4 = object : Migration(3, 4) {
                 "`updatedAt` INTEGER NOT NULL, PRIMARY KEY(`uri`))"
         )
         db.execSQL("CREATE TABLE IF NOT EXISTS `loudness` (`uri` TEXT NOT NULL, `gainDb` REAL NOT NULL, PRIMARY KEY(`uri`))")
+    }
+}
+
+/** 4 → 5: «не нравится» и умные плейлисты. */
+val MIGRATION_4_5 = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS `dislikes` (`uri` TEXT NOT NULL, `addedAt` INTEGER NOT NULL, PRIMARY KEY(`uri`))")
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `smart_playlists` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "`name` TEXT NOT NULL, `rules` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL)"
+        )
     }
 }
 

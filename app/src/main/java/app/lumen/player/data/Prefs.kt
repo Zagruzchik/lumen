@@ -128,4 +128,9 @@ class Prefs(context: Context) {
     var queuePosition: Long
         get() = sp.getLong("queuePosition", 0L)
         set(v) = sp.edit().putLong("queuePosition", v).apply()
+
+    /** Группы дубликатов, которые пользователь отметил «это не дубликаты». */
+    var dupIgnored: Set<String>
+        get() = sp.getStringSet("dupIgnored", emptySet())?.toSet() ?: emptySet()
+        set(v) = sp.edit().putStringSet("dupIgnored", v).apply()
 }

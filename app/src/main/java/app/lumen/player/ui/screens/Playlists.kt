@@ -114,7 +114,13 @@ fun PlaylistCollage(vm: MainViewModel, id: Long, size: Dp, corner: Dp) {
 }
 
 /** Вкладка «Плейлисты» в медиатеке. */
-fun LazyListScope.playlistsTab(vm: MainViewModel, nav: Nav, list: List<PlaylistRow>, onNew: () -> Unit) {
+fun LazyListScope.playlistsTab(
+    vm: MainViewModel,
+    nav: Nav,
+    list: List<PlaylistRow>,
+    smart: List<app.lumen.player.ui.SmartRow>,
+    onNew: () -> Unit,
+) {
     item(key = "newPl") {
         Row(
             Modifier
@@ -134,6 +140,7 @@ fun LazyListScope.playlistsTab(vm: MainViewModel, nav: Nav, list: List<PlaylistR
             Text("Новый плейлист", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = LocalAccent.current)
         }
     }
+    smartPlaylistRows(nav, smart)
     if (list.isEmpty()) {
         item(key = "plEmpty") {
             Text(
@@ -196,6 +203,9 @@ fun PlaylistScreen(vm: MainViewModel, id: Long, nav: Nav, actions: TrackActions,
             onPlaySimilar = actions.onPlaySimilar,
             onEdit = actions.onEdit,
             onRemoveFromPlaylist = { t -> vm.removeFromPlaylist(id, t.uri) },
+            onInfo = actions.onInfo,
+            onDislike = actions.onDislike,
+            onMenu = actions.onMenu,
         )
     }
 
