@@ -212,31 +212,25 @@ fun CometSlider(
                 }
             }
     ) {
-        val h = (4.dp.toPx() + 4.dp.toPx() * thick)
+        // Прямая полоса без скруглений; всё свечение — только внутри неё.
+        val h = 6.dp.toPx() + 3.dp.toPx() * thick
         val y = size.height / 2f - h / 2f
-        val r = CornerRadius(h / 2f)
-        drawRoundRect(Color.White.copy(alpha = 0.22f), Offset(0f, y), Size(size.width, h), r)
+        drawRect(Color.White.copy(alpha = 0.18f), Offset(0f, y), Size(size.width, h))
         val head = size.width * shown
         if (head > 0f) {
-            drawRoundRect(Color.White.copy(alpha = 0.85f), Offset(0f, y), Size(head, h), r)
-            // Хвост кометы: от ярко-белой головы назад угасает до обычного белого.
-            val tail = (size.width * 0.28f).coerceAtMost(head)
-            drawRoundRect(
+            // Пройденная часть — бело-серая.
+            drawRect(Color(0xFFCFCFD6), Offset(0f, y), Size(head, h))
+            // Хвост кометы: короткий плавный переход от бело-серого к ярко-белой голове.
+            val tail = minOf(head, 46.dp.toPx())
+            drawRect(
                 Brush.horizontalGradient(
-                    listOf(Color.White.copy(alpha = 0f), Color.White),
+                    listOf(Color(0xFFCFCFD6), Color.White),
                     startX = head - tail,
                     endX = head,
                 ),
-                Offset(head - tail, y - h * 0.15f),
-                Size(tail, h * 1.3f),
-                CornerRadius(h * 0.65f),
+                Offset(head - tail, y),
+                Size(tail, h),
             )
-            drawCircle(
-                Brush.radialGradient(listOf(Color.White.copy(alpha = 0.55f), Color.Transparent), Offset(head, size.height / 2f), h * 3.2f),
-                h * 3.2f,
-                Offset(head, size.height / 2f),
-            )
-            drawCircle(Color.White, h * (0.75f + 0.25f * thick), Offset(head, size.height / 2f))
         }
     }
 }

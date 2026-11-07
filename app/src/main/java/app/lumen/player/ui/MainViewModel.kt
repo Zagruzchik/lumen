@@ -13,6 +13,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.palette.graphics.Palette
 import app.lumen.player.data.Release
+import app.lumen.player.data.Artists
 import app.lumen.player.ui.components.QuickMenuState
 import app.lumen.player.data.UpdateEvents
 import app.lumen.player.data.AlbumRow
@@ -67,7 +68,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val tracks = dao.tracks().state(emptyList())
     val albums = dao.albums().state(emptyList())
     val recentAlbums = dao.recentAlbums().state(emptyList())
-    val artists = dao.artists().state(emptyList())
+    // Исполнители считаются по каждому участнику: «A & B» — это и A, и B.
+    val artists = tracks.map { Artists.rows(it) }.flowOn(Dispatchers.Default).state(emptyList())
     val folders = dao.folders().state(emptyList())
     val frequent = dao.frequent().state(emptyList())
     val favorites = dao.favorites().state(emptyList())
@@ -1403,8 +1405,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun album(key: String) = dao.album(key)
     fun albumTracks(key: String) = dao.albumTracks(key)
-    fun artistTracks(name: String) = dao.artistTracks(name)
-    fun albumsOfArtist(name: String) = dao.albumsOfArtist(name)
+    fun artistTracks(name: String) = tracks.map { list ->
+        list.filter { Artists.has(it, name) }
+            .sortedWith(compareByDescending<TrackEntity> { it.year }.thenBy { it.albumKey }.thenBy { it.discNo }.thenBy { it.trackNo })
+    }.flowOn(Dispatchers.Default)
+
+    fun albumsOfArtist(name: String) = combine(albums, artistTracks(name)) { all, mine ->
+        val keys = mine.mapTo(HashSet()) { it.albumKey }
+        all.filter { it.albumKey in keys }.sortedByDescending { it.year }
+    }.flowOn(Dispatchers.Default)
     fun folderTracks(folder: String) = dao.folderTracks(folder)
 }
 

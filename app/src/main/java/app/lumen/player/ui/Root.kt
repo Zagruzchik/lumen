@@ -372,7 +372,7 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
             },
             onOpenArtist = {
                 closePlayer()
-                nav.open(Dest.Artist(it.albumArtist))
+                nav.open(Dest.Artist(app.lumen.player.data.Artists.main(it)))
             },
             onAddToPlaylist = { vm.sheetTrack.value = app.lumen.player.ui.SheetTrack(it, edit = false) },
             onPlaySimilar = { vm.playSimilar(it) },

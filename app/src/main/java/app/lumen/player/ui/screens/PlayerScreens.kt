@@ -159,8 +159,11 @@ import kotlin.math.min
 @Composable
 private fun CoverBackdrop(uri: String?, colors: CoverColors) {
     // Фон плавно перетекает от обложки к обложке.
-    androidx.compose.animation.Crossfade(targetState = uri, animationSpec = tween(800), label = "backdrop") { u ->
-        CoverBackdropLayer(u, colors)
+    // Непрозрачная подложка: во время перетекания двух фонов сквозь плеер ничего не просвечивает.
+    Box(Modifier.fillMaxSize().background(Color(0xFF0A0610))) {
+        androidx.compose.animation.Crossfade(targetState = uri, animationSpec = tween(800), label = "backdrop") { u ->
+            CoverBackdropLayer(u, colors)
+        }
     }
 }
 

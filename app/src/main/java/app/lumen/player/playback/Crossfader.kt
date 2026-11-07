@@ -35,7 +35,7 @@ class Crossfader(
     private val prefs: Prefs,
     private val mix: VolumeMix,
 ) {
-    private enum class Stage { IDLE, ARMED, HANDOFF, FADING }
+    private enum class Stage { IDLE, ARMED, SYNC, HANDOFF, FADING }
 
     private val handler = Handler(Looper.getMainLooper())
     private var stage = Stage.IDLE
@@ -46,6 +46,9 @@ class Crossfader(
     private var stageStart = 0L
     private var fadeMs = 0L
     private var switching = false
+    private var syncStartPos = 0L
+    private var lastDrift = 0L
+    private var lastSpeedAt = 0L
 
     private val tick = object : Runnable {
         override fun run() {
@@ -97,11 +100,38 @@ class Crossfader(
             Stage.ARMED -> {
                 val t = tail ?: return abort()
                 if (main.currentMediaItem?.mediaId != armedFor) return abort()
-                if (main.currentPosition >= fadeStartPos - 40 && tailReady) {
-                    // Подхватываем: учитываем задержку вывода звука хвоста (~80 мс).
-                    t.seekTo(main.currentPosition + 80)
+                // Хвост стоит на паузе ровно у позиции, которую основной пройдёт через ~2 с.
+                // Запускаем его в нужный момент — без перемотки, без перебуферизации.
+                // Опоздали к точке старта (поздно включили/долго готовился) — переставляем хвост вперёд.
+                if (tailReady && main.currentPosition > syncStartPos + 250) {
+                    syncStartPos = main.currentPosition + 700
+                    tailReady = false
+                    t.seekTo(syncStartPos)
+                    return
+                }
+                if (tailReady && main.currentPosition >= syncStartPos - 30) {
                     t.volume = 0f
                     t.play()
+                    stage = Stage.SYNC
+                    stageStart = now
+                }
+            }
+            Stage.SYNC -> {
+                // Хвост играет беззвучно; выравниваем его по основному лёгким ускорением/замедлением,
+                // пока расхождение не станет меньше ~10 мс. Тогда подмена будет неслышной.
+                val t = tail ?: return abort()
+                if (main.currentMediaItem?.mediaId != armedFor) return abort()
+                if (now - stageStart > 200 && t.isPlaying && now - lastSpeedAt > 250) {
+                    val drift = main.currentPosition - t.currentPosition
+                    val speed = if (kotlin.math.abs(drift) <= 8) 1f else (1f + drift / 900f).coerceIn(0.85f, 1.25f)
+                    if (kotlin.math.abs(t.playbackParameters.speed - speed) > 0.004f) {
+                        t.setPlaybackSpeed(speed)
+                        lastSpeedAt = now
+                    }
+                    lastDrift = drift
+                }
+                if (main.currentPosition >= fadeStartPos) {
+                    t.setPlaybackSpeed(1f)
                     stage = Stage.HANDOFF
                     stageStart = now
                 }
@@ -109,8 +139,9 @@ class Crossfader(
             Stage.HANDOFF -> {
                 val t = tail ?: return abort()
                 val p = ((now - stageStart) / HANDOFF_MS.toFloat()).coerceIn(0f, 1f)
-                t.volume = p
-                mix.cross = 1f - p
+                // Равномощная передача: суммарная громкость не проседает.
+                t.volume = sin(p * PI.toFloat() / 2f)
+                mix.cross = sin((1f - p) * PI.toFloat() / 2f)
                 if (p >= 1f) {
                     val left = (main.duration - main.currentPosition).coerceAtLeast(500L)
                     switching = true
@@ -147,7 +178,8 @@ class Crossfader(
         if (armedFor == item.mediaId || left < ms * 0.6) return
         armedFor = item.mediaId
         fadeStartPos = dur - ms
-        // Готовим хвост заранее и ставим у места начала перехода.
+        syncStartPos = maxOf(0L, fadeStartPos - SYNC_LEAD_MS)
+        // Готовим хвост заранее и ставим у места, откуда начнём синхронизацию.
         val t = ExoPlayer.Builder(context, DefaultRenderersFactory(context))
             .setAudioAttributes(
                 AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(),
@@ -158,7 +190,7 @@ class Crossfader(
         tailReady = false
         t.volume = 0f
         t.playWhenReady = false
-        t.setMediaItem(item, maxOf(0L, fadeStartPos - 200))
+        t.setMediaItem(item, syncStartPos)
         t.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 if (tail !== t) return
@@ -185,7 +217,8 @@ class Crossfader(
     }
 
     private companion object {
-        const val PREPARE_AHEAD_MS = 4_000L
-        const val HANDOFF_MS = 300L
+        const val PREPARE_AHEAD_MS = 6_000L
+        const val SYNC_LEAD_MS = 2_000L
+        const val HANDOFF_MS = 400L
     }
 }

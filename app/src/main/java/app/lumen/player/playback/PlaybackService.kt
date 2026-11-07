@@ -339,7 +339,11 @@ class PlaybackService : MediaSessionService() {
         // Заранее меряем громкость следующего трека.
         if (p.hasNextMediaItem()) {
             val next = p.getMediaItemAt(p.nextMediaItemIndex).mediaId
-            if (g.beats.loudness(next) == null) g.appScope.launch { runCatching { g.beats.analyze(next).collect { } } }
+            // Не сразу: в первые секунды нового трека (и во время кроссфейда) процессору есть чем заняться.
+            if (g.beats.loudness(next) == null) g.appScope.launch {
+                kotlinx.coroutines.delay(20_000)
+                runCatching { g.beats.analyze(next).collect { } }
+            }
         }
         if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) previousLong?.let { u -> g.appScope.launch { runCatching { g.dao.clearPosition(u) } } }
         previousLong = null
