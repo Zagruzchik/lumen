@@ -13,6 +13,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.palette.graphics.Palette
 import app.lumen.player.data.Release
+import app.lumen.player.ui.components.QuickMenuState
 import app.lumen.player.data.UpdateEvents
 import app.lumen.player.data.AlbumRow
 import app.lumen.player.data.Artwork
@@ -732,7 +733,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var pendingPlaylistUri: String? = null
 
     /** Меню плейлистов на удержании лайка. */
-    val quickMenu = app.lumen.player.ui.components.QuickMenuState()
+    val quickMenu = QuickMenuState()
     val quickToast = MutableStateFlow<String?>(null)
 
     /** Последние плейлисты для быстрого меню (до 6). */

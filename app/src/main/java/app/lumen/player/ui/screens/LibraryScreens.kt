@@ -50,6 +50,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.border
@@ -1218,8 +1220,8 @@ private fun CategoryDock(tab: Int, onTab: (Int) -> Unit, modifier: Modifier = Mo
             .pointerInput(Unit) {
                 val n = LIB_CATS.size
                 fun idx(x: Float) = (x / (size.width / n.toFloat())).toInt().coerceIn(0, n - 1)
-                androidx.compose.foundation.gestures.awaitEachGesture {
-                    val down = androidx.compose.foundation.gestures.awaitFirstDown()
+                awaitEachGesture {
+                    val down = awaitFirstDown()
                     hover = idx(down.position.x)
                     haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                     while (true) {
