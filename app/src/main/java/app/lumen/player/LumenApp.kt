@@ -32,6 +32,7 @@ class LumenApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        app.lumen.player.ui.theme.ThemeStore.init(this)
         graph = AppGraph(this)
     }
 }

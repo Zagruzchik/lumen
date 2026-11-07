@@ -133,6 +133,7 @@ sealed interface Dest {
     data object Recs : Dest
     data class Playlist(val id: Long) : Dest
     data object Wrapped : Dest
+    data class ThemeEditor(val baseId: String) : Dest
 }
 
 class Nav(
@@ -148,7 +149,14 @@ fun LumenRoot(vm: MainViewModel) {
     val moon by vm.moonSide.collectAsStateWithLifecycle()
     val coverAccent by animateColorAsState(colors.accent, tween(700), label = "accent")
     // «Обратная сторона луны» меняет акцент всего приложения резко, без плавного перехода.
-    val accent = if (moon) app.lumen.player.ui.screens.MoonAccent else coverAccent
+    val theme = app.lumen.player.ui.theme.ThemeStore.current
+    // Акцент: из обложки или постоянный — как задано в теме.
+    val fixedAccent by animateColorAsState(theme.accent, tween(500), label = "fixedAccent")
+    val accent = when {
+        moon -> app.lumen.player.ui.screens.MoonAccent
+        theme.accentMode == app.lumen.player.ui.theme.AccentMode.FIXED -> fixedAccent
+        else -> coverAccent
+    }
     val showFormat by vm.showFormat.collectAsStateWithLifecycle()
     LumenTheme(accent) {
         androidx.compose.runtime.CompositionLocalProvider(app.lumen.player.ui.components.LocalShowFormat provides showFormat) {
@@ -447,7 +455,7 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                         ) { HomeScreen(vm, nav, actions, bottomPad, onOpenPlayer = { openPlayer() }) }
                         Dest.Library -> LibraryScreen(vm, nav, actions, libTab, { libTab = it }, bottomPad)
                         Dest.Favorites -> FavoritesScreen(vm, nav, actions, bottomPad)
-                        Dest.Settings -> SettingsScreen(vm, bottomPad, onOpenStats = { nav.open(Dest.Stats) })
+                        Dest.Settings -> SettingsScreen(vm, bottomPad, onOpenStats = { nav.open(Dest.Stats) }, onEditTheme = { nav.open(Dest.ThemeEditor(it)) })
                         Dest.Stats -> app.lumen.player.ui.screens.StatsScreen(vm, nav, bottomPad)
                         Dest.Recs -> app.lumen.player.ui.screens.RecsScreen(vm, bottomPad)
                         is Dest.Album -> AlbumScreen(vm, d.key, nav, actions, bottomPad)
@@ -455,6 +463,7 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                         is Dest.Folder -> FolderScreen(vm, d.path, d.name, nav, actions, bottomPad)
                         is Dest.Playlist -> app.lumen.player.ui.screens.PlaylistScreen(vm, d.id, nav, actions, bottomPad)
                         Dest.Wrapped -> app.lumen.player.ui.screens.WrappedScreen(vm, nav)
+                        is Dest.ThemeEditor -> app.lumen.player.ui.screens.ThemeEditorScreen(d.baseId, nav)
                     }
                 }
             }
@@ -607,7 +616,7 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
             Row(
                 Modifier
                     .clip(RoundedCornerShape(20.dp))
-                    .background(Color(0xEE231C2C))
+                    .background(app.lumen.player.ui.theme.LT.sheetBottom)
                     .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(20.dp))
                     .padding(horizontal = 18.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -649,12 +658,23 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
     }
 }
 
-/** Мягкие цветные пятна из цветов обложки — то, что «просвечивает» сквозь стекло. */
+/**
+ * Фон приложения по теме: мягкие пятна из цветов обложки (cover), живой градиент из цветов
+ * темы (gradient) или сплошной цвет (solid — ничего не рисуется, самый экономный).
+ */
 @Composable
-fun AmbientBackground(colors: CoverColors, modifier: Modifier = Modifier.fillMaxSize(), strength: Float = 0.55f) {
-    val a by animateColorAsState(colors.a, tween(900), label = "a")
-    val b by animateColorAsState(colors.b, tween(900), label = "b")
-    val c by animateColorAsState(colors.c, tween(900), label = "c")
+fun AmbientBackground(colors: CoverColors, modifier: Modifier = Modifier.fillMaxSize(), strength: Float = -1f) {
+    val t = app.lumen.player.ui.theme.ThemeStore.current
+    if (t.backdrop == app.lumen.player.ui.theme.BackdropMode.SOLID) return
+    val k = if (strength < 0f) t.backdropStrength else strength * (t.backdropStrength / 0.55f).coerceIn(0f, 1.8f)
+    val src = if (t.backdrop == app.lumen.player.ui.theme.BackdropMode.GRADIENT) {
+        val g = t.gradient
+        CoverColors(g.first(), g.getOrElse(0) { g.first() }, g.getOrElse(1) { g.first() }, g.getOrElse(2) { g.last() })
+    } else colors
+    val a by animateColorAsState(src.a, tween(900), label = "a")
+    val b by animateColorAsState(src.b, tween(900), label = "b")
+    val c by animateColorAsState(src.c, tween(900), label = "c")
+    val strength = k.coerceIn(0f, 1f)
     Canvas(modifier) {
         fun blob(color: Color, center: Offset, r: Float, alpha: Float) {
             drawCircle(
@@ -961,7 +981,7 @@ private fun BottomNav(root: Dest, haze: HazeState, onSelect: (Dest) -> Unit, mod
     Box(
         modifier
             .fillMaxWidth()
-            .glassBlur(haze, Color(0x990A0A12))
+            .glassBlur(haze, app.lumen.player.ui.components.DEFAULT_PANEL)
             .drawBehind {
                 drawLine(Color(0x1AFFFFFF), Offset(0f, 0f), Offset(size.width, 0f), 1.dp.toPx())
             }

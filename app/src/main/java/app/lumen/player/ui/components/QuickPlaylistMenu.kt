@@ -173,7 +173,7 @@ fun QuickPlaylistMenu(
                 }
                 .width(250.dp)
                 .clip(RoundedCornerShape(24.dp))
-                .background(Brush.verticalGradient(listOf(Color(0xF22A2236), Color(0xF2191520))))
+                .background(app.lumen.player.ui.theme.LT.sheetBrush())
                 .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(alpha = 0.35f), Color.White.copy(alpha = 0.05f))), RoundedCornerShape(24.dp))
                 .clickable(remember { MutableInteractionSource() }, null) {}
                 .padding(vertical = 8.dp),

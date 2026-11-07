@@ -82,7 +82,7 @@ fun BottomGlassSheet(onClose: () -> Unit, sheetModifier: Modifier = Modifier, co
                 .padding(horizontal = 8.dp, vertical = 8.dp)
                 .navigationBarsPadding()
                 .clip(RoundedCornerShape(30.dp))
-                .background(Brush.verticalGradient(listOf(Color(0xF0282131), Color(0xF5151219))))
+                .background(app.lumen.player.ui.theme.LT.sheetBrush())
                 .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(alpha = 0.3f), Color.White.copy(alpha = 0.05f))), RoundedCornerShape(30.dp))
                 .clickable(remember { MutableInteractionSource() }, null) {}
                 .draggable(

@@ -330,7 +330,7 @@ fun NameDialog(title: String, initial: String, confirm: String, onDone: (String)
                 .padding(24.dp)
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(28.dp))
-                .background(Brush.verticalGradient(listOf(Color(0xFF241D2E), Color(0xFF15121B))))
+                .background(app.lumen.player.ui.theme.LT.sheetBrush())
                 .border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(28.dp))
                 .clickable(remember { MutableInteractionSource() }, null) {}
                 .padding(22.dp),
@@ -383,7 +383,7 @@ fun AddToPlaylistSheet(vm: MainViewModel, t: TrackEntity, onClose: () -> Unit, s
                 .padding(10.dp)
                 .navigationBarsPadding()
                 .clip(RoundedCornerShape(30.dp))
-                .background(Brush.verticalGradient(listOf(Color(0xFF241D2E), Color(0xFF15121B))))
+                .background(app.lumen.player.ui.theme.LT.sheetBrush())
                 .border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(30.dp))
                 .clickable(remember { MutableInteractionSource() }, null) {}
                 .padding(vertical = 18.dp),

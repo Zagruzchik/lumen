@@ -108,7 +108,7 @@ fun UpdateSheet(vm: MainViewModel, onClose: () -> Unit, sheetModifier: Modifier 
                 .padding(10.dp)
                 .navigationBarsPadding()
                 .clip(RoundedCornerShape(32.dp))
-                .background(Brush.verticalGradient(listOf(Color(0xFF241D2E), Color(0xFF15121B))))
+                .background(app.lumen.player.ui.theme.LT.sheetBrush())
                 .border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(32.dp))
                 .clickable(remember { MutableInteractionSource() }, null) {}
                 .padding(22.dp),

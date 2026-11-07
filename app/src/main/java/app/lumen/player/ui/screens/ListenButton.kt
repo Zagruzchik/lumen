@@ -92,8 +92,10 @@ fun ListenButton(
     val clock = remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
     // Все движения кнопки — от одних часов (один источник кадров вместо четырёх).
     // Если главная закрыта плеером — часы стоят и ничего не перерисовывается.
-    androidx.compose.runtime.LaunchedEffect(active) {
-        if (!active) return@LaunchedEffect
+    val themeMotion = app.lumen.player.ui.theme.ThemeStore.current.motion
+    androidx.compose.runtime.LaunchedEffect(active, themeMotion) {
+        // Тема без движения (AMOLED) — кнопка неподвижна и не тратит кадры.
+        if (!active || themeMotion <= 0f) return@LaunchedEffect
         val base = clock.floatValue
         val start = androidx.compose.runtime.withFrameNanos { it }
         while (true) androidx.compose.runtime.withFrameNanos { clock.floatValue = base + (it - start) / 1_000_000_000f }
@@ -147,7 +149,8 @@ fun ListenButton(
                 val pal = listOf(a, acc, c, b)
                 val maxLen = R * 2.35f
                 rayPaths.forEach { it.reset() }
-                for (i in 0 until rays) {
+                val showRays = app.lumen.player.ui.theme.ThemeStore.current.rays
+                for (i in 0 until (if (showRays) rays else 0)) {
                     val dir = ((i * 360f / rays) + rot) * PI.toFloat() / 180f
                     val breathe = 0.5f + 0.5f * sin(now * (0.55f + (i % 5) * 0.11f) + i * 2.17f)
                     val len = R * (1.4f + 0.4f * breathe + 0.45f * lv)

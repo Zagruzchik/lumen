@@ -131,7 +131,7 @@ fun GlassRoundButton(icon: ImageVector, label: String, active: Boolean, size: Dp
                 .drawBehind {
                     // Блик-полумесяц сверху, как на стекле.
                     drawOval(
-                        Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.22f), Color.Transparent), startY = 0f, endY = this.size.height * 0.45f),
+                        Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.32f * app.lumen.player.ui.theme.ThemeStore.current.highlight), Color.Transparent), startY = 0f, endY = this.size.height * 0.45f),
                         topLeft = Offset(this.size.width * 0.18f, this.size.height * 0.06f),
                         size = Size(this.size.width * 0.64f, this.size.height * 0.36f),
                     )

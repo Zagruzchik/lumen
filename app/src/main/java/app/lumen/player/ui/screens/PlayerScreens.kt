@@ -160,7 +160,7 @@ import kotlin.math.min
 private fun CoverBackdrop(uri: String?, colors: CoverColors) {
     // Фон плавно перетекает от обложки к обложке.
     // Непрозрачная подложка: во время перетекания двух фонов сквозь плеер ничего не просвечивает.
-    Box(Modifier.fillMaxSize().background(Color(0xFF0A0610))) {
+    Box(Modifier.fillMaxSize().background(app.lumen.player.ui.theme.ThemeStore.current.background)) {
         androidx.compose.animation.Crossfade(targetState = uri, animationSpec = tween(800), label = "backdrop") { u ->
             CoverBackdropLayer(u, colors)
         }
@@ -169,9 +169,12 @@ private fun CoverBackdrop(uri: String?, colors: CoverColors) {
 
 @Composable
 private fun CoverBackdropLayer(uri: String?, colors: CoverColors) {
-    val bg = rememberArtwork(uri, 48)
-    Box(Modifier.fillMaxSize().background(Color(0xFF12081A))) {
-        if (bg != null) {
+    val t = app.lumen.player.ui.theme.ThemeStore.current
+    val bg = if (t.playerBackdrop == app.lumen.player.ui.theme.BackdropMode.COVER) rememberArtwork(uri, 48) else null
+    Box(Modifier.fillMaxSize().background(t.background)) {
+        if (t.playerBackdrop == app.lumen.player.ui.theme.BackdropMode.SOLID) {
+            // Сплошной фон (AMOLED) — без размытия и пятен.
+        } else if (bg != null) {
             Image(
                 bitmap = bg,
                 contentDescription = null,
@@ -187,7 +190,13 @@ private fun CoverBackdropLayer(uri: String?, colors: CoverColors) {
             Modifier
                 .fillMaxSize()
                 .background(
-                    Brush.verticalGradient(listOf(Color(0x330A0610), Color(0x8C0A0610), Color(0xE00A0610)))
+                    Brush.verticalGradient(
+                        listOf(
+                            t.background.copy(alpha = 0.2f * t.playerDim / 0.55f),
+                            t.background.copy(alpha = (0.55f * t.playerDim / 0.55f).coerceAtMost(1f)),
+                            t.background.copy(alpha = (0.88f * t.playerDim / 0.55f).coerceIn(0.6f, 1f)),
+                        )
+                    )
                 )
         )
     }
@@ -501,7 +510,7 @@ private fun CoverArea(
                 .size(side)
                 .graphicsLayer {
                     // Обложка мягко «дышит» под бит.
-                    val lv = beat.level().coerceIn(0f, 1f)
+                    val lv = if (app.lumen.player.ui.theme.ThemeStore.current.coverBreath) beat.level().coerceIn(0f, 1f) else 0f
                     val sc = 1f + 0.022f * lv
                     scaleX = sc
                     scaleY = sc
@@ -638,7 +647,7 @@ private fun LyricsBeatFrame(
         Modifier
             .fillMaxSize()
             .drawBehind {
-                val lv = beat.level().coerceIn(0f, 1f)
+                val lv = if (app.lumen.player.ui.theme.ThemeStore.current.beatWaves) beat.level().coerceIn(0f, 1f) else 0f
                 // Свечение, «дышащее» от ударов: снизу — тёплым, сверху — акцентом.
                 val r = size.width * 0.75f
                 drawCircle(
@@ -1495,7 +1504,7 @@ private fun QueueList(
                     Modifier
                         .fillMaxSize()
                         .graphicsLayer { translationX = shownSwipe }
-                        .background(if (dragging) Color(0xFF241D2E) else Color(0xFF141019))
+                        .background(if (dragging) app.lumen.player.ui.theme.LT.sheetTop else app.lumen.player.ui.theme.LT.sheetBottom)
                         .background(if (cur) Color(0x14FFFFFF) else Color.Transparent)
                         .pointerInput(q.key) {
                             // Свайп включается только при явно горизонтальном движении.

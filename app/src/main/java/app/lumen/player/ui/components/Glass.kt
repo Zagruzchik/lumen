@@ -1,6 +1,7 @@
 package app.lumen.player.ui.components
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.height
@@ -38,19 +39,26 @@ import kotlin.math.sin
 /** Настоящее стекло: размытие того, что под панелью (Android 12+), на старых — полупрозрачная подложка. */
 fun Modifier.glassSource(state: HazeState): Modifier = this.hazeSource(state)
 
-fun Modifier.glassBlur(state: HazeState, tint: Color = Color(0x660E0A16)): Modifier =
-    this.hazeEffect(
+fun Modifier.glassBlur(state: HazeState, tint: Color = Color(0x660E0A16)): Modifier {
+    val t = app.lumen.player.ui.theme.ThemeStore.current
+    // Тема без размытия (AMOLED): просто плотная подложка — ноль работы для видеочипа.
+    if (t.blur <= 0.5f) return this.background(t.panelTint)
+    return this.hazeEffect(
         state = state,
         style = HazeStyle(
-            backgroundColor = Color(0xFF07070D),
-            tints = listOf(HazeTint(tint)),
-            blurRadius = 28.dp,
-            noiseFactor = 0.06f,
+            backgroundColor = t.background,
+            tints = listOf(HazeTint(if (tint == DEFAULT_PANEL) t.panelTint else tint)),
+            blurRadius = t.blur.dp,
+            noiseFactor = t.noise,
         ),
     ) {
         // Размываем уменьшенную вдвое картинку: на радиусе 28dp разницы не видно, а работы в 4 раза меньше.
         inputScale = dev.chrisbanes.haze.HazeInputScale.Fixed(0.5f)
     }
+}
+
+/** Цвет «по умолчанию» для панелей — заменяется цветом из темы. */
+val DEFAULT_PANEL = Color(0x8C281630)
 
 /** Волнистая полоса прогресса в стиле Android 13: волна «бежит», пока играет музыка. */
 @Composable

@@ -9,18 +9,22 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.graphics.Color
 
+/** Цвета интерфейса — берутся из текущей темы (см. Themes.kt). */
 object LC {
-    val Bg = Color(0xFF07070D)
-    val Text = Color(0xFFF5F4FA)
-    val Dim = Color(0xB3F5F4FA)
-    val Faint = Color(0x80F5F4FA)
-    val Glass = Color(0x17FFFFFF)
-    val GlassStrong = Color(0x26FFFFFF)
-    val Border = Color(0x26FFFFFF)
-    val OnAccent = Color(0xFF1A0B06)
+    val Bg get() = ThemeStore.current.background
+    val Text get() = ThemeStore.current.text
+    val Dim get() = ThemeStore.current.textDim
+    val Faint get() = ThemeStore.current.textFaint
+    val Glass get() = ThemeStore.current.card
+    val GlassStrong get() = ThemeStore.current.cardStrong
+    val Border get() = ThemeStore.current.border
+    val OnAccent get() = ThemeStore.current.onAccent
     val DefaultAccent = Color(0xFFFF7A59)
-    val Sheet = Color(0xFF15121C)
+    val Sheet get() = ThemeStore.current.sheetBottom
 }
+
+/** Короткий доступ к текущей теме. */
+val LT: ThemeSpec get() = ThemeStore.current
 
 data class CoverColors(val accent: Color, val a: Color, val b: Color, val c: Color)
 

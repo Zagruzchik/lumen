@@ -108,7 +108,7 @@ fun EditTagsSheet(vm: MainViewModel, t: TrackEntity, onClose: () -> Unit, sheetM
                 .navigationBarsPadding()
                 .imePadding()
                 .clip(RoundedCornerShape(30.dp))
-                .background(Brush.verticalGradient(listOf(Color(0xFF241D2E), Color(0xFF15121B))))
+                .background(app.lumen.player.ui.theme.LT.sheetBrush())
                 .border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(30.dp))
                 .clickable(remember { MutableInteractionSource() }, null) {}
                 .heightIn(max = 640.dp)

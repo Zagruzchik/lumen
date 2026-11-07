@@ -1125,14 +1125,14 @@ private fun LumenBrand(vm: MainViewModel, colors: app.lumen.player.ui.theme.Cove
         Box(
             Modifier
                 .graphicsLayer {
-                    val lv = beat.level().coerceIn(0f, 1f)
+                    val lv = if (app.lumen.player.ui.theme.LT.beatWaves) beat.level().coerceIn(0f, 1f) else 0f
                     val sc = 1f + 0.07f * lv
                     scaleX = sc
                     scaleY = sc
                     transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.6f)
                 }
                 .drawBehind {
-                    val lv = beat.level().coerceIn(0f, 1f)
+                    val lv = if (app.lumen.player.ui.theme.LT.beatWaves) beat.level().coerceIn(0f, 1f) else 0f
                     val r = size.width * 0.7f
                     drawCircle(
                         Brush.radialGradient(
@@ -1242,7 +1242,7 @@ private fun CategoryDock(tab: Int, onTab: (Int) -> Unit, modifier: Modifier = Mo
                 scaleY = s
             }
             .clip(shape)
-            .background(Brush.verticalGradient(listOf(Color(0xCC2A2335), Color(0xE6161219))))
+            .background(app.lumen.player.ui.theme.LT.sheetBrush())
             .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(alpha = 0.35f), Color.White.copy(alpha = 0.05f), accent.copy(alpha = 0.3f))), shape)
             .pointerInput(Unit) {
                 val n = LIB_CATS.size

@@ -97,7 +97,7 @@ private fun folderPath(f: FolderRow): String = when {
 }
 
 @Composable
-fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
+fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit, onEditTheme: (String) -> Unit = {}) {
     val ctx = LocalContext.current
     val folders by vm.folderList.collectAsStateWithLifecycle()
     val skipShort by vm.skipShort.collectAsStateWithLifecycle()
@@ -268,6 +268,11 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
                     LSwitch(autoUpd) { vm.setAutoUpdate(it) }
                 }
             }
+        }
+
+        // ---------- темы ----------
+        item {
+            Card { ThemesSection(onEditTheme) }
         }
 
         // ---------- интерфейс ----------

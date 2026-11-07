@@ -85,6 +85,8 @@ fun rememberBeatSignal(vm: MainViewModel, active: Boolean = true): BeatSignal {
     LaunchedEffect(active) {
         // Невидимые экраны не тратят кадры на ритм.
         if (!active) return@LaunchedEffect
+        val th = app.lumen.player.ui.theme.ThemeStore.current
+        if (!th.beatWaves && !th.coverBreath) return@LaunchedEffect
         var basePos = vm.position()
         var baseT = withFrameMillis { it }
         var lastPoll = baseT
@@ -203,6 +205,8 @@ fun DrawScope.drawBeatContour(
     shockGap: Float,
     samples: Int = 260,
 ) {
+    // Тема без волн (например, AMOLED) — ничего не рисуем.
+    if (!app.lumen.player.ui.theme.ThemeStore.current.beatWaves) return
     // Остаток от часа: Float от «времени с включения телефона» терял точность, и волны шли ступеньками.
     val tSec = (sig.timeMs % 3_600_000L) / 1000f
     val lvl = sig.level()
