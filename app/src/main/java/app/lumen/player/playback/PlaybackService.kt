@@ -47,6 +47,8 @@ private const val ACTION_SHUFFLE = "lumen.SHUFFLE"
 private val CMD_FAVORITE = SessionCommand(ACTION_FAVORITE, Bundle.EMPTY)
 private val CMD_SHUFFLE = SessionCommand(ACTION_SHUFFLE, Bundle.EMPTY)
 internal const val ACTION_SLEEP_END = "lumen.SLEEP_END"
+internal const val ACTION_AB = "lumen.AB"
+private val CMD_AB = SessionCommand(ACTION_AB, Bundle.EMPTY)
 private val CMD_SLEEP_END = SessionCommand(ACTION_SLEEP_END, Bundle.EMPTY)
 /** Целевая громкость выравнивания (средняя энергия), дБ. */
 private const val TARGET_LOUDNESS_DB = -15f
@@ -63,6 +65,8 @@ class PlaybackService : MediaSessionService() {
         instance = this
         val renderers = DefaultRenderersFactory(this)
             .setEnableAudioFloatOutput(true)
+            // Скорость и тон — силами AudioTrack: так они работают и для 24-битного FLAC.
+            .setEnableAudioTrackPlaybackParams(true)
         val player = ExoPlayer.Builder(this, renderers)
             .setAudioAttributes(
                 AudioAttributes.Builder()
@@ -161,10 +165,39 @@ class PlaybackService : MediaSessionService() {
 
             override fun onAudioSessionIdChanged(audioSessionId: Int) {
                 applicationContext.graph.eq.attach(audioSessionId)
+                applicationContext.graph.autoEq.attach(audioSessionId)
             }
         })
         applicationContext.graph.eq.attach(player.audioSessionId)
-        crossfader = Crossfader(this, player, applicationContext.graph.prefs, mixer).also { it.start() }
+        applicationContext.graph.autoEq.attach(player.audioSessionId)
+        runCatching { player.playbackParameters = androidx.media3.common.PlaybackParameters(prefs.speed, prefs.pitch) }
+        crossfader = Crossfader(
+            this, player, applicationContext.graph.prefs, mixer,
+            endOf = { id -> trims[id]?.endMs ?: -1L },
+            blocked = { abUri != null },
+            autoEq = applicationContext.graph.autoEq,
+        ).also { it.start() }
+        scope.launch {
+            applicationContext.graph.dao.trims().collect { list -> trims = list.associateBy { it.uri } }
+        }
+        player.addListener(object : Player.Listener {
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                val id = mediaItem?.mediaId
+                if (abUri != null && abUri != id) abUri = null
+                // Обрезанное начало: сразу прыгаем к нужному месту.
+                val t = id?.let { trims[it] }
+                if (t != null && t.startMs > 0 && player.currentPosition < t.startMs - 300) player.seekTo(t.startMs)
+            }
+
+            override fun onPlaybackParametersChanged(playbackParameters: androidx.media3.common.PlaybackParameters) {
+                // Кратковременное ускорение по удержанию не запоминаем — только настройку из шторки.
+                if (!tempSpeed) {
+                    prefs.speed = playbackParameters.speed
+                    prefs.pitch = playbackParameters.pitch
+                }
+            }
+        })
+        mainHandler.post(guard)
         player.addListener(object : Player.Listener {
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
                 // Таймер сна «до конца трека»: трек доигран — выключаем режим.
@@ -225,6 +258,7 @@ class PlaybackService : MediaSessionService() {
                         .add(CMD_FAVORITE)
                         .add(CMD_SHUFFLE)
                         .add(CMD_SLEEP_END)
+                        .add(CMD_AB)
                         .build()
                     return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                         .setAvailableSessionCommands(commands)
@@ -243,6 +277,21 @@ class PlaybackService : MediaSessionService() {
                         ACTION_SLEEP_END -> {
                             sleepAtEnd = args.getBoolean("on", false)
                             exo?.pauseAtEndOfMediaItems = sleepAtEnd
+                        }
+                        ACTION_AB -> {
+                            val a = args.getLong("a", -1L)
+                            val b = args.getLong("b", -1L)
+                            tempSpeed = args.getBoolean("temp", tempSpeed)
+                            if (args.containsKey("a")) {
+                                if (a >= 0 && b > a + 300) {
+                                    abA = a
+                                    abB = b
+                                    abUri = exo?.currentMediaItem?.mediaId
+                                    exo?.let { if (it.currentPosition !in a..b) it.seekTo(a) }
+                                } else {
+                                    abUri = null
+                                }
+                            }
                         }
                     }
                     return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
@@ -392,6 +441,40 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    // ---------- обрезка и повтор A–B ----------
+
+    @Volatile private var trims: Map<String, app.lumen.player.data.TrimEntity> = emptyMap()
+    private var abUri: String? = null
+    private var abA = 0L
+    private var abB = 0L
+    /** Идёт ускорение по удержанию — не сохраняем его как настройку. */
+    private var tempSpeed = false
+
+    private val guard = object : Runnable {
+        override fun run() {
+            val p = exo
+            var next = 250L
+            if (p != null && p.isPlaying) {
+                val id = p.currentMediaItem?.mediaId
+                val pos = p.currentPosition
+                if (abUri != null && abUri == id) {
+                    next = 30L
+                    if (pos >= abB) p.seekTo(abA)
+                } else {
+                    val t = id?.let { trims[it] }
+                    if (t != null && t.endMs > 0) {
+                        next = 50L
+                        if (pos >= t.endMs) {
+                            if (p.hasNextMediaItem()) sessionPlayer?.seekToNextMediaItem()
+                            else { sessionPlayer?.pause(); p.seekTo(t.startMs) }
+                        }
+                    }
+                }
+            }
+            mainHandler.postDelayed(this, next)
+        }
+    }
+
     private val positionTicker = object : Runnable {
         override fun run() {
             exo?.let { if (it.isPlaying) saveLongPosition(it) }
@@ -408,7 +491,13 @@ class PlaybackService : MediaSessionService() {
     private fun registerDevices() {
         val am = getSystemService(android.media.AudioManager::class.java) ?: return
         val cb = object : android.media.AudioDeviceCallback() {
+            override fun onAudioDevicesRemoved(removedDevices: Array<out android.media.AudioDeviceInfo>) {
+                applicationContext.graph.autoEq.refreshDevice()
+            }
+
             override fun onAudioDevicesAdded(addedDevices: Array<out android.media.AudioDeviceInfo>) {
+                // Подключились другие наушники — включаем их профиль AutoEq.
+                mainHandler.postDelayed({ applicationContext.graph.autoEq.refreshDevice() }, 400)
                 val p = exo ?: return
                 val bt = addedDevices.any {
                     it.isSink && (it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
@@ -641,6 +730,7 @@ class PlaybackService : MediaSessionService() {
     override fun onDestroy() {
         instance = null
         mainHandler.removeCallbacks(positionTicker)
+        mainHandler.removeCallbacks(guard)
         exo?.let { saveLongPosition(it) }
         deviceCallback?.let { cb -> runCatching { getSystemService(android.media.AudioManager::class.java)?.unregisterAudioDeviceCallback(cb) } }
         screenReceiver?.let { runCatching { unregisterReceiver(it) } }
@@ -649,6 +739,7 @@ class PlaybackService : MediaSessionService() {
         crossfader?.release()
         crossfader = null
         applicationContext.graph.eq.release()
+        applicationContext.graph.autoEq.release()
         session?.run {
             player.release()
             release()

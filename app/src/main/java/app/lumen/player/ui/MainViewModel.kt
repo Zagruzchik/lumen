@@ -268,6 +268,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // ---------- обложка, цвета, качество ----------
 
     private fun onTrackChanged(id: String?) {
+        if (ab.value.a >= 0 || ab.value.b >= 0) ab.value = AbState()
         lyricsJob?.cancel()
         lyrics.value = LyricsResult.Idle
         if (id == null) {
@@ -519,6 +520,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     root.put("overrides", ovs)
                     root.put("excludedFolders", org.json.JSONArray(dao.excludedOnce()))
+                    root.put(
+                        "trims",
+                        org.json.JSONArray().apply {
+                            dao.allTrims().forEach { tr -> index[tr.uri]?.let { put(org.json.JSONObject().put("t", it).put("s", tr.startMs).put("e", tr.endMs)) } }
+                        },
+                    )
                     root.put("dislikes", org.json.JSONArray().apply { dao.allDislikes().forEach { d -> index[d.uri]?.let { put(it) } } })
                     root.put(
                         "smartPlaylists",
@@ -1175,6 +1182,115 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setSpeed(s: Float) = conn.setSpeed(s)
     fun seekBy(ms: Long) = conn.seekBy(ms)
 
+    // ---------- скорость, тон, повтор A–B, обрезка ----------
+
+    val speed = MutableStateFlow(g.prefs.speed)
+    val pitch = MutableStateFlow(g.prefs.pitch)
+    val soundSheet = MutableStateFlow(false)
+
+    fun setPlayback(s: Float, p: Float) {
+        val sp = s.coerceIn(0.25f, 3f)
+        val pi = p.coerceIn(0.5f, 2f)
+        speed.value = sp
+        pitch.value = pi
+        g.prefs.speed = sp
+        g.prefs.pitch = pi
+        conn.setPlayback(sp, pi)
+    }
+
+    fun holdFast(on: Boolean) = conn.holdFast(on, speed.value, pitch.value)
+
+    data class AbState(val a: Long = -1L, val b: Long = -1L) {
+        val active get() = a >= 0 && b > a
+    }
+
+    val ab = MutableStateFlow(AbState())
+
+    fun setAbPoint(isA: Boolean) {
+        val pos = conn.position
+        val cur = ab.value
+        val next = if (isA) AbState(pos, if (cur.b > pos) cur.b else -1L) else AbState(if (cur.a in 0 until pos) cur.a else 0L, pos)
+        ab.value = next
+        if (next.active) conn.setAb(next.a, next.b)
+    }
+
+    fun clearAb() {
+        ab.value = AbState()
+        conn.setAb(-1L, -1L)
+    }
+
+    val trimTrack = MutableStateFlow<TrackEntity?>(null)
+    val trims = dao.trims().map { l -> l.associateBy { it.uri } }.state(emptyMap())
+
+    fun saveTrim(t: TrackEntity, startMs: Long, endMs: Long) {
+        viewModelScope.launch {
+            val s0 = startMs.coerceIn(0L, t.durationMs)
+            val e0 = if (endMs >= t.durationMs - 500) 0L else endMs
+            if (s0 <= 0L && e0 <= 0L) dao.deleteTrim(t.uri)
+            else dao.putTrim(app.lumen.player.data.TrimEntity(t.uri, s0, e0))
+            toast(if (s0 <= 0L && e0 <= 0L) "Обрезка убрана" else "Трек обрезан — играет без лишнего")
+        }
+    }
+
+    // ---------- AutoEq ----------
+
+    val autoEq = g.autoEq.state
+    private var autoEqCatalog: List<app.lumen.player.playback.AutoEqEntry>? = null
+    val autoEqResults = MutableStateFlow<List<app.lumen.player.playback.AutoEqEntry>>(emptyList())
+    val autoEqBusy = MutableStateFlow(false)
+    val autoEqError = MutableStateFlow<String?>(null)
+    private var autoEqJob: Job? = null
+
+    fun refreshAutoEqDevice() = g.autoEq.refreshDevice()
+    fun setAutoEqEnabled(on: Boolean) = g.autoEq.setEnabled(on)
+    fun clearAutoEq() = g.autoEq.setProfile(null)
+
+    fun searchAutoEq(q: String) {
+        autoEqJob?.cancel()
+        autoEqJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(200)
+            val n = normalize(q.trim())
+            if (n.length < 2) {
+                autoEqResults.value = emptyList()
+                return@launch
+            }
+            val cat = autoEqCatalog ?: run {
+                autoEqBusy.value = true
+                try {
+                    app.lumen.player.playback.AutoEqEngine.catalog(getApplication<Application>()).also { autoEqCatalog = it }
+                } catch (e: Exception) {
+                    autoEqError.value = "Не удалось загрузить каталог — проверь интернет"
+                    null
+                } finally {
+                    autoEqBusy.value = false
+                }
+            } ?: return@launch
+            autoEqError.value = null
+            val words = n.split(' ').filter { it.isNotBlank() }
+            autoEqResults.value = withContext(Dispatchers.Default) {
+                cat.filter { e -> val k = normalize(e.name); words.all { k.contains(it) } }
+                    .sortedBy { it.name.length }
+                    .take(40)
+            }
+        }
+    }
+
+    fun pickAutoEq(e: app.lumen.player.playback.AutoEqEntry) {
+        viewModelScope.launch {
+            autoEqBusy.value = true
+            try {
+                val p = app.lumen.player.playback.AutoEqEngine.download(e)
+                g.autoEq.setProfile(p)
+                autoEqError.value = null
+                toast("AutoEq: ${e.name} для «${autoEq.value.deviceName}»")
+            } catch (t: Exception) {
+                autoEqError.value = "Не удалось скачать профиль — попробуй ещё раз"
+            } finally {
+                autoEqBusy.value = false
+            }
+        }
+    }
+
     // ---------- обновления по воздуху ----------
 
     val updateState = MutableStateFlow<UpdateUi>(UpdateUi.Idle)
@@ -1507,6 +1623,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             val ov = app.lumen.player.data.TrackOverride(uri, str("title"), str("artist"), str("album"), str("albumArtist"), if (o.isNull("year")) null else o.optInt("year"))
                             dao.putOverride(ov)
                             dao.byUri(uri)?.let { t -> dao.insertTracks(listOf(app.lumen.player.data.applyOverride(t, ov))) }
+                        }
+                    }
+                    root.optJSONArray("trims")?.let { ts ->
+                        for (i in 0 until ts.length()) {
+                            val o = ts.getJSONObject(i)
+                            val uri = mapped.getOrNull(o.optInt("t", -1)) ?: continue
+                            dao.putTrim(app.lumen.player.data.TrimEntity(uri, o.optLong("s"), o.optLong("e")))
                         }
                     }
                     root.optJSONArray("dislikes")?.let { ds ->

@@ -133,4 +133,21 @@ class Prefs(context: Context) {
     var dupIgnored: Set<String>
         get() = sp.getStringSet("dupIgnored", emptySet())?.toSet() ?: emptySet()
         set(v) = sp.edit().putStringSet("dupIgnored", v).apply()
+
+    var autoEqEnabled: Boolean
+        get() = sp.getBoolean("autoEqEnabled", false)
+        set(v) = sp.edit().putBoolean("autoEqEnabled", v).apply()
+
+    /** Профили AutoEq по устройствам вывода (JSON). */
+    var autoEqProfiles: String
+        get() = sp.getString("autoEqProfiles", "").orEmpty()
+        set(v) = sp.edit().putString("autoEqProfiles", v).apply()
+
+    var speed: Float
+        get() = sp.getFloat("speed", 1f)
+        set(v) = sp.edit().putFloat("speed", v).apply()
+
+    var pitch: Float
+        get() = sp.getFloat("pitch", 1f)
+        set(v) = sp.edit().putFloat("pitch", v).apply()
 }

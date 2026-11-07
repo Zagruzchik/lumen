@@ -557,6 +557,50 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                 app.lumen.player.ui.components.TrackMenuSheet(
                     r,
                     onClose = { vm.trackMenu.value = null },
+                    onSound = { vm.soundSheet.value = true },
+                    onTrim = { vm.trimTrack.value = it },
+                    sheetModifier = Modifier.animateEnterExit(
+                        enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 380f)) { it },
+                        exit = slideOutVertically(tween(220)) { it },
+                    ),
+                )
+            }
+        }
+        // Скорость, тон, A–B и обрезка.
+        val soundOpen by vm.soundSheet.collectAsStateWithLifecycle()
+        AnimatedVisibility(soundOpen, enter = fadeIn(tween(220)), exit = fadeOut(tween(200))) {
+            val sp by vm.speed.collectAsStateWithLifecycle()
+            val pi by vm.pitch.collectAsStateWithLifecycle()
+            val abSt by vm.ab.collectAsStateWithLifecycle()
+            app.lumen.player.ui.components.SoundSheet(
+                speed = sp,
+                pitch = pi,
+                ab = abSt.a to abSt.b,
+                position = { vm.position() },
+                onPlayback = { s1, p1 -> vm.setPlayback(s1, p1) },
+                onAb = { vm.setAbPoint(it) },
+                onClearAb = { vm.clearAb() },
+                onClose = { vm.soundSheet.value = false },
+                sheetModifier = Modifier.animateEnterExit(
+                    enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 380f)) { it },
+                    exit = slideOutVertically(tween(220)) { it },
+                ),
+            )
+        }
+        val trimT by vm.trimTrack.collectAsStateWithLifecycle()
+        var lastTrim by remember { mutableStateOf<app.lumen.player.data.TrackEntity?>(null) }
+        if (trimT != null) lastTrim = trimT
+        AnimatedVisibility(trimT != null, enter = fadeIn(tween(220)), exit = fadeOut(tween(200))) {
+            lastTrim?.let { t ->
+                val trimMap by vm.trims.collectAsStateWithLifecycle()
+                val cur by vm.player.collectAsStateWithLifecycle()
+                app.lumen.player.ui.components.TrimSheet(
+                    t,
+                    initial = trimMap[t.uri]?.let { it.startMs to it.endMs },
+                    isCurrent = cur.currentId == t.uri,
+                    position = { vm.position() },
+                    onSave = { a, b -> vm.saveTrim(t, a, b) },
+                    onClose = { vm.trimTrack.value = null },
                     sheetModifier = Modifier.animateEnterExit(
                         enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 380f)) { it },
                         exit = slideOutVertically(tween(220)) { it },

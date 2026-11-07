@@ -184,6 +184,31 @@ class PlayerConnection(private val context: Context) {
     fun setSpeed(s: Float) {
         controller?.setPlaybackSpeed(s)
     }
+
+    fun setPlayback(speed: Float, pitch: Float) {
+        controller?.playbackParameters = androidx.media3.common.PlaybackParameters(speed, pitch)
+    }
+
+    private fun sendAb(args: android.os.Bundle) {
+        controller?.sendCustomCommand(androidx.media3.session.SessionCommand(ACTION_AB, android.os.Bundle.EMPTY), args)
+    }
+
+    /** Ускорение ×2, пока палец на обложке. Тон сохраняется, настройка из шторки не перезаписывается. */
+    fun holdFast(on: Boolean, speed: Float, pitch: Float) {
+        val c = controller ?: return
+        if (on) {
+            sendAb(android.os.Bundle().apply { putBoolean("temp", true) })
+            c.playbackParameters = androidx.media3.common.PlaybackParameters(speed * 2f, pitch)
+        } else {
+            c.playbackParameters = androidx.media3.common.PlaybackParameters(speed, pitch)
+            sendAb(android.os.Bundle().apply { putBoolean("temp", false) })
+        }
+    }
+
+    /** Повтор фрагмента: a/b в мс, a < 0 — выключить. */
+    fun setAb(a: Long, b: Long) {
+        sendAb(android.os.Bundle().apply { putLong("a", a); putLong("b", b) })
+    }
     fun seekBy(ms: Long) {
         val c = controller ?: return
         val d = c.duration.takeIf { it > 0 } ?: Long.MAX_VALUE

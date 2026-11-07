@@ -59,7 +59,7 @@ val LocalShowFormat = compositionLocalOf { true }
 val LocalDisliked = compositionLocalOf<Set<String>> { emptySet() }
 
 /** Запрос на нижнее меню трека: сам трек и действия того экрана, откуда его открыли. */
-data class TrackMenuRequest(val track: TrackEntity, val fav: Boolean, val actions: TrackActions)
+data class TrackMenuRequest(val track: TrackEntity, val fav: Boolean, val actions: TrackActions, val fromPlayer: Boolean = false)
 
 /**
  * Стеклянная шторка снизу: выезжает пружинкой, тянется пальцем вниз и закрывается,
@@ -146,7 +146,13 @@ private fun SheetItem(icon: ImageVector, title: String, tint: Color = LC.Text, o
 
 /** Меню трека снизу: все действия одним списком. */
 @Composable
-fun TrackMenuSheet(req: TrackMenuRequest, onClose: () -> Unit, sheetModifier: Modifier = Modifier) {
+fun TrackMenuSheet(
+    req: TrackMenuRequest,
+    onClose: () -> Unit,
+    sheetModifier: Modifier = Modifier,
+    onSound: (() -> Unit)? = null,
+    onTrim: ((TrackEntity) -> Unit)? = null,
+) {
     val t = req.track
     val a = req.actions
     val accent = LocalAccent.current
@@ -158,6 +164,7 @@ fun TrackMenuSheet(req: TrackMenuRequest, onClose: () -> Unit, sheetModifier: Mo
         SheetHeader(t)
         Spacer(Modifier.height(6.dp))
         Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState())) {
+            if (req.fromPlayer && onSound != null) SheetItem(LIcons.Wave, "Скорость, тон и повтор A–B") { run(onSound) }
             SheetItem(LIcons.PlayNext, "Играть следующим") { run { a.onPlayNext(t) } }
             SheetItem(LIcons.Queue, "В конец очереди") { run { a.onEnqueue(t) } }
             a.onAddToPlaylist?.let { f -> SheetItem(LIcons.Playlist, "В плейлист…") { run { f(t) } } }
@@ -178,6 +185,7 @@ fun TrackMenuSheet(req: TrackMenuRequest, onClose: () -> Unit, sheetModifier: Mo
             SheetItem(LIcons.Disc, "К альбому") { run { a.onOpenAlbum(t) } }
             SheetItem(LIcons.Person, "К исполнителю") { run { a.onOpenArtist(t) } }
             a.onEdit?.let { f -> SheetItem(LIcons.Edit, "Изменить теги и обложку") { run { f(t) } } }
+            onTrim?.let { f -> SheetItem(LIcons.Trim, "Обрезать начало и конец") { run { f(t) } } }
             a.onInfo?.let { f -> SheetItem(LIcons.Info, "Информация о треке") { run { f(t) } } }
             a.onRemoveFromPlaylist?.let { f -> SheetItem(LIcons.Trash, "Убрать из плейлиста", tint = Color(0xFFFF8A8A)) { run { f(t) } } }
         }

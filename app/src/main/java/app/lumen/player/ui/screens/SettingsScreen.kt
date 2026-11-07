@@ -42,6 +42,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -116,6 +117,7 @@ fun SettingsScreen(
     val excluded by vm.excludedFolders.collectAsStateWithLifecycle()
     var foldersOpen by rememberSaveable { mutableStateOf(false) }
     var eqOpen by rememberSaveable { mutableStateOf(false) }
+    var autoEqOpen by rememberSaveable { mutableStateOf(false) }
     var exporting by remember { mutableStateOf(false) }
     var withMusic by rememberSaveable { mutableStateOf(false) }
     val transfer by vm.transfer.collectAsStateWithLifecycle()
@@ -473,6 +475,84 @@ fun SettingsScreen(
                         Spacer(Modifier.height(6.dp))
                         Text("Включи эквалайзер переключателем сверху, чтобы менять настройки.", fontSize = 12.sp, color = LC.Faint)
                     }
+                }
+            }
+        }
+
+        // ---------- AutoEq ----------
+        item {
+            val st by vm.autoEq.collectAsStateWithLifecycle()
+            val results by vm.autoEqResults.collectAsStateWithLifecycle()
+            val busy by vm.autoEqBusy.collectAsStateWithLifecycle()
+            val err by vm.autoEqError.collectAsStateWithLifecycle()
+            var q by rememberSaveable { mutableStateOf("") }
+            LaunchedEffect(autoEqOpen) { if (autoEqOpen) vm.refreshAutoEqDevice() }
+            ExpandableCard(
+                title = "AutoEq — звук под наушники",
+                subtitle = when {
+                    !st.supported -> "Нужен Android 9 или новее"
+                    st.profile == null -> "${st.deviceName}: профиль не выбран"
+                    !st.enabled -> "Выключен · ${st.deviceName}"
+                    else -> "${st.deviceName} · ${st.profile?.name}"
+                },
+                expanded = autoEqOpen,
+                onToggle = { autoEqOpen = !autoEqOpen },
+                trailing = if (st.supported) ({ LSwitch(st.enabled, enabled = st.profile != null) { vm.setAutoEqEnabled(it) } }) else null,
+            ) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Поправка, которая выравнивает звучание конкретной модели наушников по измерениям проекта AutoEq. " +
+                        "Для каждых наушников запоминается свой профиль и включается сам при подключении. Работает и с 24-битным FLAC.",
+                    fontSize = 13.sp,
+                    color = LC.Dim,
+                )
+                if (st.supported) {
+                    Spacer(Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(LIcons.Wave, null, Modifier.size(20.dp), tint = LocalAccent.current)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Сейчас: ${st.deviceName}", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                st.profile?.let { "Профиль: ${it.name} (${it.source.substringBefore(" on ")})" } ?: "Найди свою модель ниже",
+                                fontSize = 12.sp,
+                                color = LC.Dim,
+                            )
+                        }
+                        if (st.profile != null) IconBtn(LIcons.Trash, "Убрать профиль", { vm.clearAutoEq() }, glass = false, size = 40.dp, iconSize = 18.dp, tint = LC.Dim)
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    SearchField(q, { q = it; vm.searchAutoEq(it) })
+                    if (busy) {
+                        Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(color = LocalAccent.current, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(10.dp))
+                            Text("Загружаю…", fontSize = 13.sp, color = LC.Dim)
+                        }
+                    }
+                    err?.let { Text(it, fontSize = 13.sp, color = Color(0xFFFF8A8A), modifier = Modifier.padding(top = 8.dp)) }
+                    if (q.trim().length >= 2 && results.isEmpty() && !busy && err == null) {
+                        Text("Ничего не нашлось. Попробуй короче: «HD 600», «Buds2», «AirPods».", fontSize = 13.sp, color = LC.Faint, modifier = Modifier.padding(top = 8.dp))
+                    }
+                    results.forEach { e ->
+                        val chosen = st.profile?.name == e.name && st.profile?.source == e.source
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable { vm.pickAutoEq(e) }
+                                .padding(vertical = 9.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(e.name, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = if (chosen) LocalAccent.current else LC.Text)
+                                Text("измерения: ${e.source}", fontSize = 12.sp, color = LC.Faint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            if (chosen) Icon(LIcons.Check, null, Modifier.size(18.dp), tint = LocalAccent.current)
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text("Профили: github.com/jaakkopasanen/AutoEq", fontSize = 11.sp, color = LC.Faint)
                 }
             }
         }

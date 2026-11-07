@@ -205,6 +205,43 @@ private fun CoverBackdropLayer(uri: String?, colors: CoverColors) {
 private fun sampleRateLabel(sr: Int): String =
     if (sr % 1000 == 0) "${sr / 1000} кГц" else "%.1f кГц".format(sr / 1000f).replace('.', ',')
 
+/** Подсказка, что звук изменён: скорость, тон, повтор A–B, обрезка. Тап — открыть настройки. */
+@Composable
+private fun SoundIndicator(vm: MainViewModel) {
+    val speed by vm.speed.collectAsStateWithLifecycle()
+    val pitch by vm.pitch.collectAsStateWithLifecycle()
+    val ab by vm.ab.collectAsStateWithLifecycle()
+    val track by vm.currentTrack.collectAsStateWithLifecycle()
+    val trims by vm.trims.collectAsStateWithLifecycle()
+    val parts = buildList {
+        if (kotlin.math.abs(speed - 1f) > 0.01f) add("${app.lumen.player.ui.components.speedLabel(speed)}×")
+        val st = app.lumen.player.ui.components.semitones(pitch)
+        if (st != 0) add("тон ${if (st > 0) "+" else ""}$st")
+        if (ab.active) add("A–B")
+        if (track?.uri?.let { trims[it] } != null) add("обрезан")
+    }
+    androidx.compose.animation.AnimatedVisibility(
+        parts.isNotEmpty(),
+        enter = fadeIn(tween(250)) + androidx.compose.animation.expandVertically(),
+        exit = fadeOut(tween(200)) + androidx.compose.animation.shrinkVertically(),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) {
+            Text(
+                parts.joinToString(" · "),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = LocalAccent.current,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(LocalAccent.current.copy(alpha = 0.12f))
+                    .clickable { vm.soundSheet.value = true }
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+            )
+        }
+    }
+}
+
 @Composable
 private fun QualityBadges(q: AudioQuality?, fallbackSampleRate: Int) {
     if (q == null || !app.lumen.player.ui.components.LocalShowFormat.current) return
@@ -456,7 +493,9 @@ private fun PlayerTopBar(
         Box {
             IconBtn(LIcons.MoreH, "Меню трека", {
                 val t = track
-                if (t != null && actions.onMenu != null) actions.onMenu.invoke(t, t.uri in favs, actions) else menu = true
+                if (t != null && actions.onMenu != null) {
+                    vm.trackMenu.value = app.lumen.player.ui.components.TrackMenuRequest(t, t.uri in favs, actions, fromPlayer = true)
+                } else menu = true
             })
             track?.let { TrackMenu(menu, { menu = false }, it, it.uri in favs, actions) }
         }
@@ -526,7 +565,7 @@ private fun CoverArea(
                             haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                         },
                         onLongPress = {
-                            vm.setSpeed(2f)
+                            vm.holdFast(true)
                             hint = "2×"
                             hintSide = 0
                             haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
@@ -534,7 +573,7 @@ private fun CoverArea(
                         onPress = {
                             tryAwaitRelease()
                             if (hint == "2×") {
-                                vm.setSpeed(1f)
+                                vm.holdFast(false)
                                 hint = null
                             }
                         },
@@ -946,6 +985,7 @@ private fun FullControls(
                 label = "quality",
             ) { q -> QualityBadges(q, p.sampleRate) }
         }
+        SoundIndicator(vm)
         Spacer(Modifier.height(16.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             AnimatedContent(

@@ -141,6 +141,10 @@ data class SmartPlaylistEntity(
     val updatedAt: Long,
 )
 
+/** Обрезка трека: начинать с startMs, заканчивать на endMs (0 — до конца). */
+@Entity(tableName = "trims")
+data class TrimEntity(@PrimaryKey val uri: String, val startMs: Long, val endMs: Long)
+
 @Entity(tableName = "excluded")
 data class ExcludedFolder(@PrimaryKey val folder: String)
 
@@ -567,6 +571,20 @@ abstract class LibraryDao {
     @Query("DELETE FROM smart_playlists WHERE id = :id")
     abstract suspend fun deleteSmartPlaylist(id: Long)
 
+    // ---------- обрезка ----------
+
+    @Query("SELECT * FROM trims")
+    abstract fun trims(): Flow<List<TrimEntity>>
+
+    @Query("SELECT * FROM trims")
+    abstract suspend fun allTrims(): List<TrimEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun putTrim(t: TrimEntity)
+
+    @Query("DELETE FROM trims WHERE uri = :uri")
+    abstract suspend fun deleteTrim(uri: String)
+
     // ---------- дубликаты: перенос истории на оставшийся файл ----------
 
     @Query("UPDATE listens SET uri = :to WHERE uri = :from")
@@ -618,9 +636,9 @@ abstract class LibraryDao {
         ExcludedFolder::class, ListenEntity::class,
         PlaylistEntity::class, PlaylistTrackEntity::class, TrackOverride::class,
         PositionEntity::class, LoudnessEntity::class,
-        DislikeEntity::class, SmartPlaylistEntity::class,
+        DislikeEntity::class, SmartPlaylistEntity::class, TrimEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 abstract class LumenDb : RoomDatabase() {
@@ -679,6 +697,13 @@ val MIGRATION_4_5 = object : Migration(4, 5) {
             "CREATE TABLE IF NOT EXISTS `smart_playlists` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
                 "`name` TEXT NOT NULL, `rules` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL)"
         )
+    }
+}
+
+/** 5 → 6: обрезка начала и конца треков. */
+val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS `trims` (`uri` TEXT NOT NULL, `startMs` INTEGER NOT NULL, `endMs` INTEGER NOT NULL, PRIMARY KEY(`uri`))")
     }
 }
 

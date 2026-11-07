@@ -34,7 +34,14 @@ class Crossfader(
     private val main: ExoPlayer,
     private val prefs: Prefs,
     private val mix: VolumeMix,
+    /** Где у трека «конец» с учётом обрезки (или -1). */
+    private val endOf: (String) -> Long = { -1L },
+    /** Кроссфейд не нужен (например, крутится повтор A–B). */
+    private val blocked: () -> Boolean = { false },
+    private val autoEq: AutoEqEngine? = null,
 ) {
+    private var endPos = 0L
+    private var tailEq: Any? = null
     private enum class Stage { IDLE, ARMED, SYNC, HANDOFF, FADING }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -121,9 +128,10 @@ class Crossfader(
                 // пока расхождение не станет меньше ~10 мс. Тогда подмена будет неслышной.
                 val t = tail ?: return abort()
                 if (main.currentMediaItem?.mediaId != armedFor) return abort()
+                val base = main.playbackParameters.speed
                 if (now - stageStart > 200 && t.isPlaying && now - lastSpeedAt > 250) {
                     val drift = main.currentPosition - t.currentPosition
-                    val speed = if (kotlin.math.abs(drift) <= 8) 1f else (1f + drift / 900f).coerceIn(0.85f, 1.25f)
+                    val speed = base * (if (kotlin.math.abs(drift) <= 8) 1f else (1f + drift / 900f).coerceIn(0.85f, 1.25f))
                     if (kotlin.math.abs(t.playbackParameters.speed - speed) > 0.004f) {
                         t.setPlaybackSpeed(speed)
                         lastSpeedAt = now
@@ -131,7 +139,7 @@ class Crossfader(
                     lastDrift = drift
                 }
                 if (main.currentPosition >= fadeStartPos) {
-                    t.setPlaybackSpeed(1f)
+                    t.playbackParameters = main.playbackParameters
                     stage = Stage.HANDOFF
                     stageStart = now
                 }
@@ -143,7 +151,7 @@ class Crossfader(
                 t.volume = sin(p * PI.toFloat() / 2f)
                 mix.cross = sin((1f - p) * PI.toFloat() / 2f)
                 if (p >= 1f) {
-                    val left = (main.duration - main.currentPosition).coerceAtLeast(500L)
+                    val left = ((endPos - main.currentPosition) / main.playbackParameters.speed.coerceAtLeast(0.1f)).toLong().coerceAtLeast(500L)
                     switching = true
                     mix.cross = 0f
                     main.seekToNextMediaItem()
@@ -167,9 +175,13 @@ class Crossfader(
         val ms = prefs.crossfadeMs
         if (ms <= 0) return
         if (!main.isPlaying || !main.hasNextMediaItem() || main.repeatMode == Player.REPEAT_MODE_ONE) return
-        val dur = main.duration
-        if (dur == C.TIME_UNSET || dur < ms * 2L + 5_000) return
+        if (blocked()) return
         val item = main.currentMediaItem ?: return
+        val full = main.duration
+        if (full == C.TIME_UNSET) return
+        val cut = endOf(item.mediaId)
+        val dur = if (cut in 1 until full) cut else full
+        if (dur < ms * 2L + 5_000) return
         val left = dur - main.currentPosition
         if (left > ms + PREPARE_AHEAD_MS) {
             armedFor = null
@@ -178,6 +190,7 @@ class Crossfader(
         if (armedFor == item.mediaId || left < ms * 0.6) return
         armedFor = item.mediaId
         fadeStartPos = dur - ms
+        endPos = dur
         syncStartPos = maxOf(0L, fadeStartPos - SYNC_LEAD_MS)
         // Готовим хвост заранее и ставим у места, откуда начнём синхронизацию.
         val t = ExoPlayer.Builder(context, DefaultRenderersFactory(context))
@@ -188,6 +201,8 @@ class Crossfader(
             .build()
         tail = t
         tailReady = false
+        t.playbackParameters = main.playbackParameters
+        tailEq = autoEq?.attachExtra(t.audioSessionId)
         t.volume = 0f
         t.playWhenReady = false
         t.setMediaItem(item, syncStartPos)
@@ -206,6 +221,8 @@ class Crossfader(
         val t = tail
         tail = null
         tailReady = false
+        autoEq?.releaseExtra(tailEq)
+        tailEq = null
         stage = Stage.IDLE
         mix.cross = 1f
         t?.let { p -> handler.post { runCatching { p.release() } } }
