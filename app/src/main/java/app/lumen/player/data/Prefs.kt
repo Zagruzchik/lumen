@@ -150,4 +150,8 @@ class Prefs(context: Context) {
     var pitch: Float
         get() = sp.getFloat("pitch", 1f)
         set(v) = sp.edit().putFloat("pitch", v).apply()
+
+    var karaoke: Boolean
+        get() = sp.getBoolean("karaoke", true)
+        set(v) = sp.edit().putBoolean("karaoke", v).apply()
 }

@@ -55,6 +55,9 @@ import kotlinx.coroutines.launch
 /** Показывать ли бейджи формата (FLAC/MP3) по всему приложению. */
 val LocalShowFormat = compositionLocalOf { true }
 
+/** Подсвечивать ли пропетую часть строки (караоке). */
+val LocalKaraoke = compositionLocalOf { true }
+
 /** Треки с отметкой «Не нравится» (приглушены в списках). */
 val LocalDisliked = compositionLocalOf<Set<String>> { emptySet() }
 

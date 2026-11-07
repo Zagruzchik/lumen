@@ -163,10 +163,12 @@ fun LumenRoot(vm: MainViewModel) {
     }
     val showFormat by vm.showFormat.collectAsStateWithLifecycle()
     val disliked by vm.dislikedUris.collectAsStateWithLifecycle()
+    val karaokeOn by vm.karaoke.collectAsStateWithLifecycle()
     LumenTheme(accent) {
         androidx.compose.runtime.CompositionLocalProvider(
             app.lumen.player.ui.components.LocalShowFormat provides showFormat,
             app.lumen.player.ui.components.LocalDisliked provides disliked,
+            app.lumen.player.ui.components.LocalKaraoke provides karaokeOn,
         ) {
             PermissionGate(vm) { MainScaffold(vm, colors) }
         }
@@ -559,6 +561,23 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                     onClose = { vm.trackMenu.value = null },
                     onSound = { vm.soundSheet.value = true },
                     onTrim = { vm.trimTrack.value = it },
+                    sheetModifier = Modifier.animateEnterExit(
+                        enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 380f)) { it },
+                        exit = slideOutVertically(tween(220)) { it },
+                    ),
+                )
+            }
+        }
+        // Карточка-цитата из текста песни.
+        val qReq by vm.quoteReq.collectAsStateWithLifecycle()
+        var lastQ by remember { mutableStateOf<app.lumen.player.ui.components.QuoteRequest?>(null) }
+        if (qReq != null) lastQ = qReq
+        AnimatedVisibility(qReq != null, enter = fadeIn(tween(220)), exit = fadeOut(tween(200))) {
+            lastQ?.let { r ->
+                app.lumen.player.ui.components.QuoteSheet(
+                    r,
+                    onClose = { vm.quoteReq.value = null },
+                    onToast = { vm.toast(it) },
                     sheetModifier = Modifier.animateEnterExit(
                         enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 380f)) { it },
                         exit = slideOutVertically(tween(220)) { it },

@@ -24,6 +24,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -425,6 +426,7 @@ fun PlayerScreen(
                         big = true,
                         contentPadding = PaddingValues(start = 6.dp, end = 6.dp, top = 40.dp, bottom = 160.dp),
                         modifier = Modifier.fillMaxSize().fadeEdges(40.dp, 90.dp),
+                        onQuote = { vm.quote(it) },
                     ) }
                 }
             }
@@ -831,6 +833,7 @@ private fun InlineLyrics(lines: List<LyricLine>, synced: Boolean, position: Long
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun LyricsList(
     lines: List<LyricLine>,
@@ -840,7 +843,17 @@ internal fun LyricsList(
     big: Boolean,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
+    onQuote: ((List<String>) -> Unit)? = null,
 ) {
+    val karaoke = app.lumen.player.ui.components.LocalKaraoke.current
+    // Выбор строк для карточки-цитаты: долгий тап по строке.
+    var picked by remember(lines) { mutableStateOf(sortedSetOf<Int>()) }
+    val picking = picked.isNotEmpty()
+    fun togglePick(i: Int) {
+        val n = sortedSetOf<Int>().apply { addAll(picked) }
+        if (!n.remove(i)) { if (n.size < 6) n.add(i) }
+        picked = n
+    }
     val current = if (synced) lines.indexOfLast { it.timeMs <= position + 250 } else -1
     val listState = rememberLazyListState()
     LaunchedEffect(current) {
@@ -856,7 +869,8 @@ internal fun LyricsList(
             listState.animateScrollToItem((current - if (big) 2 else 1).coerceAtLeast(0))
         }
     }
-    LazyColumn(state = listState, modifier = modifier, contentPadding = contentPadding) {
+    Box(modifier) {
+    LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = contentPadding) {
         itemsIndexed(lines) { i, l ->
             val isCur = i == current
             val color by animateColorAsState(
@@ -891,32 +905,140 @@ internal fun LyricsList(
                     )
                 }
             }
-            Text(
-                l.text.ifBlank { "♪" },
-                fontSize = when {
-                    !synced -> if (big) 20.sp else 17.sp
-                    big -> 28.sp
-                    else -> 23.sp
+            val isPicked = i in picked
+            val pickA by animateFloatAsState(if (isPicked) 1f else 0f, tween(220), label = "pick")
+            val accentNow = LocalAccent.current
+            val lineText = l.text.ifBlank { "♪" }
+            val fs = when {
+                !synced -> if (big) 20.sp else 17.sp
+                big -> 28.sp
+                else -> 23.sp
+            }
+            val textMod = Modifier
+                .fillMaxWidth()
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    transformOrigin = TransformOrigin(0f, 0.5f)
+                }
+                .then(
+                    if (onQuote != null || (onSeek != null && synced && l.timeMs >= 0)) {
+                        Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(accentNow.copy(alpha = 0.22f * pickA))
+                            .combinedClickable(
+                                onClick = {
+                                    when {
+                                        picking -> togglePick(i)
+                                        onSeek != null && synced && l.timeMs >= 0 -> onSeek(l.timeMs)
+                                    }
+                                },
+                                onLongClick = if (onQuote != null && l.text.isNotBlank()) ({ togglePick(i) }) else null,
+                            )
+                    } else Modifier
+                )
+                .padding(vertical = if (big) 10.dp else 8.dp, horizontal = if (onQuote != null) 6.dp else 0.dp)
+            if (isCur && synced && karaoke && l.text.isNotBlank()) {
+                val next = lines.getOrNull(i + 1)?.timeMs ?: (l.timeMs + 6_000)
+                val smooth by rememberSmoothPosition(position)
+                Text(
+                    karaokeText(lineText, l, next, smooth),
+                    fontSize = fs,
+                    lineHeight = if (big) 36.sp else 30.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    modifier = textMod,
+                )
+            } else {
+                Text(
+                    lineText,
+                    fontSize = fs,
+                    lineHeight = if (big) 36.sp else 30.sp,
+                    fontWeight = if (synced) FontWeight.ExtraBold else FontWeight.SemiBold,
+                    color = color,
+                    modifier = textMod,
+                )
+            }
+        }
+    }
+    // Панель цитаты: появляется, когда выбрана хотя бы одна строка.
+    androidx.compose.animation.AnimatedVisibility(
+        picking && onQuote != null,
+        enter = fadeIn(tween(200)) + androidx.compose.animation.slideInVertically(spring(dampingRatio = 0.85f)) { it },
+        exit = fadeOut(tween(180)) + androidx.compose.animation.slideOutVertically(tween(200)) { it },
+        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 96.dp),
+    ) {
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(26.dp))
+                .background(app.lumen.player.ui.theme.LT.sheetBottom)
+                .border(1.dp, LC.Border, RoundedCornerShape(26.dp))
+                .padding(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconBtn(LIcons.Close, "Отменить выбор", { picked = sortedSetOf() }, glass = false, size = 40.dp, iconSize = 18.dp, tint = LC.Dim)
+            Spacer(Modifier.width(4.dp))
+            app.lumen.player.ui.components.PillButton(
+                "Цитата · ${picked.size}",
+                LIcons.Share,
+                {
+                    onQuote?.invoke(picked.mapNotNull { lines.getOrNull(it)?.text?.takeIf { t -> t.isNotBlank() } })
+                    picked = sortedSetOf()
                 },
-                lineHeight = if (big) 36.sp else 30.sp,
-                fontWeight = if (synced) FontWeight.ExtraBold else FontWeight.SemiBold,
-                color = color,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
-                        transformOrigin = TransformOrigin(0f, 0.5f)
-                    }
-                    .then(
-                        if (onSeek != null && synced && l.timeMs >= 0) {
-                            Modifier
-                                .clip(RoundedCornerShape(10.dp))
-                                .clickable { onSeek(l.timeMs) }
-                        } else Modifier
-                    )
-                    .padding(vertical = if (big) 10.dp else 8.dp),
             )
+        }
+    }
+    }
+}
+
+/** Позиция, плавно идущая между редкими обновлениями плеера (для гладкой караоке-заливки). */
+@Composable
+private fun rememberSmoothPosition(position: Long): androidx.compose.runtime.State<Long> {
+    val out = remember { androidx.compose.runtime.mutableLongStateOf(position) }
+    LaunchedEffect(position) {
+        val t0 = androidx.compose.runtime.withFrameMillis { it }
+        out.longValue = position
+        while (true) {
+            androidx.compose.runtime.withFrameMillis { now ->
+                // Не убегаем вперёд больше чем на 160 мс: на паузе заливка не уезжает.
+                out.longValue = position + (now - t0).coerceAtMost(160L)
+            }
+        }
+    }
+    return out
+}
+
+/**
+ * Караоке: пропетая часть строки ярко-белая, текущая буква плавно загорается, остальное приглушено.
+ * Если у строки есть время каждого слова (расширенный LRC) — идём по словам, иначе равномерно по буквам.
+ */
+private fun karaokeText(text: String, l: LyricLine, nextStart: Long, pos: Long): androidx.compose.ui.text.AnnotatedString {
+    val len = text.length
+    val sung: Float = run {
+        val words = l.words
+        if (words != null && words.isNotEmpty()) {
+            val wi = words.indexOfLast { it.timeMs <= pos }
+            if (wi < 0) return@run 0f
+            val w = words[wi]
+            val wEnd = words.getOrNull(wi + 1)?.start ?: len
+            val wNext = words.getOrNull(wi + 1)?.timeMs ?: minOf(nextStart, w.timeMs + 1200)
+            val f = ((pos - w.timeMs).toFloat() / (wNext - w.timeMs).coerceAtLeast(1)).coerceIn(0f, 1f)
+            w.start + (wEnd - w.start) * f
+        } else {
+            val span = (nextStart - l.timeMs).coerceAtLeast(400)
+            val dur = minOf(span * 0.92f, len * 85f + 400f)
+            ((pos - l.timeMs) / dur).coerceIn(0f, 1f) * len
+        }
+    }
+    val full = Color.White
+    val dim = Color(0x8CF5F4FA)
+    val whole = sung.toInt().coerceIn(0, len)
+    return androidx.compose.ui.text.buildAnnotatedString {
+        append(text)
+        if (whole > 0) addStyle(androidx.compose.ui.text.SpanStyle(color = full), 0, whole)
+        if (whole < len) {
+            val f = (sung - whole).coerceIn(0f, 1f)
+            addStyle(androidx.compose.ui.text.SpanStyle(color = androidx.compose.ui.graphics.lerp(dim, full, f)), whole, whole + 1)
+            if (whole + 1 < len) addStyle(androidx.compose.ui.text.SpanStyle(color = dim), whole + 1, len)
         }
     }
 }

@@ -1220,6 +1220,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     val trimTrack = MutableStateFlow<TrackEntity?>(null)
+
+    // ---------- цитаты и караоке ----------
+
+    val quoteReq = MutableStateFlow<app.lumen.player.ui.components.QuoteRequest?>(null)
+    fun quote(lines: List<String>) {
+        val t = currentTrack.value ?: return
+        if (lines.isNotEmpty()) quoteReq.value = app.lumen.player.ui.components.QuoteRequest(t, lines)
+    }
+
+    val karaoke = MutableStateFlow(g.prefs.karaoke)
+    fun setKaraoke(v: Boolean) { g.prefs.karaoke = v; karaoke.value = v }
     val trims = dao.trims().map { l -> l.associateBy { it.uri } }.state(emptyMap())
 
     fun saveTrim(t: TrackEntity, startMs: Long, endMs: Long) {

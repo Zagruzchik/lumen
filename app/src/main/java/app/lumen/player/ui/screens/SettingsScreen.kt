@@ -672,6 +672,12 @@ fun SettingsScreen(
                     "Текст ищется сразу при запуске трека: сначала .lrc рядом с файлом, потом LRCLIB. Найденное сохраняется файлом и доступно офлайн",
                     online,
                 ) { vm.setOnlineLyrics(it) }
+                val karaokeOn by vm.karaoke.collectAsStateWithLifecycle()
+                ToggleRow(
+                    "Караоке-подсветка",
+                    "Текущая строка заливается по мере пения. Долгий тап по строке — карточка-цитата",
+                    karaokeOn,
+                ) { vm.setKaraoke(it) }
                 Spacer(Modifier.height(8.dp))
                 val b = bulk
                 when {

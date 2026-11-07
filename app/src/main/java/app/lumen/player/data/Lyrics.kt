@@ -15,7 +15,10 @@ import java.net.URL
 import java.net.URLEncoder
 import kotlin.math.abs
 
-data class LyricLine(val timeMs: Long, val text: String)
+/** Слово внутри строки с собственной меткой времени (расширенный LRC): start — индекс первого символа. */
+data class LyricWord(val timeMs: Long, val start: Int)
+
+data class LyricLine(val timeMs: Long, val text: String, val words: List<LyricWord>? = null)
 
 sealed interface LyricsResult {
     data object Idle : LyricsResult
@@ -29,13 +32,37 @@ sealed interface LyricsResult {
 
 object LrcParser {
     private val tag = Regex("""\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?]""")
+    private val wordTag = Regex("""<(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?>""")
+
+    private fun stamp(m: MatchResult): Long {
+        val f = m.groupValues[3]
+        val frac = when (f.length) { 0 -> 0L; 1 -> f.toLong() * 100; 2 -> f.toLong() * 10; else -> f.take(3).toLong() }
+        return m.groupValues[1].toLong() * 60_000 + m.groupValues[2].toLong() * 1000 + frac
+    }
 
     fun parse(text: String): List<LyricLine> {
         val out = ArrayList<LyricLine>()
         text.lineSequence().forEach { raw ->
             val matches = tag.findAll(raw).toList()
             if (matches.isEmpty()) return@forEach
-            val body = raw.substring(matches.last().range.last + 1).trim()
+            val rawBody = raw.substring(matches.last().range.last + 1).trim()
+            // Расширенный LRC: <mm:ss.xx> перед словами — время каждого слова для караоке.
+            var body = rawBody
+            var words: List<LyricWord>? = null
+            if (wordTag.containsMatchIn(rawBody)) {
+                val sb = StringBuilder()
+                val ws = ArrayList<LyricWord>()
+                var last = 0
+                wordTag.findAll(rawBody).forEach { m ->
+                    sb.append(rawBody, last, m.range.first)
+                    ws += LyricWord(stamp(m), sb.length)
+                    last = m.range.last + 1
+                }
+                sb.append(rawBody.substring(last))
+                val lead = sb.length - sb.trimStart().length
+                body = sb.toString().trim()
+                words = ws.map { it.copy(start = (it.start - lead).coerceAtLeast(0)) }.filter { it.start < body.length }.ifEmpty { null }
+            }
             for (m in matches) {
                 val min = m.groupValues[1].toLong()
                 val sec = m.groupValues[2].toLong()
@@ -46,7 +73,7 @@ object LrcParser {
                     2 -> fracStr.toLong() * 10
                     else -> fracStr.take(3).toLong()
                 }
-                out += LyricLine(min * 60_000 + sec * 1000 + frac, body)
+                out += LyricLine(min * 60_000 + sec * 1000 + frac, body, words)
             }
         }
         out.sortBy { it.timeMs }
