@@ -172,6 +172,23 @@ class PlayerConnection(private val context: Context) {
     fun pause() = controller?.pause()
     fun next() = controller?.seekToNext()
     fun previous() = controller?.seekToPrevious()
+    /** Пауза ровно в конце текущего трека (без затухания посреди песни). */
+    fun sleepAtEnd(on: Boolean) {
+        val c = controller ?: return
+        c.sendCustomCommand(
+            androidx.media3.session.SessionCommand(ACTION_SLEEP_END, android.os.Bundle.EMPTY),
+            android.os.Bundle().apply { putBoolean("on", on) },
+        )
+    }
+
+    fun setSpeed(s: Float) {
+        controller?.setPlaybackSpeed(s)
+    }
+    fun seekBy(ms: Long) {
+        val c = controller ?: return
+        val d = c.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
+        c.seekTo((c.currentPosition + ms).coerceIn(0L, d - 500))
+    }
     fun nextItem() = controller?.seekToNextMediaItem()
     fun previousItem() = controller?.seekToPreviousMediaItem()
 
@@ -229,8 +246,21 @@ class SleepTimer(private val scope: CoroutineScope, private val player: PlayerCo
 
     fun set(minutes: Int?) = setMillis(minutes?.let { it * 60_000L })
 
+    /** «До конца трека»: дослушиваем песню целиком и ставим на паузу. */
+    fun endOfTrack(leftMs: Long) {
+        job?.cancel()
+        val end = System.currentTimeMillis() + leftMs
+        _endsAt.value = end
+        player.sleepAtEnd(true)
+        job = scope.launch {
+            delay(leftMs + 3_000)
+            _endsAt.value = null
+        }
+    }
+
     fun setMillis(ms: Long?) {
         job?.cancel()
+        player.sleepAtEnd(false)
         if (ms == null || ms <= 0) {
             _endsAt.value = null
             return

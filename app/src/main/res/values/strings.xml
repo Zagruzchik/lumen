@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="sc_continue">Продолжить</string>
+    <string name="sc_loved">Самое любимое</string>
+    <string name="sc_shuffle">Перемешать всё</string>
+    <string name="tile_label">Lumen</string>
+</resources>

@@ -83,6 +83,50 @@ data class TopTrack(val uri: String, val title: String, val artist: String, val 
 data class TopName(val name: String, val totalMs: Long, val plays: Int)
 data class ListenTime(val startedAt: Long, val listenedMs: Long)
 
+// ---------- плейлисты ----------
+
+@Entity(tableName = "playlists")
+data class PlaylistEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val createdAt: Long,
+    val updatedAt: Long,
+)
+
+@Entity(
+    tableName = "playlist_tracks",
+    primaryKeys = ["playlistId", "uri"],
+    indices = [Index("playlistId")],
+)
+data class PlaylistTrackEntity(val playlistId: Long, val uri: String, val position: Int)
+
+data class PlaylistRow(
+    val id: Long,
+    val name: String,
+    val updatedAt: Long,
+    val trackCount: Int,
+    val durationMs: Long,
+)
+
+/** Свои правки тегов (файлы не трогаем — правки живут в Lumen и в бэкапе). */
+@Entity(tableName = "track_overrides")
+data class TrackOverride(
+    @PrimaryKey val uri: String,
+    val title: String?,
+    val artist: String?,
+    val album: String?,
+    val albumArtist: String?,
+    val year: Int?,
+)
+
+/** Позиция, на которой остановились в длинном треке (подкасты, миксы, аудиокниги). */
+@Entity(tableName = "positions")
+data class PositionEntity(@PrimaryKey val uri: String, val posMs: Long, val updatedAt: Long)
+
+/** Поправка громкости трека в дБ для выравнивания. */
+@Entity(tableName = "loudness")
+data class LoudnessEntity(@PrimaryKey val uri: String, val gainDb: Float)
+
 @Entity(tableName = "excluded")
 data class ExcludedFolder(@PrimaryKey val folder: String)
 
@@ -171,6 +215,9 @@ abstract class LibraryDao {
     @Query("SELECT * FROM tracks WHERE albumKey = :key AND $VISIBLE ORDER BY discNo, trackNo, title COLLATE NOCASE")
     abstract fun albumTracks(key: String): Flow<List<TrackEntity>>
 
+    @Query("SELECT * FROM tracks WHERE albumKey = :key")
+    abstract suspend fun albumTracksOnce(key: String): List<TrackEntity>
+
     @Query("SELECT * FROM tracks WHERE albumArtist = :name AND $VISIBLE ORDER BY year DESC, albumKey, discNo, trackNo")
     abstract fun artistTracks(name: String): Flow<List<TrackEntity>>
 
@@ -210,8 +257,153 @@ abstract class LibraryDao {
     @Transaction
     open suspend fun replaceSource(source: Int, list: List<TrackEntity>) {
         deleteSource(source)
-        list.chunked(400).forEach { insertTracks(it) }
+        val ov = allOverrides().associateBy { it.uri }
+        val fixed = if (ov.isEmpty()) list else list.map { t -> ov[t.uri]?.let { applyOverride(t, it) } ?: t }
+        fixed.chunked(400).forEach { insertTracks(it) }
     }
+
+    // ---------- свои теги ----------
+
+    @Query("SELECT * FROM track_overrides")
+    abstract suspend fun allOverrides(): List<TrackOverride>
+
+    @Query("SELECT * FROM track_overrides WHERE uri = :uri")
+    abstract suspend fun override(uri: String): TrackOverride?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun putOverride(o: TrackOverride)
+
+    // ---------- плейлисты ----------
+
+    @Query(
+        """SELECT p.id AS id, p.name AS name, p.updatedAt AS updatedAt,
+           COUNT(t.uri) AS trackCount, COALESCE(SUM(t.durationMs), 0) AS durationMs
+           FROM playlists p
+           LEFT JOIN playlist_tracks pt ON pt.playlistId = p.id
+           LEFT JOIN tracks t ON t.uri = pt.uri
+           GROUP BY p.id ORDER BY p.updatedAt DESC"""
+    )
+    abstract fun playlists(): Flow<List<PlaylistRow>>
+
+    @Query("SELECT * FROM playlists WHERE id = :id")
+    abstract fun playlist(id: Long): Flow<PlaylistEntity?>
+
+    @Query(
+        """SELECT t.* FROM playlist_tracks pt INNER JOIN tracks t ON t.uri = pt.uri
+           WHERE pt.playlistId = :id ORDER BY pt.position"""
+    )
+    abstract fun playlistTracks(id: Long): Flow<List<TrackEntity>>
+
+    @Query("SELECT uri FROM playlist_tracks WHERE playlistId = :id ORDER BY position LIMIT 4")
+    abstract fun playlistCovers(id: Long): Flow<List<String>>
+
+    @Query("SELECT playlistId FROM playlist_tracks WHERE uri = :uri")
+    abstract suspend fun playlistsWith(uri: String): List<Long>
+
+    @Insert
+    abstract suspend fun insertPlaylist(p: PlaylistEntity): Long
+
+    @Query("UPDATE playlists SET name = :name, updatedAt = :now WHERE id = :id")
+    abstract suspend fun renamePlaylist(id: Long, name: String, now: Long)
+
+    @Query("UPDATE playlists SET updatedAt = :now WHERE id = :id")
+    abstract suspend fun touchPlaylist(id: Long, now: Long)
+
+    @Query("DELETE FROM playlists WHERE id = :id")
+    abstract suspend fun deletePlaylistRow(id: Long)
+
+    @Query("DELETE FROM playlist_tracks WHERE playlistId = :id")
+    abstract suspend fun clearPlaylist(id: Long)
+
+    @Query("SELECT COALESCE(MAX(position), -1) FROM playlist_tracks WHERE playlistId = :id")
+    abstract suspend fun maxPosition(id: Long): Int
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    abstract suspend fun insertPlaylistTracks(list: List<PlaylistTrackEntity>)
+
+    @Query("DELETE FROM playlist_tracks WHERE playlistId = :id AND uri = :uri")
+    abstract suspend fun removeFromPlaylist(id: Long, uri: String)
+
+    @Query("SELECT * FROM playlists")
+    abstract suspend fun allPlaylists(): List<PlaylistEntity>
+
+    @Query("SELECT * FROM playlist_tracks ORDER BY playlistId, position")
+    abstract suspend fun allPlaylistTracks(): List<PlaylistTrackEntity>
+
+    @Transaction
+    open suspend fun deletePlaylist(id: Long) {
+        clearPlaylist(id)
+        deletePlaylistRow(id)
+    }
+
+    @Transaction
+    open suspend fun addToPlaylist(id: Long, uris: List<String>) {
+        var pos = maxPosition(id) + 1
+        insertPlaylistTracks(uris.map { PlaylistTrackEntity(id, it, pos++) })
+        touchPlaylist(id, System.currentTimeMillis())
+    }
+
+    /** Новый порядок целиком (после перетаскивания). */
+    @Transaction
+    open suspend fun reorderPlaylist(id: Long, uris: List<String>) {
+        clearPlaylist(id)
+        insertPlaylistTracks(uris.mapIndexed { i, u -> PlaylistTrackEntity(id, u, i) })
+        touchPlaylist(id, System.currentTimeMillis())
+    }
+
+    // ---------- позиции и громкость ----------
+
+    @Query("SELECT * FROM positions WHERE uri = :uri")
+    abstract suspend fun position(uri: String): PositionEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun putPosition(p: PositionEntity)
+
+    @Query("DELETE FROM positions WHERE uri = :uri")
+    abstract suspend fun clearPosition(uri: String)
+
+    @Query("SELECT * FROM loudness WHERE uri = :uri")
+    abstract suspend fun loudness(uri: String): LoudnessEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun putLoudness(l: LoudnessEntity)
+
+    // ---------- для «Похожего» и итогов месяца ----------
+
+    @Query(
+        """SELECT l.uri AS uri, t.title AS title, t.artist AS artist,
+           SUM(l.listenedMs) AS totalMs, COUNT(*) AS plays
+           FROM listens l INNER JOIN tracks t ON t.uri = l.uri
+           WHERE l.startedAt >= :from AND l.startedAt < :to
+           GROUP BY l.uri ORDER BY totalMs DESC LIMIT :n"""
+    )
+    abstract suspend fun topTracksIn(from: Long, to: Long, n: Int): List<TopTrack>
+
+    @Query(
+        """SELECT t.artist AS name, SUM(l.listenedMs) AS totalMs, COUNT(*) AS plays
+           FROM listens l INNER JOIN tracks t ON t.uri = l.uri
+           WHERE l.startedAt >= :from AND l.startedAt < :to
+           GROUP BY t.artist ORDER BY totalMs DESC LIMIT :n"""
+    )
+    abstract suspend fun topArtistsIn(from: Long, to: Long, n: Int): List<TopName>
+
+    @Query(
+        """SELECT t.album AS name, SUM(l.listenedMs) AS totalMs, COUNT(*) AS plays
+           FROM listens l INNER JOIN tracks t ON t.uri = l.uri
+           WHERE l.startedAt >= :from AND l.startedAt < :to AND t.album != ''
+           GROUP BY t.albumKey ORDER BY totalMs DESC LIMIT :n"""
+    )
+    abstract suspend fun topAlbumsIn(from: Long, to: Long, n: Int): List<TopName>
+
+    @Query("SELECT startedAt, listenedMs FROM listens WHERE startedAt >= :from AND startedAt < :to")
+    abstract suspend fun listenTimesIn(from: Long, to: Long): List<ListenTime>
+
+    /** Сколько треков впервые прозвучало в этом периоде. */
+    @Query(
+        """SELECT COUNT(*) FROM (SELECT uri, MIN(startedAt) AS first FROM listens GROUP BY uri)
+           WHERE first >= :from AND first < :to"""
+    )
+    abstract suspend fun newTracksIn(from: Long, to: Long): Int
 
     /** Все папки, где нашлись звуки, включая исключённые. */
     @Query(
@@ -328,8 +520,10 @@ abstract class LibraryDao {
     entities = [
         TrackEntity::class, FavoriteEntity::class, PlayStatEntity::class, LyricsEntity::class,
         ExcludedFolder::class, ListenEntity::class,
+        PlaylistEntity::class, PlaylistTrackEntity::class, TrackOverride::class,
+        PositionEntity::class, LoudnessEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 abstract class LumenDb : RoomDatabase() {
@@ -354,4 +548,42 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("CREATE TABLE IF NOT EXISTS `excluded` (`folder` TEXT NOT NULL, PRIMARY KEY(`folder`))")
     }
+}
+
+/** 3 → 4: плейлисты, свои теги, позиции длинных треков, громкость. */
+val MIGRATION_3_4 = object : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `playlists` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "`name` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL)"
+        )
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `playlist_tracks` (`playlistId` INTEGER NOT NULL, `uri` TEXT NOT NULL, " +
+                "`position` INTEGER NOT NULL, PRIMARY KEY(`playlistId`, `uri`))"
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_playlist_tracks_playlistId` ON `playlist_tracks` (`playlistId`)")
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `track_overrides` (`uri` TEXT NOT NULL, `title` TEXT, `artist` TEXT, " +
+                "`album` TEXT, `albumArtist` TEXT, `year` INTEGER, PRIMARY KEY(`uri`))"
+        )
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `positions` (`uri` TEXT NOT NULL, `posMs` INTEGER NOT NULL, " +
+                "`updatedAt` INTEGER NOT NULL, PRIMARY KEY(`uri`))"
+        )
+        db.execSQL("CREATE TABLE IF NOT EXISTS `loudness` (`uri` TEXT NOT NULL, `gainDb` REAL NOT NULL, PRIMARY KEY(`uri`))")
+    }
+}
+
+/** Применяет свои правки к треку из сканера. */
+fun applyOverride(t: TrackEntity, o: TrackOverride): TrackEntity {
+    val albumArtist = o.albumArtist ?: t.albumArtist
+    val album = o.album ?: t.album
+    return t.copy(
+        title = o.title ?: t.title,
+        artist = o.artist ?: t.artist,
+        album = album,
+        albumArtist = albumArtist,
+        albumKey = if (o.album != null || o.albumArtist != null) "${albumArtist.lowercase()}|${album.lowercase()}" else t.albumKey,
+        year = o.year ?: t.year,
+    )
 }

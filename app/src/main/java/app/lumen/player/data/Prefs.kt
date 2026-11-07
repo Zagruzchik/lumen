@@ -54,6 +54,36 @@ class Prefs(context: Context) {
 
     /** Сила вспышек под бит, 0..1. */
     /** Кроссфейд между треками, мс (0 — выключен). */
+    /** Когда очередь кончилась — продолжать похожими треками. */
+    var smartQueue: Boolean
+        get() = sp.getBoolean("smartQueue", true)
+        set(v) = sp.edit().putBoolean("smartQueue", v).apply()
+
+    /** Выравнивание громкости между треками. */
+    var normalize: Boolean
+        get() = sp.getBoolean("normalize", true)
+        set(v) = sp.edit().putBoolean("normalize", v).apply()
+
+    /** Плавное затухание при паузе и нарастание при старте. */
+    var fadePause: Boolean
+        get() = sp.getBoolean("fadePause", true)
+        set(v) = sp.edit().putBoolean("fadePause", v).apply()
+
+    /** Продолжать длинные треки (от 20 минут) с места остановки. */
+    var resumeLong: Boolean
+        get() = sp.getBoolean("resumeLong", true)
+        set(v) = sp.edit().putBoolean("resumeLong", v).apply()
+
+    /** Продолжать, когда подключились Bluetooth-наушники. */
+    var btResume: Boolean
+        get() = sp.getBoolean("btResume", false)
+        set(v) = sp.edit().putBoolean("btResume", v).apply()
+
+    /** Свой экран блокировки с текстом песни. */
+    var lockScreen: Boolean
+        get() = sp.getBoolean("lockScreen", false)
+        set(v) = sp.edit().putBoolean("lockScreen", v).apply()
+
     /** Проверять обновления при запуске. */
     var autoUpdate: Boolean
         get() = sp.getBoolean("autoUpdate", true)

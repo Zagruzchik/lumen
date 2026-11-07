@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="continue"
+        android:enabled="true"
+        android:icon="@drawable/ic_sc_play"
+        android:shortcutShortLabel="@string/sc_continue"
+        android:shortcutLongLabel="@string/sc_continue">
+        <intent
+            android:action="app.lumen.player.action.CONTINUE"
+            android:targetPackage="app.lumen.player"
+            android:targetClass="app.lumen.player.ui.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="loved"
+        android:enabled="true"
+        android:icon="@drawable/ic_sc_loved"
+        android:shortcutShortLabel="@string/sc_loved"
+        android:shortcutLongLabel="@string/sc_loved">
+        <intent
+            android:action="app.lumen.player.action.LOVED"
+            android:targetPackage="app.lumen.player"
+            android:targetClass="app.lumen.player.ui.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="shuffle"
+        android:enabled="true"
+        android:icon="@drawable/ic_sc_shuffle"
+        android:shortcutShortLabel="@string/sc_shuffle"
+        android:shortcutLongLabel="@string/sc_shuffle">
+        <intent
+            android:action="app.lumen.player.action.SHUFFLE_ALL"
+            android:targetPackage="app.lumen.player"
+            android:targetClass="app.lumen.player.ui.MainActivity" />
+    </shortcut>
+</shortcuts>

@@ -130,6 +130,8 @@ sealed interface Dest {
     data class Folder(val path: String, val name: String) : Dest
     data object Stats : Dest
     data object Recs : Dest
+    data class Playlist(val id: Long) : Dest
+    data object Wrapped : Dest
 }
 
 class Nav(
@@ -371,6 +373,9 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                 closePlayer()
                 nav.open(Dest.Artist(it.albumArtist))
             },
+            onAddToPlaylist = { vm.sheetTrack.value = app.lumen.player.ui.SheetTrack(it, edit = false) },
+            onPlaySimilar = { vm.playSimilar(it) },
+            onEdit = { vm.sheetTrack.value = app.lumen.player.ui.SheetTrack(it, edit = true) },
         )
     }
 
@@ -442,6 +447,8 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                         is Dest.Album -> AlbumScreen(vm, d.key, nav, actions, bottomPad)
                         is Dest.Artist -> ArtistScreen(vm, d.name, nav, actions, bottomPad)
                         is Dest.Folder -> FolderScreen(vm, d.path, d.name, nav, actions, bottomPad)
+                        is Dest.Playlist -> app.lumen.player.ui.screens.PlaylistScreen(vm, d.id, nav, actions, bottomPad)
+                        Dest.Wrapped -> app.lumen.player.ui.screens.WrappedScreen(vm, nav)
                     }
                 }
             }
@@ -511,6 +518,30 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                         scaleY = sc
                     },
             )
+        }
+        val sheet by vm.sheetTrack.collectAsStateWithLifecycle()
+        var lastSheet by remember { mutableStateOf<app.lumen.player.ui.SheetTrack?>(null) }
+        if (sheet != null) lastSheet = sheet
+        AnimatedVisibility(sheet != null, enter = fadeIn(tween(240)), exit = fadeOut(tween(200))) {
+            val st = lastSheet
+            if (st != null) {
+                val mod = Modifier.animateEnterExit(
+                    enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 360f)) { it },
+                    exit = slideOutVertically(tween(220)) { it },
+                )
+                if (st.edit) {
+                    app.lumen.player.ui.screens.EditTagsSheet(vm, st.track, onClose = { vm.sheetTrack.value = null }, sheetModifier = mod)
+                } else {
+                    app.lumen.player.ui.screens.AddToPlaylistSheet(vm, st.track, onClose = { vm.sheetTrack.value = null }, sheetModifier = mod)
+                }
+            }
+        }
+        val newPl by vm.newPlaylistPrompt.collectAsStateWithLifecycle()
+        AnimatedVisibility(newPl, enter = fadeIn(tween(200)), exit = fadeOut(tween(180))) {
+            app.lumen.player.ui.screens.NameDialog("Новый плейлист", "", "Создать", { name ->
+                vm.createPlaylist(name) { id -> nav.open(Dest.Playlist(id)) }
+                vm.newPlaylistPrompt.value = false
+            }, { vm.newPlaylistPrompt.value = false })
         }
         val updSheet by vm.updateSheet.collectAsStateWithLifecycle()
         AnimatedVisibility(updSheet, enter = fadeIn(tween(260)), exit = fadeOut(tween(220))) {

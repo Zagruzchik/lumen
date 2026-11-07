@@ -67,4 +67,7 @@ object LIcons {
     val DragHandle = stroke("drag", "M5 9h14", "M5 15h14")
     val Expand = stroke("expand", "M15 3h6v6", "M9 21H3v-6", "M21 3l-7 7", "M3 21l7-7")
     val PlayNext =stroke("play_next", "M4 6h10", "M4 11h10", "M4 16h6", "M15 13l5 3.5-5 3.5z")
+    val Playlist = stroke("playlist", "M4 6h12", "M4 11h12", "M4 16h7", "M17 14v6", circle(15f, 20f, 2f), "M17 14l4-1")
+    val Edit = stroke("edit", "M4 20h4L19 9l-4-4L4 16z", "M13.5 6.5l4 4")
+    val Wave = stroke("wave", "M3 12h2", "M7 8v8", "M11 5v14", "M15 9v6", "M19 11v2")
 }

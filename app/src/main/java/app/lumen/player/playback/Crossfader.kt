@@ -26,6 +26,7 @@ class Crossfader(
     private val context: Context,
     private val main: ExoPlayer,
     private val prefs: Prefs,
+    private val mix: VolumeMix,
 ) {
     private val handler = Handler(Looper.getMainLooper())
     private var tail: ExoPlayer? = null
@@ -68,7 +69,7 @@ class Crossfader(
             if (fadeStart == 0L) return // хвост ещё готовится
             val p = ((android.os.SystemClock.elapsedRealtime() - fadeStart).toFloat() / fadeMs).coerceIn(0f, 1f)
             // Равномощный переход: суммарная громкость не проседает посередине.
-            main.volume = sin(p * PI.toFloat() / 2f)
+            mix.cross = sin(p * PI.toFloat() / 2f)
             t.volume = cos(p * PI.toFloat() / 2f)
             if (p >= 1f) abort()
             return
@@ -111,7 +112,7 @@ class Crossfader(
                     t.seekTo(main.currentPosition + 60)
                     t.play()
                     switching = true
-                    main.volume = 0f
+                    mix.cross = 0f
                     main.seekToNextMediaItem()
                     switching = false
                     fadeStart = android.os.SystemClock.elapsedRealtime()
@@ -127,6 +128,6 @@ class Crossfader(
         tail = null
         fadeStart = 0L
         runCatching { t.release() }
-        main.volume = 1f
+        mix.cross = 1f
     }
 }

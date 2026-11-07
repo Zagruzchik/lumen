@@ -85,6 +85,8 @@ fun StatsScreen(vm: MainViewModel, nav: Nav, bottomPad: Dp) {
                 IconBtn(LIcons.Back, "Назад", nav.back)
                 Spacer(Modifier.width(14.dp))
                 Text("Статистика", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
+                Spacer(Modifier.weight(1f))
+                app.lumen.player.ui.components.PillButton("Итоги месяца", LIcons.Sparkle, { nav.open(app.lumen.player.ui.Dest.Wrapped) })
             }
         }
         val s = stats

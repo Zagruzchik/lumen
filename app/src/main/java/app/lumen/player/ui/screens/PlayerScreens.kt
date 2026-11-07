@@ -78,6 +78,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
@@ -203,7 +204,7 @@ private fun QualityBadges(q: AudioQuality?, fallbackSampleRate: Int) {
 }
 
 /** Плавное затухание краёв списка сверху и снизу. */
-private fun Modifier.fadeEdges(top: Dp, bottom: Dp): Modifier = this
+internal fun Modifier.fadeEdges(top: Dp, bottom: Dp): Modifier = this
     .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
     .drawWithContent {
         drawContent()
@@ -488,9 +489,52 @@ private fun CoverArea(
             label = "coverX",
         )
         val swipeThreshold = with(density) { 90.dp.toPx() }
+        // Жесты: двойной тап по краю — ±10 секунд, удержание — ускорение ×2.
+        var hint by remember { mutableStateOf<String?>(null) }
+        var hintSide by remember { mutableIntStateOf(0) }
+        var hintTick by remember { mutableIntStateOf(0) }
+        val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+        LaunchedEffect(hintTick) {
+            if (hint != null && hint != "2×") {
+                kotlinx.coroutines.delay(700)
+                hint = null
+            }
+        }
         Box(
             Modifier
                 .size(side)
+                .graphicsLayer {
+                    // Обложка мягко «дышит» под бит.
+                    val lv = beat.level().coerceIn(0f, 1f)
+                    val sc = 1f + 0.022f * lv
+                    scaleX = sc
+                    scaleY = sc
+                }
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onDoubleTap = { o ->
+                            val fwd = o.x > size.width / 2f
+                            vm.seekBy(if (fwd) 10_000L else -10_000L)
+                            hint = if (fwd) "+10 с" else "−10 с"
+                            hintSide = if (fwd) 1 else -1
+                            hintTick++
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                        },
+                        onLongPress = {
+                            vm.setSpeed(2f)
+                            hint = "2×"
+                            hintSide = 0
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                        },
+                        onPress = {
+                            tryAwaitRelease()
+                            if (hint == "2×") {
+                                vm.setSpeed(1f)
+                                hint = null
+                            }
+                        },
+                    )
+                }
                 .drawBehind {
                     val c = center + Offset(0f, 26.dp.toPx())
                     val r = size.minDimension * 0.78f
@@ -549,6 +593,29 @@ private fun CoverArea(
                         .padding(horizontal = 12.dp, vertical = 6.dp)
                 ) {
                     Text(note, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                }
+            }
+            androidx.compose.animation.AnimatedVisibility(
+                hint != null,
+                enter = fadeIn(tween(160)) + scaleIn(spring(dampingRatio = 0.6f, stiffness = 500f), initialScale = 0.7f),
+                exit = fadeOut(tween(260)) + scaleOut(tween(260), targetScale = 0.9f),
+                modifier = Modifier.align(
+                    when (hintSide) {
+                        -1 -> Alignment.CenterStart
+                        1 -> Alignment.CenterEnd
+                        else -> Alignment.TopCenter
+                    }
+                ).padding(20.dp),
+            ) {
+                var shown by remember { mutableStateOf("") }
+                hint?.let { shown = it }
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Color(0xB3000000))
+                        .padding(horizontal = 16.dp, vertical = 10.dp)
+                ) {
+                    Text(shown, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
                 }
             }
         }
@@ -721,7 +788,7 @@ private fun InlineLyrics(lines: List<LyricLine>, synced: Boolean, position: Long
 }
 
 @Composable
-private fun LyricsList(
+internal fun LyricsList(
     lines: List<LyricLine>,
     synced: Boolean,
     position: Long,
@@ -1520,8 +1587,7 @@ fun TimerSheet(vm: MainViewModel, onClose: () -> Unit, sheetModifier: Modifier =
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (p.durationMs > 0 && p.currentId != null) {
                     PillButton("До конца трека", null, {
-                        val left = (p.durationMs - vm.position()).coerceAtLeast(5_000L)
-                        vm.setSleepMillis(left + 1_000L)
+                        vm.sleepEndOfTrack()
                         onClose()
                     }, Modifier.weight(1f), primary = false)
                 }

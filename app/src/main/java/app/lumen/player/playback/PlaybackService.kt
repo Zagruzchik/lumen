@@ -46,6 +46,10 @@ internal const val ACTION_FAVORITE = "lumen.FAVORITE"
 private const val ACTION_SHUFFLE = "lumen.SHUFFLE"
 private val CMD_FAVORITE = SessionCommand(ACTION_FAVORITE, Bundle.EMPTY)
 private val CMD_SHUFFLE = SessionCommand(ACTION_SHUFFLE, Bundle.EMPTY)
+internal const val ACTION_SLEEP_END = "lumen.SLEEP_END"
+private val CMD_SLEEP_END = SessionCommand(ACTION_SLEEP_END, Bundle.EMPTY)
+/** Целевая громкость выравнивания (средняя энергия), дБ. */
+private const val TARGET_LOUDNESS_DB = -15f
 
 @OptIn(UnstableApi::class)
 class PlaybackService : MediaSessionService() {
@@ -74,6 +78,11 @@ class PlaybackService : MediaSessionService() {
         // поэтому очередь всегда показывает то, что реально будет играть сверху вниз.
         player.setShuffleOrder(ShuffleOrder.UnshuffledShuffleOrder(0))
         exo = player
+        val mixer = VolumeMix(player)
+        mix = mixer
+        val prefs = applicationContext.graph.prefs
+        val lumen = LumenPlayer(player, mixer) { prefs.fadePause }
+        sessionPlayer = lumen
 
         player.addListener(object : Player.Listener {
             override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
@@ -96,12 +105,15 @@ class PlaybackService : MediaSessionService() {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 finishListen(completedByAuto = reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO)
                 beginListen(player)
+                onTrackChanged(player, mediaItem, reason)
                 val id = mediaItem?.mediaId ?: return
                 if (player.isPlaying) record(id) else pendingPlayCount = id
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 val now = android.os.SystemClock.elapsedRealtime()
+                if (!isPlaying) saveLongPosition(player)
+                requestTileUpdate()
                 if (isPlaying) {
                     pendingPlayCount?.let { record(it) }
                     if (listenUri == null) beginListen(player)
@@ -152,7 +164,19 @@ class PlaybackService : MediaSessionService() {
             }
         })
         applicationContext.graph.eq.attach(player.audioSessionId)
-        crossfader = Crossfader(this, player, applicationContext.graph.prefs).also { it.start() }
+        crossfader = Crossfader(this, player, applicationContext.graph.prefs, mixer).also { it.start() }
+        player.addListener(object : Player.Listener {
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                // Таймер сна «до конца трека»: трек доигран — выключаем режим.
+                if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) {
+                    player.pauseAtEndOfMediaItems = false
+                    sleepAtEnd = false
+                }
+            }
+        })
+        mainHandler.postDelayed(positionTicker, 10_000)
+        registerDevices()
+        registerScreenOff()
 
         val openApp = PendingIntent.getActivity(
             this,
@@ -163,7 +187,7 @@ class PlaybackService : MediaSessionService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 
-        session = MediaSession.Builder(this, player)
+        session = MediaSession.Builder(this, lumen)
             .setSessionActivity(openApp)
             .setBitmapLoader(ArtworkBitmapLoader(applicationContext))
             .setCallback(object : MediaSession.Callback {
@@ -200,6 +224,7 @@ class PlaybackService : MediaSessionService() {
                     val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
                         .add(CMD_FAVORITE)
                         .add(CMD_SHUFFLE)
+                        .add(CMD_SLEEP_END)
                         .build()
                     return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                         .setAvailableSessionCommands(commands)
@@ -215,6 +240,10 @@ class PlaybackService : MediaSessionService() {
                     when (customCommand.customAction) {
                         ACTION_FAVORITE -> toggleFavorite()
                         ACTION_SHUFFLE -> session.player.shuffleModeEnabled = !session.player.shuffleModeEnabled
+                        ACTION_SLEEP_END -> {
+                            sleepAtEnd = args.getBoolean("on", false)
+                            exo?.pauseAtEndOfMediaItems = sleepAtEnd
+                        }
                     }
                     return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                 }
@@ -265,6 +294,178 @@ class PlaybackService : MediaSessionService() {
     }
 
     private var exo: ExoPlayer? = null
+    private var mix: VolumeMix? = null
+    private var sessionPlayer: Player? = null
+    private var sleepAtEnd = false
+
+    // ---------- выравнивание, позиции, умная очередь ----------
+
+    private fun onTrackChanged(p: ExoPlayer, item: MediaItem?, reason: Int) {
+        val g = applicationContext.graph
+        val id = item?.mediaId ?: return
+        // Выравнивание громкости: громкие треки тише до общего уровня (усиливать без искажений нельзя).
+        applyLoudness(id, ramp = false)
+        // Длинные треки продолжаются с места остановки.
+        if (g.prefs.resumeLong) {
+            scope.launch {
+                val pos = kotlinx.coroutines.withContext(Dispatchers.IO) { runCatching { g.dao.position(id) }.getOrNull() }
+                if (pos != null && p.currentMediaItem?.mediaId == id && p.currentPosition < 5_000 && pos.posMs > 30_000) {
+                    p.seekTo(pos.posMs)
+                }
+            }
+        }
+        // Очередь подходит к концу — подкладываем похожие треки заранее, чтобы не было тишины.
+        if (g.prefs.smartQueue && p.repeatMode == Player.REPEAT_MODE_OFF &&
+            p.currentMediaItemIndex >= p.mediaItemCount - 2 && !appending
+        ) {
+            appending = true
+            scope.launch {
+                try {
+                    val ids = List(p.mediaItemCount) { p.getMediaItemAt(it).mediaId }
+                    val more = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                        val seeds = g.dao.byUris(ids.takeLast(3))
+                        app.lumen.player.data.Similar.pick(g.dao, seeds, ids.toSet(), 15)
+                    }
+                    if (more.isNotEmpty()) {
+                        val items = more.map { it.toMediaItem() }
+                        originalOrder = originalOrder?.plus(items)
+                        p.addMediaItems(items)
+                    }
+                } finally {
+                    appending = false
+                }
+            }
+        }
+        // Заранее меряем громкость следующего трека.
+        if (p.hasNextMediaItem()) {
+            val next = p.getMediaItemAt(p.nextMediaItemIndex).mediaId
+            if (g.beats.loudness(next) == null) g.appScope.launch { runCatching { g.beats.analyze(next).collect { } } }
+        }
+        if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) previousLong?.let { u -> g.appScope.launch { runCatching { g.dao.clearPosition(u) } } }
+        previousLong = null
+    }
+
+    private var appending = false
+    private var previousLong: String? = null
+
+    /** Поправка громкости текущего трека. Если ещё не измерена — меряем и мягко применяем. */
+    fun applyLoudness(id: String, ramp: Boolean) {
+        val g = applicationContext.graph
+        val m = mix ?: return
+        if (!g.prefs.normalize) {
+            m.glideNorm(1f, if (ramp) 1500 else 0)
+            return
+        }
+        val ld = g.beats.loudness(id)
+        if (ld == null) {
+            m.glideNorm(1f, 0)
+            g.appScope.launch {
+                runCatching { g.beats.analyze(id).collect { } }
+                mainHandler.post { if (exo?.currentMediaItem?.mediaId == id && g.beats.loudness(id) != null) applyLoudness(id, ramp = true) }
+            }
+            return
+        }
+        val gainDb = (TARGET_LOUDNESS_DB - ld).coerceIn(-12f, 0f)
+        m.glideNorm(Math.pow(10.0, gainDb / 20.0).toFloat(), if (ramp) 2500 else 0)
+    }
+
+    private fun saveLongPosition(p: Player) {
+        val g = applicationContext.graph
+        if (!g.prefs.resumeLong) return
+        val id = p.currentMediaItem?.mediaId ?: return
+        val d = p.duration
+        if (d == C.TIME_UNSET || d < 20 * 60_000L) return
+        val pos = p.currentPosition
+        previousLong = id
+        g.appScope.launch {
+            runCatching {
+                if (pos > 30_000 && pos < d - 60_000) {
+                    g.dao.putPosition(app.lumen.player.data.PositionEntity(id, pos, System.currentTimeMillis()))
+                } else {
+                    g.dao.clearPosition(id)
+                }
+            }
+        }
+    }
+
+    private val positionTicker = object : Runnable {
+        override fun run() {
+            exo?.let { if (it.isPlaying) saveLongPosition(it) }
+            mainHandler.postDelayed(this, 10_000)
+        }
+    }
+
+    // ---------- наушники и экран ----------
+
+    private var deviceCallback: android.media.AudioDeviceCallback? = null
+    private var lastPausedAt = 0L
+
+    /** Bluetooth-наушники подключились — продолжаем, если недавно стояли на паузе. */
+    private fun registerDevices() {
+        val am = getSystemService(android.media.AudioManager::class.java) ?: return
+        val cb = object : android.media.AudioDeviceCallback() {
+            override fun onAudioDevicesAdded(addedDevices: Array<out android.media.AudioDeviceInfo>) {
+                val p = exo ?: return
+                val bt = addedDevices.any {
+                    it.isSink && (it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                        (android.os.Build.VERSION.SDK_INT >= 31 && it.type == android.media.AudioDeviceInfo.TYPE_BLE_HEADSET))
+                }
+                if (!bt || !applicationContext.graph.prefs.btResume) return
+                val recent = lastPausedAt > 0 && System.currentTimeMillis() - lastPausedAt < 30 * 60_000L
+                if (!p.isPlaying && p.mediaItemCount > 0 && recent) {
+                    mainHandler.postDelayed({ sessionPlayer?.play() }, 1200)
+                }
+            }
+        }
+        am.registerAudioDeviceCallback(cb, mainHandler)
+        deviceCallback = cb
+        exo?.addListener(object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (!isPlaying) lastPausedAt = System.currentTimeMillis()
+            }
+        })
+    }
+
+    private var screenReceiver: android.content.BroadcastReceiver? = null
+
+    /** Экран погас во время музыки — показываем свой экран блокировки с текстом песни. */
+    private fun registerScreenOff() {
+        val r = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                val p = exo ?: return
+                val prefs = applicationContext.graph.prefs
+                if (!prefs.lockScreen || !p.isPlaying) return
+                if (android.os.Build.VERSION.SDK_INT >= 23 && !android.provider.Settings.canDrawOverlays(context)) return
+                runCatching {
+                    startActivity(
+                        Intent(context, app.lumen.player.ui.LockActivity::class.java)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION or Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS)
+                    )
+                }
+            }
+        }
+        val f = android.content.IntentFilter(Intent.ACTION_SCREEN_OFF)
+        if (android.os.Build.VERSION.SDK_INT >= 33) registerReceiver(r, f, Context.RECEIVER_NOT_EXPORTED) else registerReceiver(r, f)
+        screenReceiver = r
+    }
+
+    private fun requestTileUpdate() {
+        runCatching {
+            android.service.quicksettings.TileService.requestListeningState(
+                this,
+                android.content.ComponentName(this, app.lumen.player.ui.LumenTileService::class.java),
+            )
+        }
+    }
+
+    /** Для плитки в шторке и экрана блокировки. */
+    val isPlayingNow: Boolean get() = exo?.isPlaying == true
+    fun togglePlay() {
+        val p = sessionPlayer ?: return
+        if (exo?.isPlaying == true) p.pause() else p.play()
+    }
+    fun skipNext() = sessionPlayer?.seekToNextMediaItem()
+    fun skipPrev() = sessionPlayer?.seekToPrevious()
     private var crossfader: Crossfader? = null
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var originalOrder: List<MediaItem>? = null
@@ -435,6 +636,10 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         instance = null
+        mainHandler.removeCallbacks(positionTicker)
+        exo?.let { saveLongPosition(it) }
+        deviceCallback?.let { cb -> runCatching { getSystemService(android.media.AudioManager::class.java)?.unregisterAudioDeviceCallback(cb) } }
+        screenReceiver?.let { runCatching { unregisterReceiver(it) } }
         finishListen(completedByAuto = false)
         app.lumen.player.widget.WidgetUpdater.stopped(this)
         crossfader?.release()

@@ -1,6 +1,7 @@
 package app.lumen.player.ui.screens
 
 import android.content.Intent
+import android.os.Build
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -111,6 +112,13 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
     var exporting by remember { mutableStateOf(false) }
     var withMusic by rememberSaveable { mutableStateOf(false) }
     val transfer by vm.transfer.collectAsStateWithLifecycle()
+    val smartQ by vm.smartQueue.collectAsStateWithLifecycle()
+    val norm by vm.normalize.collectAsStateWithLifecycle()
+    val fadeP by vm.fadePause.collectAsStateWithLifecycle()
+    val resumeL by vm.resumeLong.collectAsStateWithLifecycle()
+    val btR by vm.btResume.collectAsStateWithLifecycle()
+    val lockS by vm.lockScreen.collectAsStateWithLifecycle()
+    var playbackOpen by rememberSaveable { mutableStateOf(false) }
     val bulk by vm.lyricsBulk.collectAsStateWithLifecycle()
     val flashes by vm.beatFlashes.collectAsStateWithLifecycle()
     val intensity by vm.beatIntensity.collectAsStateWithLifecycle()
@@ -256,6 +264,45 @@ fun SettingsScreen(vm: MainViewModel, bottomPad: Dp, onOpenStats: () -> Unit) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Проверять при запуске", fontSize = 15.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
                     LSwitch(autoUpd) { vm.setAutoUpdate(it) }
+                }
+            }
+        }
+
+        // ---------- воспроизведение ----------
+        item {
+            ExpandableCard(
+                title = "Воспроизведение",
+                subtitle = listOfNotNull(
+                    "выравнивание".takeIf { norm },
+                    "плавная пауза".takeIf { fadeP },
+                    "умная очередь".takeIf { smartQ },
+                ).joinToString(" · ").ifEmpty { "Всё выключено" }.replaceFirstChar { it.uppercase() },
+                expanded = playbackOpen,
+                onToggle = { playbackOpen = !playbackOpen },
+            ) {
+                Spacer(Modifier.height(6.dp))
+                ToggleRow("Выравнивание громкости", "Громкие треки звучат на одном уровне с тихими — без скачков между песнями", norm) { vm.setNormalize(it) }
+                ToggleRow("Плавная пауза и старт", "Музыка мягко затихает при паузе и нарастает при запуске", fadeP) { vm.setFadePause(it) }
+                ToggleRow("Умная очередь", "Когда очередь кончается, Lumen продолжит похожими треками из твоей библиотеки", smartQ) { vm.setSmartQueue(it) }
+                ToggleRow("Помнить место в длинных треках", "Подкасты, миксы и аудиокниги от 20 минут продолжатся с того же места", resumeL) { vm.setResumeLong(it) }
+                ToggleRow("Продолжать при подключении наушников", "Bluetooth-наушники подключились — музыка продолжится, если ты недавно поставил паузу", btR) { vm.setBtResume(it) }
+                ToggleRow("Экран блокировки Lumen", "Крупные часы и текст песни на заблокированном экране, пока играет музыка", lockS) { on ->
+                    if (on && Build.VERSION.SDK_INT >= 23 && !android.provider.Settings.canDrawOverlays(ctx)) {
+                        Toast.makeText(ctx, "Разреши Lumen «Поверх других окон» — так система позволит показать экран блокировки", Toast.LENGTH_LONG).show()
+                        ctx.startActivity(
+                            Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:${ctx.packageName}"))
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    }
+                    vm.setLockScreen(on)
+                }
+                if (lockS) {
+                    Text(
+                        "На Xiaomi ещё включи в «О приложении» → «Другие разрешения»: «Экран блокировки» и «Всплывающие окна в фоне».",
+                        fontSize = 12.sp,
+                        color = LC.Faint,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
                 }
             }
         }

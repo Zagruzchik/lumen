@@ -89,7 +89,7 @@ import java.util.Calendar
 import kotlinx.coroutines.launch
 
 @Composable
-private fun topInset(): Dp = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+internal fun topInset(): Dp = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
 
 private fun greeting(): String = when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
     in 5..11 -> "Доброе утро"
@@ -241,6 +241,7 @@ fun HomeScreen(vm: MainViewModel, nav: Nav, actions: TrackActions, bottomPad: Dp
                             PillButton("Забытое", LIcons.Moon, { vm.playLoved(false) }, Modifier.weight(1f), primary = false)
                         }
                     }
+                    item(key = "wrapped") { WrappedTeaser { nav.open(Dest.Wrapped) } }
                     if (recent.isNotEmpty()) {
                         item(key = "recentH") { SectionHeader("Недавно добавленные", "Все") { nav.tab(Dest.Library, 1) } }
                         item(key = "recent") {
@@ -460,7 +461,7 @@ private fun LibraryHeader(tab: Int, onTab: (Int) -> Unit) {
             contentPadding = PaddingValues(horizontal = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            val tabs = listOf("Треки", "Альбомы", "Исполнители", "Папки")
+            val tabs = listOf("Треки", "Альбомы", "Исполнители", "Папки", "Плейлисты")
             itemsIndexed(tabs) { i, name -> LChip(name, tab == i) { onTab(i) } }
         }
         Spacer(Modifier.height(10.dp))
@@ -501,6 +502,7 @@ fun LibraryScreen(
             val folders by vm.folders.collectAsStateWithLifecycle()
             val favs by vm.favoriteUris.collectAsStateWithLifecycle()
             val p by vm.player.collectAsStateWithLifecycle()
+            val playlists by vm.playlists.collectAsStateWithLifecycle()
             LazyColumn(
                 Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(top = top, bottom = bottomPad),
@@ -521,6 +523,7 @@ fun LibraryScreen(
                             TrackRow(t, t.uri == p.currentId, t.uri in favs, actions, onClick = { vm.play(tracks, i) })
                         }
                     }
+                    4 -> playlistsTab(vm, nav, playlists) { vm.newPlaylistPrompt.value = true }
                     2 -> items(artists, key = { it.name }) { a ->
                         Row(
                             Modifier
@@ -1113,5 +1116,45 @@ private fun LumenBrand(vm: MainViewModel, colors: app.lumen.player.ui.theme.Cove
                 ),
             )
         }
+    }
+}
+
+
+/** Карточка-приглашение в «Твой месяц в музыке» на главной. */
+@Composable
+private fun WrappedTeaser(onClick: () -> Unit) {
+    val month = remember { java.text.SimpleDateFormat("LLLL", java.util.Locale("ru")).format(java.util.Date()) }
+    val t = androidx.compose.animation.core.rememberInfiniteTransition(label = "teaser")
+    val shift by t.animateFloat(
+        0f, 1f,
+        androidx.compose.animation.core.infiniteRepeatable(
+            androidx.compose.animation.core.tween(6000, easing = androidx.compose.animation.core.LinearEasing),
+            androidx.compose.animation.core.RepeatMode.Reverse,
+        ),
+        label = "sh",
+    )
+    Row(
+        Modifier
+            .padding(horizontal = 20.dp, vertical = 8.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(24.dp))
+            .drawBehind {
+                drawRect(
+                    Brush.linearGradient(
+                        listOf(Color(0xFF7B2FF7), Color(0xFFFF5F6D), Color(0xFFFFB347)),
+                        start = androidx.compose.ui.geometry.Offset(-size.width * shift, 0f),
+                        end = androidx.compose.ui.geometry.Offset(size.width * (2f - shift), size.height),
+                    )
+                )
+            }
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 18.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Твой $month в музыке", fontSize = 19.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
+            Text("Минуты, любимые песни и открытия — в историях", fontSize = 13.sp, color = Color.White.copy(alpha = 0.85f))
+        }
+        Icon(LIcons.Sparkle, null, Modifier.size(28.dp), tint = Color.White)
     }
 }

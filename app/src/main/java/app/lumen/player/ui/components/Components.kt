@@ -25,6 +25,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -195,10 +196,11 @@ fun SectionHeader(title: String, action: String? = null, onAction: (() -> Unit)?
 fun rememberArtwork(uri: String?, sizePx: Int): ImageBitmap? {
     val ctx = LocalContext.current.applicationContext
     // Новый адрес — сразу берём из кэша (или пусто), а не показываем прошлую картинку, пока грузится новая.
-    val state = androidx.compose.runtime.remember(uri, sizePx) {
+    val rev by Artwork.revision.collectAsState()
+    val state = androidx.compose.runtime.remember(uri, sizePx, rev) {
         androidx.compose.runtime.mutableStateOf(Artwork.peek(uri, sizePx)?.asImageBitmap())
     }
-    androidx.compose.runtime.LaunchedEffect(uri, sizePx) {
+    androidx.compose.runtime.LaunchedEffect(uri, sizePx, rev) {
         if (state.value == null && uri != null) state.value = Artwork.load(ctx, uri, sizePx)?.asImageBitmap()
     }
     return state.value
@@ -240,6 +242,11 @@ class TrackActions(
     val onToggleFav: (TrackEntity) -> Unit,
     val onOpenAlbum: (TrackEntity) -> Unit,
     val onOpenArtist: (TrackEntity) -> Unit,
+    val onAddToPlaylist: ((TrackEntity) -> Unit)? = null,
+    val onPlaySimilar: ((TrackEntity) -> Unit)? = null,
+    val onEdit: ((TrackEntity) -> Unit)? = null,
+    /** Только внутри плейлиста. */
+    val onRemoveFromPlaylist: ((TrackEntity) -> Unit)? = null,
 )
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -317,6 +324,27 @@ fun TrackMenu(expanded: Boolean, onDismiss: () -> Unit, t: TrackEntity, fav: Boo
             leadingIcon = { Icon(LIcons.Queue, null, Modifier.size(20.dp)) },
             onClick = { onDismiss(); actions.onEnqueue(t) },
         )
+        actions.onAddToPlaylist?.let { f ->
+            DropdownMenuItem(
+                text = { Text("В плейлист…") },
+                leadingIcon = { Icon(LIcons.Playlist, null, Modifier.size(20.dp)) },
+                onClick = { onDismiss(); f(t) },
+            )
+        }
+        actions.onPlaySimilar?.let { f ->
+            DropdownMenuItem(
+                text = { Text("Играть похожее") },
+                leadingIcon = { Icon(LIcons.Sparkle, null, Modifier.size(20.dp)) },
+                onClick = { onDismiss(); f(t) },
+            )
+        }
+        actions.onRemoveFromPlaylist?.let { f ->
+            DropdownMenuItem(
+                text = { Text("Убрать из плейлиста") },
+                leadingIcon = { Icon(LIcons.Trash, null, Modifier.size(20.dp)) },
+                onClick = { onDismiss(); f(t) },
+            )
+        }
         DropdownMenuItem(
             text = { Text(if (fav) "Убрать из любимого" else "В любимое") },
             leadingIcon = { Icon(if (fav) LIcons.Heart else LIcons.HeartOutline, null, Modifier.size(20.dp)) },
@@ -332,6 +360,13 @@ fun TrackMenu(expanded: Boolean, onDismiss: () -> Unit, t: TrackEntity, fav: Boo
             leadingIcon = { Icon(LIcons.Person, null, Modifier.size(20.dp)) },
             onClick = { onDismiss(); actions.onOpenArtist(t) },
         )
+        actions.onEdit?.let { f ->
+            DropdownMenuItem(
+                text = { Text("Изменить теги и обложку") },
+                leadingIcon = { Icon(LIcons.Edit, null, Modifier.size(20.dp)) },
+                onClick = { onDismiss(); f(t) },
+            )
+        }
     }
 }
 

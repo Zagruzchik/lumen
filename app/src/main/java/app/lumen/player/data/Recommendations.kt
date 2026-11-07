@@ -256,6 +256,18 @@ class RecommendationsRepository(
         else -> "Альбом"
     }
 
+    /** Варианты обложек из Deezer: сначала по альбому, потом по треку. */
+    suspend fun findCovers(artist: String, title: String, album: String): List<String> = withContext(Dispatchers.IO) {
+        val out = LinkedHashSet<String>()
+        if (album.isNotBlank()) {
+            val a = getArray("/search/album?q=${URLEncoder.encode("$artist $album", "UTF-8")}&limit=6")
+            for (i in 0 until a.length()) a.getJSONObject(i).optString("cover_xl").takeIf { it.isNotBlank() }?.let { out += it }
+        }
+        val t = getArray("/search?q=${URLEncoder.encode("$artist $title", "UTF-8")}&limit=8")
+        for (i in 0 until t.length()) t.getJSONObject(i).optJSONObject("album")?.optString("cover_xl")?.takeIf { it.isNotBlank() }?.let { out += it }
+        out.take(9)
+    }
+
     /** Поиск треков в Deezer; то, что уже есть в библиотеке, отбрасывается. */
     suspend fun searchTracks(q: String): List<RecItem> = withContext(Dispatchers.IO) {
         val local = dao.allTracksOnce().mapTo(HashSet()) { key(it.artist, it.title) }

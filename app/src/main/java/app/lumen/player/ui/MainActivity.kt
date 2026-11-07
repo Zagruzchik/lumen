@@ -30,6 +30,8 @@ class MainActivity : ComponentActivity() {
         if (intent == null) return
         if (intent.action == Intent.ACTION_VIEW) {
             intent.data?.let { vm.playExternal(it) }
+        } else if (intent.action?.startsWith("app.lumen.player.action.") == true) {
+            vm.runShortcut(intent.action!!.removePrefix("app.lumen.player.action."))
         } else if (intent.getBooleanExtra(EXTRA_OPEN_PLAYER, false)) {
             vm.requestOpenPlayer()
         }

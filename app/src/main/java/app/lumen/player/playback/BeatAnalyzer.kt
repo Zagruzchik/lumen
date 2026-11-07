@@ -58,6 +58,13 @@ class BeatAnalyzer(context: Context) {
 
     fun hasCache(uri: String) = fileFor(uri).exists()
 
+    private fun loudFile(uri: String) = File(fileFor(uri).path + ".ld")
+
+    /** Средняя громкость трека в дБ (null — ещё не измерена). */
+    fun loudness(uri: String): Float? = runCatching {
+        loudFile(uri).takeIf { it.exists() }?.readText()?.trim()?.toFloat()
+    }.getOrNull()
+
     fun analyze(uri: String): Flow<Beats> = flow {
         val cached = runCatching { read(fileFor(uri)) }.getOrNull()
         if (cached != null) {
@@ -195,6 +202,7 @@ class BeatAnalyzer(context: Context) {
             }
             val result = det.snapshot(true)
             write(fileFor(uri), result)
+            det.loudnessDb()?.let { runCatching { loudFile(uri).writeText(it.toString()) } }
             emit(result)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
@@ -255,7 +263,18 @@ class BeatAnalyzer(context: Context) {
             }
         }
 
+        // Громкость для выравнивания: средняя энергия кадров, без тишины (ниже −60 дБ).
+        private var loudSum = 0.0
+        private var loudN = 0
+
+        fun loudnessDb(): Float? =
+            if (loudN < 50) null else (10.0 * kotlin.math.log10(loudSum / loudN)).toFloat()
+
         private fun frame(low: Float, all: Float) {
+            if (all > 0.001f) {
+                loudSum += (all * all).toDouble()
+                loudN++
+            }
             val flux = max(0f, low - prevLow) * 1.6f + max(0f, all - prevAll) * 0.6f
             prevLow = low
             prevAll = all

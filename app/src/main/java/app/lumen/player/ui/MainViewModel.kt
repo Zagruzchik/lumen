@@ -484,6 +484,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         )
                     }
                     root.put("listens", ls)
+                    // Плейлисты (по индексам треков) и свои теги.
+                    val plTracks = dao.allPlaylistTracks().groupBy { it.playlistId }
+                    val pls = org.json.JSONArray()
+                    dao.allPlaylists().forEach { pl ->
+                        val idx = org.json.JSONArray()
+                        plTracks[pl.id].orEmpty().sortedBy { it.position }.forEach { pt -> index[pt.uri]?.let { idx.put(it) } }
+                        pls.put(org.json.JSONObject().put("name", pl.name).put("createdAt", pl.createdAt).put("tracks", idx))
+                    }
+                    root.put("playlists", pls)
+                    val ovs = org.json.JSONArray()
+                    dao.allOverrides().forEach { o ->
+                        val ti = index[o.uri] ?: return@forEach
+                        ovs.put(
+                            org.json.JSONObject().put("t", ti)
+                                .put("title", o.title ?: org.json.JSONObject.NULL)
+                                .put("artist", o.artist ?: org.json.JSONObject.NULL)
+                                .put("album", o.album ?: org.json.JSONObject.NULL)
+                                .put("albumArtist", o.albumArtist ?: org.json.JSONObject.NULL)
+                                .put("year", o.year ?: org.json.JSONObject.NULL)
+                        )
+                    }
+                    root.put("overrides", ovs)
                     root.put("excludedFolders", org.json.JSONArray(dao.excludedOnce()))
                     root.put(
                         "settings",
@@ -698,6 +720,200 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var beatsPrefetch: Job? = null
 
     val crossfadeSec = MutableStateFlow(g.prefs.crossfadeMs / 1000)
+    /** Открытая поверх всего карточка для трека: «в плейлист» или «изменить теги». */
+    val sheetTrack = MutableStateFlow<SheetTrack?>(null)
+    val newPlaylistPrompt = MutableStateFlow(false)
+
+    // ---------- плейлисты ----------
+
+    val playlists = dao.playlists().state(emptyList())
+    fun playlist(id: Long) = dao.playlist(id)
+    fun playlistTracks(id: Long) = dao.playlistTracks(id)
+    fun playlistCovers(id: Long) = dao.playlistCovers(id)
+    suspend fun playlistsWith(uri: String) = dao.playlistsWith(uri).toSet()
+
+    fun createPlaylist(name: String, uris: List<String> = emptyList(), onCreated: (Long) -> Unit = {}) {
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val id = dao.insertPlaylist(app.lumen.player.data.PlaylistEntity(name = name.trim().ifBlank { "Новый плейлист" }, createdAt = now, updatedAt = now))
+            if (uris.isNotEmpty()) dao.addToPlaylist(id, uris)
+            onCreated(id)
+        }
+    }
+    fun renamePlaylist(id: Long, name: String) = viewModelScope.launch {
+        if (name.isNotBlank()) dao.renamePlaylist(id, name.trim(), System.currentTimeMillis())
+    }
+    fun deletePlaylist(id: Long) = viewModelScope.launch { dao.deletePlaylist(id) }
+    fun addToPlaylist(id: Long, uris: List<String>) = viewModelScope.launch { dao.addToPlaylist(id, uris) }
+    fun removeFromPlaylist(id: Long, uri: String) = viewModelScope.launch {
+        dao.removeFromPlaylist(id, uri)
+        dao.touchPlaylist(id, System.currentTimeMillis())
+    }
+    fun reorderPlaylist(id: Long, uris: List<String>) = viewModelScope.launch { dao.reorderPlaylist(id, uris) }
+
+    // ---------- «Твой месяц в музыке» ----------
+
+    suspend fun wrapped(monthsAgo: Int): WrappedData = withContext(Dispatchers.IO) {
+        val cal = java.util.Calendar.getInstance()
+        cal.set(java.util.Calendar.DAY_OF_MONTH, 1)
+        cal.set(java.util.Calendar.HOUR_OF_DAY, 0); cal.set(java.util.Calendar.MINUTE, 0)
+        cal.set(java.util.Calendar.SECOND, 0); cal.set(java.util.Calendar.MILLISECOND, 0)
+        cal.add(java.util.Calendar.MONTH, -monthsAgo)
+        val from = cal.timeInMillis
+        val monthName = java.text.SimpleDateFormat("LLLL", java.util.Locale("ru")).format(cal.time)
+        cal.add(java.util.Calendar.MONTH, 1)
+        val to = cal.timeInMillis
+        val times = dao.listenTimesIn(from, to)
+        val totalMs = times.sumOf { it.listenedMs }
+        val byHour = LongArray(24)
+        val byDay = LongArray(7)
+        val days = HashSet<Int>()
+        val c2 = java.util.Calendar.getInstance()
+        times.forEach { lt ->
+            c2.timeInMillis = lt.startedAt
+            byHour[c2.get(java.util.Calendar.HOUR_OF_DAY)] += lt.listenedMs
+            byDay[(c2.get(java.util.Calendar.DAY_OF_WEEK) + 5) % 7] += lt.listenedMs
+            days += c2.get(java.util.Calendar.DAY_OF_YEAR)
+        }
+        // Самая длинная серия дней подряд с музыкой.
+        var best = 0; var run = 0; var prev = -10
+        days.sorted().forEach { d -> run = if (d == prev + 1) run + 1 else 1; best = maxOf(best, run); prev = d }
+        WrappedData(
+            monthName = monthName,
+            totalMs = totalMs,
+            plays = times.size,
+            topArtists = dao.topArtistsIn(from, to, 5),
+            topTracks = dao.topTracksIn(from, to, 5),
+            topAlbum = dao.topAlbumsIn(from, to, 1).firstOrNull(),
+            newTracks = dao.newTracksIn(from, to),
+            peakHour = byHour.indices.maxByOrNull { byHour[it] } ?: 20,
+            byHour = byHour.toList(),
+            topWeekday = byDay.indices.maxByOrNull { byDay[it] } ?: 0,
+            activeDays = days.size,
+            streak = best,
+        )
+    }
+
+    // ---------- ярлыки с иконки ----------
+
+    /** Долгий тап по значку: «Продолжить», «Самое любимое», «Перемешать всё». */
+    fun runShortcut(action: String) {
+        viewModelScope.launch {
+            runCatching { conn.connect() }
+            when (action) {
+                "LOVED" -> {
+                    kotlinx.coroutines.withTimeoutOrNull(15_000) { tracks.first { it.isNotEmpty() } }
+                    lovedMode.value = 0
+                    playLoved(true)
+                }
+                "SHUFFLE_ALL" -> {
+                    val list = kotlinx.coroutines.withTimeoutOrNull(15_000) { tracks.first { it.isNotEmpty() } } ?: return@launch
+                    shuffle(list)
+                }
+                "CONTINUE" -> {
+                    // Очередь восстанавливается при запуске — ждём её и продолжаем.
+                    kotlinx.coroutines.withTimeoutOrNull(8_000) { player.first { it.currentId != null } }
+                    if (!player.value.isPlaying) conn.toggle()
+                    requestOpenPlayer()
+                }
+            }
+        }
+    }
+
+    // ---------- похожее ----------
+
+    /** Трек и за ним 30 похожих из библиотеки. */
+    fun playSimilar(t: TrackEntity) {
+        viewModelScope.launch {
+            val more = withContext(Dispatchers.IO) { app.lumen.player.data.Similar.pick(dao, listOf(t), emptySet(), 30) }
+            lovedMode.value = 0
+            conn.playTracks(listOf(t) + more, 0)
+        }
+    }
+
+    // ---------- свои теги и обложки ----------
+
+    suspend fun overrideOf(uri: String) = dao.override(uri)
+
+    fun saveTags(t: TrackEntity, title: String, artist: String, album: String, albumArtist: String, year: Int?) {
+        viewModelScope.launch {
+            fun pick(new: String, old: String) = new.trim().takeIf { it.isNotEmpty() && it != old }
+            val prev = dao.override(t.uri)
+            val o = app.lumen.player.data.TrackOverride(
+                uri = t.uri,
+                title = pick(title, t.title) ?: prev?.title?.takeIf { title.trim() == it },
+                artist = pick(artist, t.artist) ?: prev?.artist?.takeIf { artist.trim() == it },
+                album = pick(album, t.album) ?: prev?.album?.takeIf { album.trim() == it },
+                albumArtist = pick(albumArtist, t.albumArtist) ?: prev?.albumArtist?.takeIf { albumArtist.trim() == it },
+                year = year?.takeIf { it != t.year } ?: prev?.year?.takeIf { it == year },
+            )
+            dao.putOverride(o)
+            dao.insertTracks(listOf(app.lumen.player.data.applyOverride(t, o)))
+        }
+    }
+
+    /** Обложка альбома из Deezer по исполнителю и названию (несколько вариантов). */
+    suspend fun findCovers(t: TrackEntity): List<String> = withContext(Dispatchers.IO) {
+        runCatching { g.recs.findCovers(t.artist, t.title, t.album) }.getOrDefault(emptyList())
+    }
+
+    fun setCover(t: TrackEntity, url: String?, onDone: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    val bytes = url?.let { java.net.URL(it).openStream().use { s -> s.readBytes() } }
+                    // Обложка ставится на весь альбом: так выглядит аккуратнее.
+                    val targets = if (t.album.isNotBlank()) dao.albumTracksOnce(t.albumKey).map { it.uri }.ifEmpty { listOf(t.uri) } else listOf(t.uri)
+                    targets.forEach { app.lumen.player.data.Artwork.setCustom(getApplication(), it, bytes) }
+                }.isSuccess
+            }
+            onDone(ok)
+        }
+    }
+
+    fun setCoverFromGallery(t: TrackEntity, image: Uri, onDone: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    val app = getApplication<Application>()
+                    val src = app.contentResolver.openInputStream(image)?.use { android.graphics.BitmapFactory.decodeStream(it) } ?: error("no image")
+                    val side = minOf(src.width, src.height)
+                    val sq = android.graphics.Bitmap.createBitmap(src, (src.width - side) / 2, (src.height - side) / 2, side, side)
+                    val scaled = android.graphics.Bitmap.createScaledBitmap(sq, minOf(side, 1000), minOf(side, 1000), true)
+                    val bytes = java.io.ByteArrayOutputStream().also { scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, it) }.toByteArray()
+                    val targets = if (t.album.isNotBlank()) dao.albumTracksOnce(t.albumKey).map { it.uri }.ifEmpty { listOf(t.uri) } else listOf(t.uri)
+                    targets.forEach { app.lumen.player.data.Artwork.setCustom(app, it, bytes) }
+                }.isSuccess
+            }
+            onDone(ok)
+        }
+    }
+
+    // ---------- настройки звука и поведения ----------
+
+    val smartQueue = MutableStateFlow(g.prefs.smartQueue)
+    val normalize = MutableStateFlow(g.prefs.normalize)
+    val fadePause = MutableStateFlow(g.prefs.fadePause)
+    val resumeLong = MutableStateFlow(g.prefs.resumeLong)
+    val btResume = MutableStateFlow(g.prefs.btResume)
+    val lockScreen = MutableStateFlow(g.prefs.lockScreen)
+    fun setSmartQueue(v: Boolean) { g.prefs.smartQueue = v; smartQueue.value = v }
+    fun setNormalize(v: Boolean) {
+        g.prefs.normalize = v
+        normalize.value = v
+        val svc = app.lumen.player.playback.PlaybackService.instance
+        player.value.currentId?.let { id -> svc?.applyLoudness(id, ramp = true) }
+    }
+    fun setFadePause(v: Boolean) { g.prefs.fadePause = v; fadePause.value = v }
+    fun setResumeLong(v: Boolean) { g.prefs.resumeLong = v; resumeLong.value = v }
+    fun setBtResume(v: Boolean) { g.prefs.btResume = v; btResume.value = v }
+    fun setLockScreen(v: Boolean) { g.prefs.lockScreen = v; lockScreen.value = v }
+
+    // ---------- скорость (удержание в плеере) ----------
+
+    fun setSpeed(s: Float) = conn.setSpeed(s)
+    fun seekBy(ms: Long) = conn.seekBy(ms)
+
     // ---------- обновления по воздуху ----------
 
     val updateState = MutableStateFlow<UpdateUi>(UpdateUi.Idle)
@@ -872,6 +1088,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setSleepMillis(ms: Long?) = g.sleepTimer.setMillis(ms)
+    fun sleepEndOfTrack() {
+        val p = player.value
+        if (p.durationMs <= 0) return
+        g.sleepTimer.endOfTrack((p.durationMs - position()).coerceAtLeast(1_000L))
+    }
 
     // ---------- статистика ----------
 
@@ -998,6 +1219,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         toInsert.chunked(500).forEach { dao.insertListens(it) }
                     }
 
+                    root.optJSONArray("playlists")?.let { pls ->
+                        val existing = dao.allPlaylists().map { it.name }.toHashSet()
+                        for (i in 0 until pls.length()) {
+                            val o = pls.getJSONObject(i)
+                            val name = o.optString("name").ifBlank { "Плейлист" }
+                            val ids = o.optJSONArray("tracks") ?: continue
+                            val uris = (0 until ids.length()).mapNotNull { mapped.getOrNull(ids.optInt(it, -1)) }.distinct()
+                            if (name in existing || uris.isEmpty()) continue
+                            val now = System.currentTimeMillis()
+                            val id = dao.insertPlaylist(app.lumen.player.data.PlaylistEntity(name = name, createdAt = o.optLong("createdAt", now), updatedAt = now))
+                            dao.addToPlaylist(id, uris)
+                        }
+                    }
+                    root.optJSONArray("overrides")?.let { ovs ->
+                        for (i in 0 until ovs.length()) {
+                            val o = ovs.getJSONObject(i)
+                            val uri = mapped.getOrNull(o.optInt("t", -1)) ?: continue
+                            fun str(k: String) = if (o.isNull(k)) null else o.optString(k)
+                            val ov = app.lumen.player.data.TrackOverride(uri, str("title"), str("artist"), str("album"), str("albumArtist"), if (o.isNull("year")) null else o.optInt("year"))
+                            dao.putOverride(ov)
+                            dao.byUri(uri)?.let { t -> dao.insertTracks(listOf(app.lumen.player.data.applyOverride(t, ov))) }
+                        }
+                    }
                     root.optJSONArray("excludedFolders")?.let { ex ->
                         val list = (0 until ex.length()).map { app.lumen.player.data.ExcludedFolder(ex.getString(it)) }
                         if (list.isNotEmpty()) dao.addExcluded(list)
@@ -1199,3 +1443,20 @@ sealed interface UpdateUi {
     data class Installing(val release: Release) : UpdateUi
     data class Error(val message: String, val release: Release?) : UpdateUi
 }
+
+data class SheetTrack(val track: TrackEntity, val edit: Boolean)
+
+data class WrappedData(
+    val monthName: String,
+    val totalMs: Long,
+    val plays: Int,
+    val topArtists: List<app.lumen.player.data.TopName>,
+    val topTracks: List<app.lumen.player.data.TopTrack>,
+    val topAlbum: app.lumen.player.data.TopName?,
+    val newTracks: Int,
+    val peakHour: Int,
+    val byHour: List<Long>,
+    val topWeekday: Int,
+    val activeDays: Int,
+    val streak: Int,
+)

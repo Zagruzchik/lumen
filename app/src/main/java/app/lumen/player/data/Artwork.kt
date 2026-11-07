@@ -26,6 +26,26 @@ object Artwork {
 
     fun peek(uri: String?, size: Int): Bitmap? = uri?.let { cache.get("$it@$size") }
 
+    /** Меняется, когда пользователь поставил свою обложку — экраны перечитывают картинки. */
+    val revision = kotlinx.coroutines.flow.MutableStateFlow(0)
+
+    private fun customFile(context: Context, uri: String): java.io.File {
+        val h = java.security.MessageDigest.getInstance("SHA-1").digest(uri.toByteArray())
+            .joinToString("") { "%02x".format(it) }
+        return java.io.File(java.io.File(context.filesDir, "covers").apply { mkdirs() }, "$h.jpg")
+    }
+
+    /** Своя обложка для трека (из Deezer или из галереи). null — вернуть встроенную. */
+    fun setCustom(context: Context, uri: String, bytes: ByteArray?) {
+        val f = customFile(context, uri)
+        if (bytes == null) f.delete() else f.writeBytes(bytes)
+        cache.snapshot().keys.filter { it.startsWith("$uri@") }.forEach { cache.remove(it) }
+        missing.remove(uri)
+        revision.value++
+    }
+
+    fun hasCustom(context: Context, uri: String) = customFile(context, uri).exists()
+
     suspend fun load(context: Context, uri: String, size: Int): Bitmap? {
         peek(uri, size)?.let { return it }
         if (uri in missing) return null
@@ -44,7 +64,8 @@ object Artwork {
     }
 
     private fun decode(context: Context, uri: Uri, size: Int): Bitmap? {
-        val bytes = embedded(context, uri)
+        val custom = customFile(context, uri.toString())
+        val bytes = if (custom.exists()) custom.readBytes() else embedded(context, uri)
         if (bytes != null) {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
