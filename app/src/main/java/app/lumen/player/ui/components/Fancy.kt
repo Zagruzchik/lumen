@@ -15,7 +15,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.graphics.graphicsLayer
@@ -155,29 +156,59 @@ fun CometSlider(
     onSeek: (Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var dragging by remember { mutableStateOf(false) }
-    var dragFrac by remember { mutableFloatStateOf(0f) }
+    // Свежие значения для жеста (сам жест создаётся один раз).
+    val frac by rememberUpdatedState(fraction.coerceIn(0f, 1f))
     val seekState by rememberUpdatedState(onSeek)
-    val shown = if (dragging) dragFrac else fraction.coerceIn(0f, 1f)
-    val thick by animateFloatAsState(if (dragging) 1f else 0f, spring(dampingRatio = 0.7f), label = "thick")
+    var drag by remember { mutableStateOf<Float?>(null) }
+    // После отпускания держим выбранное место, пока плеер не догонит, — чтобы полоса не дёргалась назад.
+    var pending by remember { mutableStateOf<Float?>(null) }
+    androidx.compose.runtime.LaunchedEffect(pending) {
+        if (pending != null) {
+            kotlinx.coroutines.delay(1500)
+            pending = null
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(fraction) {
+        val p = pending
+        if (p != null && kotlin.math.abs(fraction - p) < 0.01f) pending = null
+    }
+    val shown = drag ?: pending ?: fraction.coerceIn(0f, 1f)
+    val thick by animateFloatAsState(if (drag != null) 1f else 0f, spring(dampingRatio = 0.7f), label = "thick")
     Canvas(
         modifier
             .fillMaxWidth()
-            .height(28.dp)
+            .height(32.dp)
             .pointerInput(Unit) {
-                detectHorizontalDragGestures(
-                    onDragStart = {
-                        dragFrac = fraction.coerceIn(0f, 1f)
-                        dragging = true
-                    },
-                    onDragEnd = {
-                        seekState(dragFrac)
-                        dragging = false
-                    },
-                    onDragCancel = { dragging = false },
-                ) { change, dx ->
-                    change.consume()
-                    dragFrac = (dragFrac + dx / size.width).coerceIn(0f, 1f)
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    down.consume()
+                    // Касание само по себе ничего не перематывает: важно только движение пальца.
+                    var moved = false
+                    var travelled = 0f
+                    var value = frac
+                    while (true) {
+                        val ev = awaitPointerEvent()
+                        val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!ch.pressed) break
+                        val dx = ch.position.x - ch.previousPosition.x
+                        ch.consume()
+                        if (!moved) {
+                            travelled += kotlin.math.abs(dx)
+                            if (travelled > viewConfiguration.touchSlop / 2f) {
+                                moved = true
+                                value = frac
+                                drag = value
+                            }
+                            continue
+                        }
+                        value = (value + dx / size.width).coerceIn(0f, 1f)
+                        drag = value
+                    }
+                    if (moved) {
+                        pending = value
+                        seekState(value)
+                    }
+                    drag = null
                 }
             }
     ) {
