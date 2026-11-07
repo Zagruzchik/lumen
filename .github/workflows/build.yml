@@ -45,6 +45,23 @@ jobs:
           git commit -qm "build ${GITHUB_SHA}"
           git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" ci-out
 
+      - name: Archive version in GitHub Releases
+        if: success() && github.ref == 'refs/heads/main'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          NAME=$(grep -Eo 'versionName *= *"[^"]+"' app/build.gradle.kts | sed -E 's/.*"(.*)"/\1/')
+          cp "$APK" "lumen-$NAME.apk"
+          git log -1 --format=%B | grep -vE '^(Co-Authored-By|Claude-Session):' > notes.md
+          # Постоянный архив всех версий: Supabase хранит только последние, тут — все.
+          if gh release view "v$NAME" > /dev/null 2>&1; then
+            gh release upload "v$NAME" "lumen-$NAME.apk" --clobber
+          else
+            gh release create "v$NAME" "lumen-$NAME.apk" --title "Lumen $NAME" --notes-file notes.md --target "$GITHUB_SHA"
+          fi
+
       - name: Publish OTA update to Supabase
         if: success() && github.ref == 'refs/heads/main'
         continue-on-error: true
