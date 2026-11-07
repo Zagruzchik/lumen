@@ -83,6 +83,7 @@ import app.lumen.player.ui.theme.BuiltinThemes
 import app.lumen.player.ui.theme.LC
 import app.lumen.player.ui.theme.LocalAccent
 import app.lumen.player.ui.theme.ThemeJson
+import app.lumen.player.ui.theme.ThemeGuide
 import app.lumen.player.ui.theme.ThemeSpec
 import app.lumen.player.ui.theme.ThemeStore
 import kotlin.math.roundToInt

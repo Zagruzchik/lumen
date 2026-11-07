@@ -178,7 +178,7 @@ private fun LockScreen(conn: PlayerConnection, onUnlock: () -> Unit) {
         Box(
             Modifier
                 .fillMaxSize()
-                .background(Color(0xFF07070D))
+                .background(app.lumen.player.ui.theme.ThemeStore.current.background)
                 .pointerInput(Unit) {
                     detectVerticalDragGestures(
                         onDragEnd = {
