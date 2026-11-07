@@ -1223,6 +1223,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     val trimTrack = MutableStateFlow<TrackEntity?>(null)
 
+    // ---------- Last.fm и синхронизация с ПК ----------
+
+    val lastFm = g.lastFm.state
+    fun lastFmSetKeys(key: String, secret: String) = g.lastFm.setKeys(key, secret)
+    fun lastFmLogin(user: String, pass: String) = viewModelScope.launch { if (g.lastFm.login(user, pass)) toast("Last.fm подключён") }
+    fun lastFmLogout() = g.lastFm.logout()
+    fun lastFmEnabled(on: Boolean) = g.lastFm.setEnabled(on)
+
+    val syncState = g.sync.state
+    fun syncSignIn(email: String, pass: String, create: Boolean) = viewModelScope.launch {
+        if (g.sync.signIn(email, pass, create)) {
+            if (g.sync.sync()) toast("Библиотека синхронизирована")
+        }
+    }
+    fun syncNow() = viewModelScope.launch { if (g.sync.sync()) toast("Синхронизировано") }
+    fun syncSignOut() = g.sync.signOut()
+
     // ---------- машина, будильник, ночные часы ----------
 
     val carMode = MutableStateFlow(false)
@@ -1390,6 +1407,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Возврат в приложение: свои папки Android не отслеживает, поэтому заглядываем в них сами. */
     fun onAppResume() {
         if (!hasPermission.value) return
+        val st = g.sync.state.value
+        if (st.email != null && !st.busy && System.currentTimeMillis() - st.lastSyncAt > 15 * 60_000L) {
+            viewModelScope.launch { g.sync.sync() }
+        }
+        viewModelScope.launch { g.lastFm.flush() }
         if (g.prefs.folders.isNotEmpty() && g.scanner.lastScanAt > 0 && System.currentTimeMillis() - g.scanner.lastScanAt > 3 * 60_000L) g.rescan()
     }
 

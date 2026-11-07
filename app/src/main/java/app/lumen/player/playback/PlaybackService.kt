@@ -124,6 +124,7 @@ class PlaybackService : MediaLibraryService() {
                 if (!isPlaying) saveLongPosition(player)
                 requestTileUpdate()
                 if (isPlaying) {
+                    sendNowPlaying(player)
                     pendingPlayCount?.let { record(it) }
                     if (listenUri == null) beginListen(player)
                     segmentStart = now
@@ -757,6 +758,7 @@ class PlaybackService : MediaLibraryService() {
     private var lastStoppedAt = 0L
 
     private fun beginListen(p: Player) {
+        sendNowPlaying(p)
         listenUri = p.currentMediaItem?.mediaId
         listenStartedAt = System.currentTimeMillis()
         listenAccum = 0L
@@ -782,7 +784,22 @@ class PlaybackService : MediaLibraryService() {
             completed = completed,
         )
         val g = applicationContext.graph
-        g.appScope.launch { runCatching { g.dao.insertListen(entity) } }
+        val started = listenStartedAt
+        g.appScope.launch {
+            runCatching { g.dao.insertListen(entity) }
+            runCatching { g.dao.byUri(uri)?.let { t -> g.lastFm.maybeScrobble(t, started, total) } }
+        }
+    }
+
+    private var nowPlayingSent: String? = null
+
+    /** «Сейчас играет» в Last.fm — один раз на трек. */
+    private fun sendNowPlaying(p: Player) {
+        val id = p.currentMediaItem?.mediaId ?: return
+        if (!p.isPlaying || id == nowPlayingSent) return
+        nowPlayingSent = id
+        val g = applicationContext.graph
+        g.appScope.launch { runCatching { g.dao.byUri(id)?.let { g.lastFm.nowPlaying(it) } } }
     }
 
     private fun record(id: String) {

@@ -55,6 +55,8 @@ class AppGraph(val context: Context) {
     val sleepTimer = SleepTimer(appScope, player)
     val eq = EqController(prefs)
     val autoEq = app.lumen.player.playback.AutoEqEngine(context, prefs)
+    val lastFm = app.lumen.player.data.LastFm(context, appScope)
+    val sync by lazy { app.lumen.player.data.LibrarySync(context, db.dao(), prefs) }
     val beats = app.lumen.player.playback.BeatAnalyzer(context)
     val recs = app.lumen.player.data.RecommendationsRepository(context, db.dao(), prefs)
     val updates = app.lumen.player.data.UpdateRepository(context)

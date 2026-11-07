@@ -557,6 +557,10 @@ fun SettingsScreen(
             }
         }
 
+        // ---------- аккаунт и Last.fm ----------
+        item { Card { SyncSection(vm) } }
+        item { Card { LastFmSection(vm) } }
+
         // ---------- будильник ----------
         item { Card { AlarmSection(vm) } }
 
