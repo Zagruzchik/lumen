@@ -489,7 +489,26 @@ fun LibraryScreen(
     bottomPad: Dp,
 ) {
     Box(Modifier.fillMaxSize()) {
-        LibraryContent(vm, nav, actions, tab, onTab, bottomPad + 78.dp)
+        // Смена раздела: новый въезжает со стороны, куда двигались по панели, старый мягко уходит.
+        androidx.compose.animation.AnimatedContent(
+            targetState = tab,
+            transitionSpec = {
+                val from = LIB_CATS.indexOfFirst { it.first == initialState }
+                val to = LIB_CATS.indexOfFirst { it.first == targetState }
+                val dir = if (to >= from) 1 else -1
+                val spec = androidx.compose.animation.core.tween<androidx.compose.ui.unit.IntOffset>(420, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                (androidx.compose.animation.slideInHorizontally(spec) { w -> dir * w / 6 } +
+                    androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(380, delayMillis = 60)) +
+                    androidx.compose.animation.scaleIn(androidx.compose.animation.core.tween(420), initialScale = 0.97f)) togetherWith
+                    (androidx.compose.animation.slideOutHorizontally(spec) { w -> -dir * w / 6 } +
+                        androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(220)) +
+                        androidx.compose.animation.scaleOut(androidx.compose.animation.core.tween(420), targetScale = 0.97f))
+            },
+            label = "libTab",
+            modifier = Modifier.fillMaxSize(),
+        ) { t ->
+            LibraryContent(vm, nav, actions, t, onTab, bottomPad + 78.dp)
+        }
         CategoryDock(
             tab = tab,
             onTab = onTab,

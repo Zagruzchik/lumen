@@ -820,6 +820,23 @@ internal fun LyricsList(
                 spring(dampingRatio = 0.9f, stiffness = 120f),
                 label = "ls",
             )
+            // Долгая пауза перед строкой (или долгое вступление) — за 3 секунды до начала
+            // появляется отсчёт: три точки загораются по одной.
+            if (synced && l.timeMs >= 0) {
+                val gapStart = if (i == 0) 0L else lines[i - 1].timeMs
+                val longGap = if (i == 0) l.timeMs >= 4_000 else l.timeMs - gapStart >= 7_000
+                val inCountdown = longGap && position >= l.timeMs - 3_000 && position < l.timeMs
+                androidx.compose.animation.AnimatedVisibility(
+                    inCountdown,
+                    enter = androidx.compose.animation.expandVertically(spring(dampingRatio = 0.85f, stiffness = 220f)) + fadeIn(tween(400)),
+                    exit = androidx.compose.animation.shrinkVertically(tween(420, easing = FastOutSlowInEasing)) + fadeOut(tween(250)),
+                ) {
+                    CountdownDots(
+                        progress = ((position - (l.timeMs - 3_000)).toFloat() / 3_000f).coerceIn(0f, 1f),
+                        big = big,
+                    )
+                }
+            }
             Text(
                 l.text.ifBlank { "♪" },
                 fontSize = when {
@@ -845,6 +862,45 @@ internal fun LyricsList(
                         } else Modifier
                     )
                     .padding(vertical = if (big) 10.dp else 8.dp),
+            )
+        }
+    }
+}
+
+/** Отсчёт до начала строки: три точки дышат и загораются по одной, по точке в секунду. */
+@Composable
+private fun CountdownDots(progress: Float, big: Boolean) {
+    val p by animateFloatAsState(progress, tween(220, easing = androidx.compose.animation.core.LinearEasing), label = "cd")
+    val breath by rememberInfiniteTransition(label = "cdb").animateFloat(
+        0f, 1f,
+        infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "cdBreath",
+    )
+    val d = if (big) 14.dp else 11.dp
+    Row(
+        Modifier
+            .padding(top = if (big) 14.dp else 10.dp, bottom = if (big) 6.dp else 4.dp)
+            .graphicsLayer {
+                val s = 1f + 0.06f * breath
+                scaleX = s
+                scaleY = s
+                transformOrigin = TransformOrigin(0f, 0.5f)
+            },
+        horizontalArrangement = Arrangement.spacedBy(if (big) 12.dp else 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        repeat(3) { k ->
+            val f = (p * 3f - k).coerceIn(0f, 1f)
+            Box(
+                Modifier
+                    .size(d)
+                    .graphicsLayer {
+                        val s = 0.7f + 0.3f * f
+                        scaleX = s
+                        scaleY = s
+                    }
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.25f + 0.75f * f))
             )
         }
     }
