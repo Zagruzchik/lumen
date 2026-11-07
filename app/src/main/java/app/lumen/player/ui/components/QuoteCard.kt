@@ -217,7 +217,7 @@ fun QuoteSheet(req: QuoteRequest, onClose: () -> Unit, onToast: (String) -> Unit
                     .background(androidx.compose.ui.graphics.Color(0x14FFFFFF)),
                 contentAlignment = androidx.compose.ui.Alignment.Center,
             ) {
-                androidx.compose.animation.Crossfade(bmp, androidx.compose.animation.core.tween(260), label = "quote") { b ->
+                androidx.compose.animation.Crossfade(bmp, animationSpec = androidx.compose.animation.core.tween(260), label = "quote") { b ->
                     if (b != null) {
                         androidx.compose.foundation.Image(
                             b.asImageBitmap(),
