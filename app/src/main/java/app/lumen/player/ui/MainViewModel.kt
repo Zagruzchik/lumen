@@ -875,14 +875,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val ok = withContext(Dispatchers.IO) {
                 runCatching {
-                    val app = getApplication<Application>()
-                    val src = app.contentResolver.openInputStream(image)?.use { android.graphics.BitmapFactory.decodeStream(it) } ?: error("no image")
+                    val ctxApp = getApplication<Application>()
+                    val src = ctxApp.contentResolver.openInputStream(image)?.use { android.graphics.BitmapFactory.decodeStream(it) } ?: error("no image")
                     val side = minOf(src.width, src.height)
                     val sq = android.graphics.Bitmap.createBitmap(src, (src.width - side) / 2, (src.height - side) / 2, side, side)
                     val scaled = android.graphics.Bitmap.createScaledBitmap(sq, minOf(side, 1000), minOf(side, 1000), true)
                     val bytes = java.io.ByteArrayOutputStream().also { scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, it) }.toByteArray()
                     val targets = if (t.album.isNotBlank()) dao.albumTracksOnce(t.albumKey).map { it.uri }.ifEmpty { listOf(t.uri) } else listOf(t.uri)
-                    targets.forEach { app.lumen.player.data.Artwork.setCustom(app, it, bytes) }
+                    targets.forEach { app.lumen.player.data.Artwork.setCustom(ctxApp, it, bytes) }
                 }.isSuccess
             }
             onDone(ok)
