@@ -471,13 +471,13 @@ private fun LibraryTitle(tab: Int) {
         },
         label = "libTitle",
     ) { t ->
-        Text(LIB_CATS.firstOrNull { it.first == t }?.second ?: "Папки", fontSize = 15.sp, color = LC.Dim)
+        Text(LIB_CATS.firstOrNull { it.first == t }?.second ?: "Треки", fontSize = 15.sp, color = LC.Dim)
     }
     Spacer(Modifier.height(10.dp))
 }
 
 /** Категории библиотеки в нижней панели: номер вкладки → название. */
-private val LIB_CATS = listOf(4 to "Плейлисты", 0 to "Треки", 1 to "Альбомы", 2 to "Артисты")
+private val LIB_CATS = listOf(4 to "Плейлисты", 0 to "Треки", 1 to "Альбомы", 2 to "Артисты", 3 to "Папки")
 
 @Composable
 fun LibraryScreen(
@@ -1279,7 +1279,7 @@ private fun CategoryDock(tab: Int, onTab: (Int) -> Unit, modifier: Modifier = Mo
                 val on = i == shownIndex
                 val c by androidx.compose.animation.animateColorAsState(if (on) Color.White else LC.Dim, androidx.compose.animation.core.tween(200), label = "dockC")
                 Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                    Text(name, fontSize = 14.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Medium, color = c, maxLines = 1)
+                    Text(name, fontSize = 12.5.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Medium, color = c, maxLines = 1, softWrap = false)
                 }
             }
         }
