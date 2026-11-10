@@ -159,6 +159,15 @@ fun LazyListScope.playlistsTab(
             }
         }
     }
+    item(key = "quickLists") {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            PillButton("История", LIcons.Clock, { nav.open(app.lumen.player.ui.Dest.History) }, Modifier.weight(1f), primary = false)
+            PillButton("Новое", LIcons.Sparkle, { nav.open(app.lumen.player.ui.Dest.Recent) }, Modifier.weight(1f), primary = false)
+        }
+    }
     smartPlaylistRows(nav, smart)
     if (list.isEmpty()) {
         item(key = "plEmpty") {

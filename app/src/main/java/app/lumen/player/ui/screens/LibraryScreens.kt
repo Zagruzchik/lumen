@@ -578,7 +578,8 @@ private fun LibraryContent(
             }
         }
         else -> {
-            val tracks by vm.tracks.collectAsStateWithLifecycle()
+            val tracks by vm.sortedTracks.collectAsStateWithLifecycle()
+            val sort by vm.songSort.collectAsStateWithLifecycle()
             val artists by vm.artists.collectAsStateWithLifecycle()
             val folders by vm.folders.collectAsStateWithLifecycle()
             val favs by vm.favoriteUris.collectAsStateWithLifecycle()
@@ -599,6 +600,19 @@ private fun LibraryContent(
                             ) {
                                 PillButton("Слушать", LIcons.Play, { vm.play(tracks, 0) }, Modifier.weight(1f))
                                 PillButton("Перемешать", LIcons.Shuffle, { vm.shuffle(tracks) }, Modifier.weight(1f), primary = false)
+                            }
+                        }
+                        item {
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 20.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.padding(bottom = 6.dp),
+                            ) {
+                                items(SONG_SORTS.size) { i ->
+                                    val on = sort.first == i
+                                    val arrow = if (!on) "" else if (sort.second) " ↑" else " ↓"
+                                    app.lumen.player.ui.components.LChip(SONG_SORTS[i] + arrow, on) { vm.setSongSort(i) }
+                                }
                             }
                         }
                         itemsIndexed(tracks, key = { _, t -> t.uri }) { i, t ->
@@ -1345,4 +1359,41 @@ private fun CategoryDock(tab: Int, onTab: (Int) -> Unit, modifier: Modifier = Mo
             }
         }
     }
+}
+
+
+/** Варианты сортировки вкладки «Треки» (повторное нажатие разворачивает порядок). */
+val SONG_SORTS = listOf("Название", "Исполнитель", "Альбом", "Новые", "Частые", "Длительность", "Год")
+
+
+/** Простой экран-список: история прослушиваний, недавно добавленные. */
+@Composable
+fun ListScreen(
+    vm: MainViewModel,
+    nav: Nav,
+    actions: TrackActions,
+    bottomPad: Dp,
+    title: String,
+    caption: String,
+    seed: String,
+    flow: kotlinx.coroutines.flow.Flow<List<TrackEntity>>,
+) {
+    val tracks by flow.collectAsState(initial = emptyList())
+    CollectionScreen(
+        vm = vm,
+        nav = nav,
+        actions = actions,
+        bottomPad = bottomPad,
+        title = title,
+        link = null,
+        onLink = null,
+        subtitle = caption + " · " + pluralRu(tracks.size, "трек", "трека", "треков"),
+        badge = null,
+        coverUri = tracks.firstOrNull()?.uri,
+        seed = seed,
+        round = false,
+        tracks = tracks,
+        numbered = false,
+        discs = false,
+    )
 }

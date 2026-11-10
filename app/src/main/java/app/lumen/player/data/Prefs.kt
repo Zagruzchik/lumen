@@ -44,6 +44,15 @@ class Prefs(context: Context) {
         get() = sp.getInt("seenVersion", 0)
         set(v) = sp.edit().putInt("seenVersion", v).apply()
 
+    /** Сортировка вкладки «Треки»: 0 по названию, 1 исполнитель, 2 альбом, 3 новые, 4 частые, 5 длительность, 6 год. */
+    var songSort: Int
+        get() = sp.getInt("songSort", 0)
+        set(v) = sp.edit().putInt("songSort", v).apply()
+
+    var songSortDesc: Boolean
+        get() = sp.getBoolean("songSortDesc", false)
+        set(v) = sp.edit().putBoolean("songSortDesc", v).apply()
+
     var bassStrength: Int
         get() = sp.getInt("bassStrength", 0)
         set(v) = sp.edit().putInt("bassStrength", v).apply()

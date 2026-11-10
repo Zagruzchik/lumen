@@ -131,6 +131,8 @@ sealed interface Dest {
     data class Artist(val name: String) : Dest
     data class Folder(val path: String, val name: String) : Dest
     data class Genre(val name: String) : Dest
+    data object History : Dest
+    data object Recent : Dest
     data object Stats : Dest
     data object Recs : Dest
     data class Playlist(val id: Long) : Dest
@@ -512,6 +514,8 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                         is Dest.Artist -> ArtistScreen(vm, d.name, nav, actions, bottomPad)
                         is Dest.Folder -> FolderScreen(vm, d.path, d.name, nav, actions, bottomPad)
                         is Dest.Genre -> app.lumen.player.ui.screens.GenreScreen(vm, d.name, nav, actions, bottomPad)
+                        Dest.History -> app.lumen.player.ui.screens.ListScreen(vm, nav, actions, bottomPad, "История", "Недавно слушал", "history", remember { vm.historyTracks() })
+                        Dest.Recent -> app.lumen.player.ui.screens.ListScreen(vm, nav, actions, bottomPad, "Недавно добавленные", "Новое в библиотеке", "recent", remember { vm.recentlyAdded() })
                         is Dest.Playlist -> app.lumen.player.ui.screens.PlaylistScreen(vm, d.id, nav, actions, bottomPad)
                         Dest.Wrapped -> app.lumen.player.ui.screens.WrappedScreen(vm, nav)
                         is Dest.ThemeEditor -> app.lumen.player.ui.screens.ThemeEditorScreen(d.baseId, nav)

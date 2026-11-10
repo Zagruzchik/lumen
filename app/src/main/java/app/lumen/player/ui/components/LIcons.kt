@@ -78,5 +78,6 @@ object LIcons {
     val Car = stroke("car", "M5 16V11l2-5h10l2 5v5", "M3 16h18v3H3z", circle(7.5f, 13.2f, 1f), circle(16.5f, 13.2f, 1f))
     val Download = stroke("download", "M12 4v11", "M7.5 10.5L12 15l4.5-4.5", "M5 19h14")
     val Globe = stroke("globe", circle(12f, 12f, 8.5f), "M3.5 12h17", "M12 3.5c2.6 2.4 3.8 5.2 3.8 8.5s-1.2 6.1-3.8 8.5", "M12 3.5c-2.6 2.4-3.8 5.2-3.8 8.5s1.2 6.1 3.8 8.5")
+    val Clock = stroke("clock", circle(12f, 12f, 9f), "M12 7v5l3.5 2")
     val Info = stroke("info", circle(12f, 12f, 9f), "M12 11v6", "M12 7.5v.5")
 }

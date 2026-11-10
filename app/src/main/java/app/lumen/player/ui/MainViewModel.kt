@@ -78,6 +78,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         stateIn(viewModelScope, SharingStarted.Eagerly, initial)
 
     val tracks = dao.tracks().state(emptyList())
+    /** Сортировка вкладки «Треки» (номер из SONG_SORTS) и направление. */
+    val songSort = MutableStateFlow(g.prefs.songSort to g.prefs.songSortDesc)
+    val sortedTracks = combine(tracks, songSort, dao.playsFlow()) { list, (mode, desc), plays ->
+        val counts = if (mode == 4) plays.associate { it.uri to it.count } else emptyMap()
+        val coll = java.text.Collator.getInstance().apply { strength = java.text.Collator.PRIMARY }
+        val cmp: Comparator<TrackEntity> = when (mode) {
+            1 -> compareBy<TrackEntity, String>(coll) { it.artist }.thenBy(coll) { it.album }.thenBy { it.discNo }.thenBy { it.trackNo }
+            2 -> compareBy<TrackEntity, String>(coll) { it.album }.thenBy { it.discNo }.thenBy { it.trackNo }
+            3 -> compareByDescending<TrackEntity> { it.dateAdded.let { d -> if (d in 1 until 10_000_000_000L) d * 1000 else d } }
+            4 -> compareByDescending<TrackEntity> { counts[it.uri] ?: 0 }.thenBy(coll) { it.title }
+            5 -> compareBy<TrackEntity> { it.durationMs }
+            6 -> compareByDescending<TrackEntity> { it.year }.thenBy(coll) { it.album }.thenBy { it.trackNo }
+            else -> compareBy(coll) { it.title }
+        }
+        list.sortedWith(if (desc) cmp.reversed() else cmp)
+    }.flowOn(Dispatchers.Default).state(emptyList())
+
+    fun historyTracks() = dao.historyTracks()
+    fun recentlyAdded() = dao.recentlyAdded()
+
+    fun setSongSort(mode: Int) {
+        val (cur, desc) = songSort.value
+        val v = if (cur == mode) mode to !desc else mode to false
+        g.prefs.songSort = v.first
+        g.prefs.songSortDesc = v.second
+        songSort.value = v
+    }
+
     val albums = dao.albums().state(emptyList())
     val recentAlbums = dao.recentAlbums().state(emptyList())
     // Исполнители считаются по каждому участнику: «A & B» — это и A, и B.

@@ -204,6 +204,19 @@ abstract class LibraryDao {
     @Query("SELECT * FROM plays")
     abstract suspend fun allPlays(): List<PlayStatEntity>
 
+    @Query("SELECT * FROM plays")
+    abstract fun playsFlow(): Flow<List<PlayStatEntity>>
+
+    /** Недавно слушанное: каждый трек один раз, по последнему прослушиванию. */
+    @Query(
+        """SELECT t.* FROM tracks t INNER JOIN (SELECT uri, MAX(startedAt) AS last FROM listens GROUP BY uri) l
+           ON l.uri = t.uri ORDER BY l.last DESC LIMIT 300"""
+    )
+    abstract fun historyTracks(): Flow<List<TrackEntity>>
+
+    @Query("SELECT * FROM tracks WHERE $VISIBLE ORDER BY dateAdded DESC LIMIT 200")
+    abstract fun recentlyAdded(): Flow<List<TrackEntity>>
+
     @Query("SELECT folder FROM excluded")
     abstract suspend fun excludedOnce(): List<String>
 
