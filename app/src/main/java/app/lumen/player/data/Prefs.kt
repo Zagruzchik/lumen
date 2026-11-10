@@ -163,4 +163,34 @@ class Prefs(context: Context) {
     var nightClock: Boolean
         get() = sp.getBoolean("nightClock", false)
         set(v) = sp.edit().putBoolean("nightClock", v).apply()
+
+    // ---------- онлайн (свой сервер music-api) ----------
+
+    var onlineServer: String
+        get() = sp.getString("onlineServer", "http://127.0.0.1:8787").orEmpty()
+        set(v) = sp.edit().putString("onlineServer", v).apply()
+
+    var onlineKey: String
+        get() = sp.getString("onlineKey", "").orEmpty()
+        set(v) = sp.edit().putString("onlineKey", v).apply()
+
+    /** soundcloud | youtube — где искать в первую очередь. */
+    var onlineSource: String
+        get() = sp.getString("onlineSource", "soundcloud").orEmpty()
+        set(v) = sp.edit().putString("onlineSource", v).apply()
+
+    /** Играть через сервер (MP3) вместо прямой ссылки CDN — для слабой сети или если HLS не идёт. */
+    var onlineViaServer: Boolean
+        get() = sp.getBoolean("onlineViaServer", false)
+        set(v) = sp.edit().putBoolean("onlineViaServer", v).apply()
+
+    /** Скачивать в MP3 (играет везде) вместо оригинального формата (лучше качество). */
+    var onlineDownloadMp3: Boolean
+        get() = sp.getBoolean("onlineDownloadMp3", false)
+        set(v) = sp.edit().putBoolean("onlineDownloadMp3", v).apply()
+
+    /** Лайкнул онлайн-трек — он сам скачивается в медиатеку. */
+    var onlineAutoDownload: Boolean
+        get() = sp.getBoolean("onlineAutoDownload", false)
+        set(v) = sp.edit().putBoolean("onlineAutoDownload", v).apply()
 }

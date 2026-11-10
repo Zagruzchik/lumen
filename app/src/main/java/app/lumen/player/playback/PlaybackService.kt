@@ -71,7 +71,9 @@ class PlaybackService : MediaLibraryService() {
             .setEnableAudioFloatOutput(true)
             // Скорость и тон — силами AudioTrack: так они работают и для 24-битного FLAC.
             .setEnableAudioTrackPlaybackParams(true)
+        app.lumen.player.data.Online.configure(applicationContext.graph.prefs)
         val player = ExoPlayer.Builder(this, renderers)
+            .setMediaSourceFactory(LumenMedia.sourceFactory(this))
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
@@ -187,8 +189,33 @@ class PlaybackService : MediaLibraryService() {
             applicationContext.graph.dao.trims().collect { list -> trims = list.associateBy { it.uri } }
         }
         player.addListener(object : Player.Listener {
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                // Онлайн-трек не пошёл: сначала пробуем через сервер (MP3), потом пропускаем.
+                val item = player.currentMediaItem ?: return
+                val id = item.mediaId
+                if (!app.lumen.player.data.Online.isOnline(id)) return
+                val idx = player.currentMediaItemIndex
+                if (id !in onlineRetried) {
+                    onlineRetried += id
+                    player.replaceMediaItem(idx, LumenMedia.playable(item, id, forceProxy = true))
+                    player.prepare()
+                    player.play()
+                } else if (player.hasNextMediaItem()) {
+                    player.seekToNextMediaItem()
+                    player.prepare()
+                    player.play()
+                }
+            }
+
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 val id = mediaItem?.mediaId
+                // Следующий онлайн-трек: просим сервер заранее достать ссылку — переход будет без паузы.
+                if (player.hasNextMediaItem()) {
+                    val next = player.getMediaItemAt(player.nextMediaItemIndex).mediaId
+                    if (app.lumen.player.data.Online.isOnline(next)) {
+                        applicationContext.graph.appScope.launch(Dispatchers.IO) { app.lumen.player.data.Online.warmUp(next) }
+                    }
+                }
                 if (abUri != null && abUri != id) abUri = null
                 // Обрезанное начало: сразу прыгаем к нужному месту.
                 val t = id?.let { trims[it] }
@@ -556,6 +583,9 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
+    /** Онлайн-треки, для которых уже пробовали запасной путь через сервер. */
+    private val onlineRetried = HashSet<String>()
+
     // ---------- обрезка и повтор A–B ----------
 
     @Volatile private var trims: Map<String, app.lumen.player.data.TrimEntity> = emptyMap()
@@ -683,11 +713,8 @@ class PlaybackService : MediaLibraryService() {
     private fun resolve(items: List<MediaItem>): List<MediaItem> = items.map { item ->
         when {
             item.localConfiguration != null -> item
-            item.mediaId.startsWith("ctx:") -> {
-                val uri = AutoLibrary.uriOf(item.mediaId)
-                item.buildUpon().setMediaId(uri).setUri(Uri.parse(uri)).build()
-            }
-            else -> item.buildUpon().setUri(Uri.parse(item.mediaId)).build()
+            item.mediaId.startsWith("ctx:") -> LumenMedia.playable(item, AutoLibrary.uriOf(item.mediaId))
+            else -> LumenMedia.playable(item, item.mediaId)
         }
     }
 

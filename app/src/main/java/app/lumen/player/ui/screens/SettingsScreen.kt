@@ -557,6 +557,9 @@ fun SettingsScreen(
             }
         }
 
+        // ---------- онлайн-музыка (свой сервер) ----------
+        item { Card { OnlineSection(vm) } }
+
         // ---------- аккаунт и Last.fm ----------
         item { Card { SyncSection(vm) } }
         item { Card { LastFmSection(vm) } }

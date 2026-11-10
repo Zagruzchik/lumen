@@ -391,17 +391,25 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
             onToggleFav = { vm.toggleFavorite(it.uri) },
             onOpenAlbum = {
                 closePlayer()
-                nav.open(Dest.Album(it.albumKey))
+                // У онлайн-трека нет альбома в библиотеке — ищем ещё треки исполнителя в сети.
+                if (app.lumen.player.data.Online.isOnline(it.uri)) {
+                    nav.tab(Dest.Home, null)
+                    vm.searchRequest.value = it.artist
+                } else nav.open(Dest.Album(it.albumKey))
             },
             onOpenArtist = {
                 closePlayer()
-                nav.open(Dest.Artist(app.lumen.player.data.Artists.main(it)))
+                if (app.lumen.player.data.Online.isOnline(it.uri)) {
+                    nav.tab(Dest.Home, null)
+                    vm.searchRequest.value = it.artist
+                } else nav.open(Dest.Artist(app.lumen.player.data.Artists.main(it)))
             },
             onAddToPlaylist = { vm.sheetTrack.value = app.lumen.player.ui.SheetTrack(it, edit = false) },
             onPlaySimilar = { vm.playSimilar(it) },
             onEdit = { vm.sheetTrack.value = app.lumen.player.ui.SheetTrack(it, edit = true) },
             onInfo = { vm.infoTrack.value = it },
             onDislike = { vm.toggleDislike(it) },
+            onDownload = { vm.downloadOnline(it) },
             onMenu = { t, fav, a -> vm.trackMenu.value = app.lumen.player.ui.components.TrackMenuRequest(t, fav, a) },
         )
     }

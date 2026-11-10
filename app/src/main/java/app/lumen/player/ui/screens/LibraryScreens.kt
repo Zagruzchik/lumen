@@ -121,6 +121,15 @@ fun HomeScreen(vm: MainViewModel, nav: Nav, actions: TrackActions, bottomPad: Dp
     val scanning by vm.scanning.collectAsStateWithLifecycle()
     val colors by vm.coverColors.collectAsStateWithLifecycle()
     var searchOpen by rememberSaveable { mutableStateOf(false) }
+    // Поиск, открытый из другого места (например, «ещё от исполнителя» у онлайн-трека).
+    val searchReq by vm.searchRequest.collectAsStateWithLifecycle()
+    androidx.compose.runtime.LaunchedEffect(searchReq) {
+        searchReq?.let {
+            searchOpen = true
+            vm.query.value = it
+            vm.searchRequest.value = null
+        }
+    }
     val forgotten by androidx.compose.runtime.produceState(emptyList<TrackEntity>(), tracks.size) {
         value = runCatching { vm.forgottenTracks() }.getOrDefault(emptyList())
     }
@@ -994,6 +1003,7 @@ private fun SearchResults(
     val online by vm.onlineResults.collectAsStateWithLifecycle()
     val onlineLoading by vm.onlineLoading.collectAsStateWithLifecycle()
     val onlineError by vm.onlineError.collectAsStateWithLifecycle()
+    val netReady by vm.onlineReady.collectAsStateWithLifecycle()
     val accent = LocalAccent.current
     val q = query.trim()
 
@@ -1028,54 +1038,59 @@ private fun SearchResults(
             }
         }
 
-        item(key = "oHead") {
-            Row(Modifier.fillMaxWidth().padding(end = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.weight(1f)) { SectionHeader("В сети") }
-                if (onlineLoading) CircularProgressIndicator(Modifier.size(18.dp), color = accent, strokeWidth = 2.dp)
+        if (netReady) {
+            // Свой сервер music-api: найденное можно слушать сразу.
+            netResultsSection(vm, q, currentId, favs, actions)
+        } else {
+            item(key = "oHead") {
+                Row(Modifier.fillMaxWidth().padding(end = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) { SectionHeader("В сети") }
+                    if (onlineLoading) CircularProgressIndicator(Modifier.size(18.dp), color = accent, strokeWidth = 2.dp)
+                }
             }
-        }
-        val list = online
-        when {
-            list == null && !onlineLoading -> {}
-            onlineError && list.isNullOrEmpty() -> item(key = "oErr") {
-                Text(
-                    "Нет связи — показаны только треки из библиотеки",
-                    color = LC.Dim,
-                    fontSize = 14.sp,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
-                )
-            }
-            list != null && list.isEmpty() && !onlineLoading -> item(key = "oNone") {
-                Text(
-                    "В сети ничего нового не нашлось",
-                    color = LC.Dim,
-                    fontSize = 14.sp,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
-                )
-            }
-            list != null -> items(list, key = { "o:" + it.key }) { r ->
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .animateItem()
-                        .clickable(onClickLabel = "Найти в интернете") { searchWeb(ctx, r.query) }
-                        .padding(horizontal = 20.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RemoteCover(r.cover, r.key, RoundedCornerShape(12.dp), Modifier.size(52.dp))
-                    Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(r.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(
-                            if (r.reason.isNotBlank()) "${r.artist} · ${r.reason}" else r.artist,
-                            fontSize = 13.sp,
-                            color = LC.Dim,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+            val list = online
+            when {
+                list == null && !onlineLoading -> {}
+                onlineError && list.isNullOrEmpty() -> item(key = "oErr") {
+                    Text(
+                        "Нет связи — показаны только треки из библиотеки",
+                        color = LC.Dim,
+                        fontSize = 14.sp,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                    )
+                }
+                list != null && list.isEmpty() && !onlineLoading -> item(key = "oNone") {
+                    Text(
+                        "В сети ничего нового не нашлось",
+                        color = LC.Dim,
+                        fontSize = 14.sp,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                    )
+                }
+                list != null -> items(list, key = { "o:" + it.key }) { r ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .animateItem()
+                            .clickable(onClickLabel = "Найти в интернете") { searchWeb(ctx, r.query) }
+                            .padding(horizontal = 20.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RemoteCover(r.cover, r.key, RoundedCornerShape(12.dp), Modifier.size(52.dp))
+                        Spacer(Modifier.width(14.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(r.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                if (r.reason.isNotBlank()) "${r.artist} · ${r.reason}" else r.artist,
+                                fontSize = 13.sp,
+                                color = LC.Dim,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Icon(LIcons.Search, "Найти в интернете", Modifier.size(20.dp), tint = LC.Dim)
                     }
-                    Spacer(Modifier.width(8.dp))
-                    Icon(LIcons.Search, "Найти в интернете", Modifier.size(20.dp), tint = LC.Dim)
                 }
             }
         }

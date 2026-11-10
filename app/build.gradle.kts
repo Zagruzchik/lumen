@@ -13,8 +13,8 @@ android {
         applicationId = "app.lumen.player"
         minSdk = 26
         targetSdk = 35
-        versionCode = 44
-        versionName = "0.19.0"
+        versionCode = 45
+        versionName = "0.20.0"
     }
 
     signingConfigs {
@@ -73,6 +73,7 @@ dependencies {
 
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-session:1.5.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
     implementation("androidx.glance:glance-appwidget:1.1.1")
     implementation("com.google.guava:guava:33.3.1-android")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")

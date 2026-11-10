@@ -59,12 +59,38 @@ object Artwork {
         cache.get(key)?.let { return it }
         if (uri in missing) return null
         val bmp = runCatching { decode(context, Uri.parse(uri), size) }.getOrNull()
-        if (bmp == null) missing.add(uri) else cache.put(key, bmp)
+        // Онлайн-обложку не помечаем «нет»: сеть могла просто моргнуть.
+        if (bmp == null) { if (!Online.isOnline(uri)) missing.add(uri) } else cache.put(key, bmp)
         return bmp
+    }
+
+    /** Как найти адрес обложки онлайн-трека, если его нет в памяти (ставит AppGraph). */
+    @Volatile var onlineThumbLookup: ((String) -> String?)? = null
+
+    /** Обложка онлайн-трека: качаем картинку и обрезаем до квадрата (у YouTube превью 16:9). */
+    private fun onlineCover(context: Context, uri: String, size: Int): Bitmap? {
+        val url = Online.thumbs[uri] ?: onlineThumbLookup?.invoke(uri) ?: return null
+        val h = java.security.MessageDigest.getInstance("SHA-1").digest(url.toByteArray()).joinToString("") { "%02x".format(it) }
+        val f = java.io.File(java.io.File(context.cacheDir, "othumb").apply { mkdirs() }, h)
+        val bytes = if (f.exists()) f.readBytes() else runCatching {
+            val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+            c.connectTimeout = 8000
+            c.readTimeout = 12000
+            try { c.inputStream.use { it.readBytes() }.also { f.writeBytes(it) } } finally { c.disconnect() }
+        }.getOrNull() ?: return null
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        var sample = 1
+        while (minOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= size) sample *= 2
+        val full = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample }) ?: return null
+        val side = minOf(full.width, full.height)
+        if (full.width == full.height) return full
+        return Bitmap.createBitmap(full, (full.width - side) / 2, (full.height - side) / 2, side, side)
     }
 
     private fun decode(context: Context, uri: Uri, size: Int): Bitmap? {
         val custom = customFile(context, uri.toString())
+        if (!custom.exists() && Online.isOnline(uri.toString())) return onlineCover(context, uri.toString(), size)
         val bytes = if (custom.exists()) custom.readBytes() else embedded(context, uri)
         if (bytes != null) {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }

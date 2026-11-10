@@ -45,6 +45,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -119,6 +120,9 @@ private fun openUrl(ctx: Context, url: String) {
 @Composable
 fun RecsScreen(vm: MainViewModel, bottomPad: Dp) {
     val state by vm.recs.collectAsStateWithLifecycle()
+    val ctxRecs = LocalContext.current
+    val busyRec by vm.netBusy.collectAsStateWithLifecycle()
+    val netReady by vm.onlineReady.collectAsStateWithLifecycle()
     val accent = LocalAccent.current
     LaunchedEffect(Unit) { vm.refreshRecs() }
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
@@ -137,6 +141,7 @@ fun RecsScreen(vm: MainViewModel, bottomPad: Dp) {
                             state.loading -> "Подбираю музыку…"
                             state.offline && state.sections.isEmpty() -> "Нужен интернет"
                             state.offline -> "Нет сети — показаны сохранённые"
+                            state.updatedAt > 0 && netReady -> "Обновлено ${agoText(state.updatedAt)} · нажми — и сразу играет"
                             state.updatedAt > 0 -> "Обновлено ${agoText(state.updatedAt)} · по данным Deezer"
                             else -> "По твоей статистике и библиотеке"
                         },
@@ -194,10 +199,15 @@ fun RecsScreen(vm: MainViewModel, bottomPad: Dp) {
                 ) {
                     itemsIndexed(section.items, key = { _, it -> it.key }) { i, rec ->
                         Appear(i) {
-                            when (section.style) {
-                                RecSection.STYLE_BIG -> BigTile(rec) { vm.hideRec(rec) }
-                                RecSection.STYLE_ARTISTS -> ArtistTile(rec) { vm.hideRec(rec) }
-                                else -> TrackTile(rec) { vm.hideRec(rec) }
+                            androidx.compose.runtime.CompositionLocalProvider(
+                                LocalRecPlay provides { r -> vm.playRec(r) { searchWeb(ctxRecs, r.query) } },
+                                LocalRecBusy provides busyRec,
+                            ) {
+                                when (section.style) {
+                                    RecSection.STYLE_BIG -> BigTile(rec) { vm.hideRec(rec) }
+                                    RecSection.STYLE_ARTISTS -> ArtistTile(rec) { vm.hideRec(rec) }
+                                    else -> TrackTile(rec) { vm.hideRec(rec) }
+                                }
                             }
                         }
                     }
@@ -271,7 +281,12 @@ internal fun RemoteCover(url: String, seed: String, shape: Shape, modifier: Modi
     }
 }
 
-/** Общая механика плитки: пружинит на нажатии, тап — поиск, удержание — меню вариантов. */
+/** Что делает тап по плитке (играть через свой сервер или искать в браузере). */
+private val LocalRecPlay = androidx.compose.runtime.staticCompositionLocalOf<(RecItem) -> Unit> { {} }
+/** Ключ плитки, которая сейчас ищется на сервере. */
+private val LocalRecBusy = androidx.compose.runtime.compositionLocalOf<String?> { null }
+
+/** Общая механика плитки: пружинит на нажатии, тап — играть (или поиск), удержание — меню вариантов. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TileShell(rec: RecItem, onHide: () -> Unit, content: @Composable (pressScale: Float) -> Unit) {
@@ -282,20 +297,35 @@ private fun TileShell(rec: RecItem, onHide: () -> Unit, content: @Composable (pr
     val pressed by interaction.collectIsPressedAsState()
     val press by animateFloatAsState(if (pressed) 0.94f else 1f, spring(dampingRatio = 0.5f, stiffness = 500f), label = "tile")
     var menu by remember { mutableStateOf(false) }
+    val play = LocalRecPlay.current
+    val busy = LocalRecBusy.current == rec.key
     Box(
         Modifier.combinedClickable(
             interactionSource = interaction,
             indication = null,
             role = Role.Button,
-            onClickLabel = "Найти «${rec.query}»",
+            onClickLabel = "Слушать «${rec.query}»",
             onLongClick = {
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 menu = true
             },
-        ) { searchWeb(ctx, rec.query) }
+        ) { play(rec) }
     ) {
         content(press)
+        if (busy) {
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Color(0x66000000)),
+                contentAlignment = Alignment.Center,
+            ) { CircularProgressIndicator(Modifier.size(26.dp), color = Color.White, strokeWidth = 2.5.dp) }
+        }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            DropdownMenuItem(text = { Text("Слушать") }, leadingIcon = { Icon(LIcons.Play, null, Modifier.size(20.dp)) }, onClick = {
+                menu = false
+                play(rec)
+            })
             DropdownMenuItem(text = { Text("Найти в браузере") }, leadingIcon = { Icon(LIcons.Search, null, Modifier.size(20.dp)) }, onClick = {
                 menu = false
                 openUrl(ctx, "https://www.google.com/search?q=${enc(rec.query)}")

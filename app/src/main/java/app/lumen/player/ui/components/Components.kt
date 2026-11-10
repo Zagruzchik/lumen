@@ -251,6 +251,8 @@ class TrackActions(
     val onInfo: ((TrackEntity) -> Unit)? = null,
     /** «Не нравится» / вернуть обратно. */
     val onDislike: ((TrackEntity) -> Unit)? = null,
+    /** Скачать онлайн-трек в медиатеку телефона. */
+    val onDownload: ((TrackEntity) -> Unit)? = null,
     /** Открыть нижнее меню трека (с действиями того экрана, откуда открыли). */
     val onMenu: ((TrackEntity, Boolean, TrackActions) -> Unit)? = null,
 )

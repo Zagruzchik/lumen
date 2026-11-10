@@ -191,6 +191,22 @@ fun TrackMenuSheet(
             SheetItem(LIcons.Person, "К исполнителю") { run { a.onOpenArtist(t) } }
             a.onEdit?.let { f -> SheetItem(LIcons.Edit, "Изменить теги и обложку") { run { f(t) } } }
             onTrim?.let { f -> SheetItem(LIcons.Trim, "Обрезать начало и конец") { run { f(t) } } }
+            if (app.lumen.player.data.Online.isOnline(t.uri)) {
+                a.onDownload?.let { f -> SheetItem(LIcons.Download, "Скачать на телефон") { run { f(t) } } }
+                app.lumen.player.data.Online.pageOf(t)?.let { url ->
+                    val ctx = androidx.compose.ui.platform.LocalContext.current
+                    SheetItem(LIcons.Globe, "Открыть на ${app.lumen.player.data.Online.labelOf(t.uri)}") {
+                        run {
+                            runCatching {
+                                ctx.startActivity(
+                                    android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
             a.onInfo?.let { f -> SheetItem(LIcons.Info, "Информация о треке") { run { f(t) } } }
             a.onRemoveFromPlaylist?.let { f -> SheetItem(LIcons.Trash, "Убрать из плейлиста", tint = Color(0xFFFF8A8A)) { run { f(t) } } }
         }

@@ -1,5 +1,6 @@
 package app.lumen.player.ui
 
+import app.lumen.player.data.Online
 import app.lumen.player.playback.LumenAlarm
 import app.lumen.player.playback.AlarmConfig
 import app.lumen.player.data.SmartRules
@@ -85,8 +86,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val lastPlayed = dao.lastPlayed().state(null)
     val favoriteUris = dao.favoriteUris().map { it.toHashSet() as Set<String> }.state(emptySet())
 
-    private val trackIndex = tracks.map { list -> list.associateBy { it.uri } }
-        .flowOn(Dispatchers.Default).state(emptyMap())
+    /** Все треки по URI: библиотека и сохранённые онлайн-треки. */
+    private val trackIndex = combine(tracks, dao.onlineTracks()) { list, online ->
+        HashMap<String, TrackEntity>(list.size + online.size).apply {
+            online.forEach { put(it.uri, it) }
+            list.forEach { put(it.uri, it) }
+        } as Map<String, TrackEntity>
+    }.flowOn(Dispatchers.Default).state(emptyMap())
 
     val currentTrack: StateFlow<TrackEntity?> =
         combine(player, trackIndex) { p, idx -> p.currentId?.let { idx[it] } }.state(null)
@@ -219,7 +225,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun toggleFavorite(uri: String) {
         viewModelScope.launch {
             if (uri in favoriteUris.value) dao.removeFavorite(uri)
-            else dao.addFavorite(FavoriteEntity(uri, System.currentTimeMillis()))
+            else {
+                dao.addFavorite(FavoriteEntity(uri, System.currentTimeMillis()))
+                // Понравившийся онлайн-трек — сразу в медиатеку, если так настроено.
+                if (Online.isOnline(uri) && g.prefs.onlineAutoDownload) {
+                    trackIndex.value[uri]?.let { downloadOnline(it) }
+                }
+            }
         }
     }
 
@@ -783,7 +795,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         val st = dao.trackListenStats(t.uri)
         app.lumen.player.ui.components.TrackInfo(
-            path = t.path,
+            path = if (Online.isOnline(t.uri)) (Online.pageOf(t) ?: Online.labelOf(t.uri)) else t.path,
             sizeBytes = t.size,
             format = q.format,
             bitrate = t.bitrate,
@@ -1771,6 +1783,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     onlineError.value = false
                     return@collect
                 }
+                // Свой сервер подключён — ищем то, что можно сразу слушать.
+                if (Online.configured) {
+                    searchNet(q)
+                    onlineResults.value = null
+                    onlineLoading.value = false
+                    return@collect
+                }
                 onlineJob = viewModelScope.launch {
                     onlineLoading.value = true
                     onlineError.value = false
@@ -1781,6 +1800,239 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         onlineLoading.value = false
                     }
                 }
+            }
+        }
+    }
+
+    // ---------- онлайн: свой сервер music-api ----------
+
+    val onlineReady = MutableStateFlow(Online.configured)
+    /** Открыть поиск с готовым запросом. */
+    val searchRequest = MutableStateFlow<String?>(null)
+    val netSource = MutableStateFlow(g.prefs.onlineSource)
+    /** null — не искали; пусто — ничего не нашлось. */
+    val netResults = MutableStateFlow<List<TrackEntity>?>(null)
+    val netLoading = MutableStateFlow(false)
+    val netError = MutableStateFlow<String?>(null)
+    private var netJob: Job? = null
+
+    private fun isLink(q: String) = q.startsWith("http://") || q.startsWith("https://") ||
+        Regex("^(www\\.|m\\.)?(soundcloud\\.com|youtu\\.be|youtube\\.com|music\\.youtube\\.com|[\\w-]+\\.bandcamp\\.com)/").containsMatchIn(q)
+
+    /** Ссылка в строке поиска — показываем карточку «Открыть ссылку» вместо поиска. */
+    fun linkIn(q: String): String? {
+        val t = q.trim()
+        if (!isLink(t)) return null
+        return if (t.startsWith("http")) t else "https://$t"
+    }
+
+    private fun searchNet(q: String) {
+        netJob?.cancel()
+        if (linkIn(q) != null) {
+            netResults.value = null
+            netLoading.value = false
+            netError.value = null
+            return
+        }
+        netJob = viewModelScope.launch {
+            netLoading.value = true
+            netError.value = null
+            val src = netSource.value
+            val r = runCatching { Online.search(q, src, 25) }
+            if (query.value.trim() != q || netSource.value != src) return@launch
+            r.onSuccess { list ->
+                val ents = list.map { Online.toEntity(it) }
+                withContext(Dispatchers.IO) { dao.insertTracksIgnore(ents) }
+                netResults.value = ents
+            }.onFailure {
+                netResults.value = emptyList()
+                netError.value = it.message ?: "Ошибка сети"
+            }
+            netLoading.value = false
+        }
+    }
+
+    fun setNetSource(src: String) {
+        if (netSource.value == src) return
+        netSource.value = src
+        g.prefs.onlineSource = src
+        netResults.value = null
+        val q = query.value.trim()
+        if (q.length >= 2 && Online.configured) searchNet(q)
+    }
+
+    fun onlineServerValue() = g.prefs.onlineServer
+    fun onlineKeyValue() = g.prefs.onlineKey
+
+    val onlineStatus = MutableStateFlow<String?>(null)
+    val onlineChecking = MutableStateFlow(false)
+
+    fun saveOnline(server: String, key: String) {
+        var srv = server.trim().trimEnd('/')
+        if (srv.isNotBlank() && !srv.startsWith("http")) srv = "http://$srv"
+        g.prefs.onlineServer = srv
+        g.prefs.onlineKey = key.trim()
+        Online.configure(g.prefs)
+        onlineReady.value = Online.configured
+        checkOnline()
+    }
+
+    fun checkOnline() {
+        viewModelScope.launch {
+            onlineChecking.value = true
+            onlineStatus.value = runCatching { Online.check() }.fold(
+                { src -> "Подключено · источники: ${src.joinToString { Online.sourceLabel(it) }}" },
+                { "Ошибка: ${it.message}" },
+            )
+            onlineChecking.value = false
+        }
+    }
+
+    val onlineViaServer = MutableStateFlow(g.prefs.onlineViaServer)
+    fun setOnlineViaServer(v: Boolean) { g.prefs.onlineViaServer = v; onlineViaServer.value = v; Online.configure(g.prefs) }
+    val onlineMp3 = MutableStateFlow(g.prefs.onlineDownloadMp3)
+    fun setOnlineMp3(v: Boolean) { g.prefs.onlineDownloadMp3 = v; onlineMp3.value = v }
+    val onlineAutoDownload = MutableStateFlow(g.prefs.onlineAutoDownload)
+    fun setOnlineAutoDownload(v: Boolean) { g.prefs.onlineAutoDownload = v; onlineAutoDownload.value = v }
+
+    /** Онлайн-треки сохраняем в базе — тогда работают лайки, плейлисты, история и статистика. */
+    private suspend fun saveOnlineTracks(list: List<TrackEntity>) = withContext(Dispatchers.IO) {
+        val online = list.filter { Online.isOnline(it.uri) }
+        if (online.isNotEmpty()) dao.insertTracksIgnore(online)
+    }
+
+    fun playNet(list: List<TrackEntity>, index: Int) {
+        viewModelScope.launch {
+            saveOnlineTracks(list)
+            playFromSearch(list, index)
+        }
+    }
+
+    /** Подбираем лучшее совпадение на сервере: сначала основной источник, потом второй. */
+    private suspend fun findOnline(artist: String, title: String): TrackEntity? {
+        val order = listOf(netSource.value) + listOf("soundcloud", "youtube").filter { it != netSource.value }
+        for (src in order) {
+            val found = runCatching { Online.search("$artist $title", src, 8) }.getOrNull().orEmpty()
+            val best = found.maxByOrNull { Online.matchScore(it, artist, title) } ?: continue
+            if (Online.matchScore(best, artist, title) >= 1.6) return Online.toEntity(best)
+        }
+        return null
+    }
+
+    val netBusy = MutableStateFlow<String?>(null)
+
+    /** «Для тебя»: рекомендация сразу играет — трек ищется на сервере. Исполнитель — его лучшие треки подряд. */
+    fun playRec(rec: RecItem, fallback: () -> Unit) {
+        if (!Online.configured) return fallback()
+        viewModelScope.launch {
+            netBusy.value = rec.key
+            try {
+                if (rec.kind == RecItem.KIND_ARTIST || rec.kind == RecItem.KIND_ALBUM) {
+                    // Исполнитель — его треки подряд; альбом — то, что нашлось по «исполнитель + альбом».
+                    val src = netSource.value
+                    val artist = if (rec.kind == RecItem.KIND_ARTIST) rec.title else rec.artist
+                    val q = if (rec.kind == RecItem.KIND_ARTIST) rec.title else "${rec.artist} ${rec.title}"
+                    val list = runCatching { Online.search(q, src, 25) }.getOrNull().orEmpty()
+                        .filter { Online.matchScore(it, artist, "") >= 0.9 }
+                        .distinctBy { Online.cleanNames(it.source, it.title, it.artist).first.lowercase() }
+                        .map { Online.toEntity(it) }
+                    if (list.isEmpty()) { toast("Не нашлось треков «$q» в сети"); return@launch }
+                    saveOnlineTracks(list)
+                    play(list, 0)
+                } else {
+                    val t = findOnline(rec.artist, rec.title)
+                    if (t == null) { toast("Не нашёл «${rec.title}» в сети"); return@launch }
+                    saveOnlineTracks(listOf(t))
+                    play(listOf(t), 0)
+                }
+            } finally {
+                netBusy.value = null
+            }
+        }
+    }
+
+    /** Найденное в Deezer (поиск без своего сервера тоже его показывает) — включить через сервер. */
+    fun playDeezer(rec: RecItem, fallback: () -> Unit) = playRec(rec, fallback)
+
+    /** Ссылка на трек или плейлист SoundCloud/YouTube/Bandcamp. */
+    fun openLink(url: String) {
+        if (!Online.configured) {
+            toast("Сначала подключи свой сервер в Настройках → «Онлайн-музыка»")
+            return
+        }
+        viewModelScope.launch {
+            netBusy.value = url
+            toast("Открываю ссылку…")
+            try {
+                val (single, pl) = Online.open(url)
+                if (single != null) {
+                    val t = Online.toEntity(single)
+                    saveOnlineTracks(listOf(t))
+                    play(listOf(t), 0)
+                } else if (pl != null) {
+                    val ents = pl.items.map { Online.toEntity(it) }
+                    saveOnlineTracks(ents)
+                    createPlaylist(pl.title, ents.map { it.uri }) { toast("Плейлист «${pl.title}»: ${pluralRuVm(ents.size, "трек", "трека", "треков")}") }
+                    play(ents, 0)
+                }
+            } catch (e: Exception) {
+                toast(e.message ?: "Не удалось открыть ссылку")
+            } finally {
+                netBusy.value = null
+            }
+        }
+    }
+
+    /** Загрузки: uri онлайн-трека → прогресс 0..1 (-1 — сервер ещё готовит файл). */
+    val downloads = MutableStateFlow<Map<String, Float>>(emptyMap())
+
+    fun downloadOnline(t: TrackEntity) {
+        if (!Online.isOnline(t.uri) || t.uri in downloads.value) return
+        if (Build.VERSION.SDK_INT < 29) { toast("Скачивание работает на Android 10 и новее"); return }
+        downloads.value = downloads.value + (t.uri to -1f)
+        toast("Скачиваю «${t.title}»…")
+        g.appScope.launch {
+            try {
+                val local = Online.download(getApplication<Application>(), t, g.prefs.onlineDownloadMp3) { p ->
+                    downloads.value = downloads.value + (t.uri to p)
+                }.toString()
+                // Названия и обложку берём из онлайн-трека: у скачанного файла тегов может не быть.
+                withContext(Dispatchers.IO) {
+                    dao.putOverride(app.lumen.player.data.TrackOverride(local, t.title, t.artist, Online.labelOf(t.uri), t.artist, null))
+                    Online.thumbOf(t)?.let { url ->
+                        runCatching {
+                            val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                            c.connectTimeout = 8000
+                            c.readTimeout = 15000
+                            val bytes = try { c.inputStream.use { it.readBytes() } } finally { c.disconnect() }
+                            val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                            val side = minOf(bmp.width, bmp.height)
+                            val sq = android.graphics.Bitmap.createBitmap(bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side)
+                            val out = java.io.ByteArrayOutputStream()
+                            sq.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, out)
+                            Artwork.setCustom(getApplication<Application>(), local, out.toByteArray())
+                        }
+                    }
+                }
+                // Ждём, пока сканер увидит файл, и переносим на него лайк, плейлисты и историю.
+                g.scanner.scan()
+                withContext(Dispatchers.IO) {
+                    repeat(10) {
+                        if (dao.byUri(local) != null) {
+                            dao.mergeInto(t.uri, local)
+                            // Сам онлайн-трек оставляем: он может ещё играть в очереди.
+                            dao.insertTracksIgnore(listOf(t))
+                            return@withContext
+                        }
+                        kotlinx.coroutines.delay(1500)
+                        g.scanner.scan()
+                    }
+                }
+                toast("Скачано: ${t.title} — теперь в библиотеке")
+            } catch (e: Exception) {
+                toast("Не скачалось: ${e.message ?: "ошибка"}")
+            } finally {
+                downloads.value = downloads.value - t.uri
             }
         }
     }
@@ -1880,6 +2132,7 @@ data class SmartRow(
 data class DupGroup(val id: String, val tracks: List<TrackEntity>, val best: String)
 
 fun formatLabel(mime: String, uri: String = ""): String {
+    if (Online.isOnline(uri)) return Online.labelOf(uri)
     val m = mime.lowercase()
     return when {
         "flac" in m -> "FLAC"

@@ -66,6 +66,8 @@ class BeatAnalyzer(context: Context) {
     }.getOrNull()
 
     fun analyze(uri: String): Flow<Beats> = flow {
+        // Онлайн-поток не разбираем: это лишний трафик и нагрузка на сервер.
+        if (uri.startsWith(app.lumen.player.data.ONLINE_SCHEME)) return@flow
         val cached = runCatching { read(fileFor(uri)) }.getOrNull()
         if (cached != null) {
             emit(cached)

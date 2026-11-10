@@ -194,6 +194,7 @@ class Crossfader(
         syncStartPos = maxOf(0L, fadeStartPos - SYNC_LEAD_MS)
         // Готовим хвост заранее и ставим у места, откуда начнём синхронизацию.
         val t = ExoPlayer.Builder(context, DefaultRenderersFactory(context))
+            .setMediaSourceFactory(LumenMedia.sourceFactory(context))
             .setAudioAttributes(
                 AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(),
                 false,

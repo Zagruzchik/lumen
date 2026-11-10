@@ -40,9 +40,7 @@ data class PlayerState(
     val sampleRate: Int = 0,
 )
 
-fun TrackEntity.toMediaItem(): MediaItem = MediaItem.Builder()
-    .setMediaId(uri)
-    .setUri(Uri.parse(uri))
+fun TrackEntity.toMediaItem(): MediaItem = LumenMedia.playable(MediaItem.Builder()
     .setMediaMetadata(
         MediaMetadata.Builder()
             .setTitle(title)
@@ -53,7 +51,7 @@ fun TrackEntity.toMediaItem(): MediaItem = MediaItem.Builder()
             .setArtworkUri(Uri.parse(uri))
             .build()
     )
-    .build()
+    .build(), uri)
 
 /** Связь интерфейса с сервисом воспроизведения через MediaController. Живёт весь процесс. */
 class PlayerConnection(private val context: Context) {

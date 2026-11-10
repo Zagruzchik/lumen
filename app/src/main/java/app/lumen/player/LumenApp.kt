@@ -61,6 +61,17 @@ class AppGraph(val context: Context) {
     val recs = app.lumen.player.data.RecommendationsRepository(context, db.dao(), prefs)
     val updates = app.lumen.player.data.UpdateRepository(context)
 
+    init {
+        app.lumen.player.data.Online.configure(prefs)
+        app.lumen.player.data.Artwork.onlineThumbLookup = { uri ->
+            kotlinx.coroutines.runBlocking { runCatching { db.dao().byUri(uri) }.getOrNull() }?.let { app.lumen.player.data.Online.thumbOf(it) }
+        }
+        // Онлайн-треки, мелькнувшие только в поиске, через неделю убираем.
+        appScope.launch(Dispatchers.IO) {
+            runCatching { db.dao().pruneOnline(System.currentTimeMillis() - 7 * 86_400_000L, prefs.searchHistory) }
+        }
+    }
+
     private var observerRegistered = false
     private var rescanJob: Job? = null
 

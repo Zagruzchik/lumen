@@ -148,8 +148,8 @@ data class TrimEntity(@PrimaryKey val uri: String, val startMs: Long, val endMs:
 @Entity(tableName = "excluded")
 data class ExcludedFolder(@PrimaryKey val folder: String)
 
-/** Трек виден, если его папка не в списке исключений. */
-private const val VISIBLE = "folder NOT IN (SELECT folder FROM excluded)"
+/** Трек виден в библиотеке, если его папка не в списке исключений. Онлайн-треки в библиотеку не попадают. */
+private const val VISIBLE = "folder NOT IN (SELECT folder FROM excluded) AND source != 2"
 private const val VISIBLE_T = "t.folder NOT IN (SELECT folder FROM excluded)"
 private const val LIKED_T = "t.uri NOT IN (SELECT uri FROM dislikes)"
 
@@ -514,12 +514,33 @@ abstract class LibraryDao {
     @Query("SELECT * FROM tracks")
     abstract suspend fun allTracksOnce(): List<TrackEntity>
 
+    // ---------- онлайн-треки ----------
+
+    @Query("SELECT * FROM tracks WHERE source = 2")
+    abstract fun onlineTracks(): Flow<List<TrackEntity>>
+
+    /** Не затираем уже сохранённые онлайн-треки (в них могут быть свои правки). */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    abstract suspend fun insertTracksIgnore(list: List<TrackEntity>)
+
+    /** Онлайн-треки из истории поиска, на которые ничего не ссылается, — убираем через неделю. */
+    @Query(
+        """DELETE FROM tracks WHERE source = 2 AND dateAdded < :before
+           AND uri NOT IN (SELECT uri FROM favorites)
+           AND uri NOT IN (SELECT uri FROM playlist_tracks)
+           AND uri NOT IN (SELECT uri FROM plays)
+           AND uri NOT IN (SELECT uri FROM listens)
+           AND uri NOT IN (SELECT uri FROM dislikes)
+           AND uri NOT IN (:keep)"""
+    )
+    abstract suspend fun pruneOnline(before: Long, keep: List<String>)
+
     /** «Самое любимое»: сначала самые часто и долго слушаемые. */
     @Query(
         """SELECT t.* FROM tracks t
            LEFT JOIN plays p ON p.uri = t.uri
            LEFT JOIN (SELECT uri, SUM(listenedMs) AS ms FROM listens GROUP BY uri) l ON l.uri = t.uri
-           WHERE $VISIBLE_T AND $LIKED_T
+           WHERE $VISIBLE_T AND $LIKED_T AND t.source != 2
            ORDER BY COALESCE(p.count, 0) DESC, COALESCE(l.ms, 0) DESC, t.title COLLATE NOCASE"""
     )
     abstract suspend fun mostLoved(): List<TrackEntity>
@@ -529,7 +550,7 @@ abstract class LibraryDao {
         """SELECT t.* FROM tracks t
            LEFT JOIN plays p ON p.uri = t.uri
            LEFT JOIN (SELECT uri, SUM(listenedMs) AS ms FROM listens GROUP BY uri) l ON l.uri = t.uri
-           WHERE $VISIBLE_T AND $LIKED_T
+           WHERE $VISIBLE_T AND $LIKED_T AND t.source != 2
            ORDER BY COALESCE(p.count, 0) ASC, COALESCE(l.ms, 0) ASC, RANDOM()"""
     )
     abstract suspend fun leastLoved(): List<TrackEntity>

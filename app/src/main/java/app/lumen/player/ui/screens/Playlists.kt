@@ -205,6 +205,7 @@ fun PlaylistScreen(vm: MainViewModel, id: Long, nav: Nav, actions: TrackActions,
             onRemoveFromPlaylist = { t -> vm.removeFromPlaylist(id, t.uri) },
             onInfo = actions.onInfo,
             onDislike = actions.onDislike,
+            onDownload = actions.onDownload,
             onMenu = actions.onMenu,
         )
     }
