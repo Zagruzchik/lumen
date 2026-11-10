@@ -1389,6 +1389,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val versionName get() = g.updates.currentName
     private var updateJob: Job? = null
 
+    /** Заметки «Что нового» после установки обновления (null — не показывать). */
+    val whatsNew = MutableStateFlow<String?>(null)
+
+    fun checkWhatsNew() {
+        val cur = g.updates.currentCode
+        val seen = g.prefs.seenVersion
+        if (seen >= cur) return
+        g.prefs.seenVersion = cur
+        if (seen == 0) return // первая установка — показывать нечего
+        viewModelScope.launch {
+            val n = runCatching { g.updates.notesFor(cur) }.getOrNull() ?: return@launch
+            whatsNew.value = n
+        }
+    }
+
+    fun hideWhatsNew() {
+        whatsNew.value = null
+    }
+
     fun setAutoUpdate(on: Boolean) {
         g.prefs.autoUpdate = on
         autoUpdate.value = on
@@ -2281,6 +2300,102 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         all.filter { it.albumKey in keys }.sortedByDescending { it.year }
     }.flowOn(Dispatchers.Default)
     fun folderTracks(folder: String) = dao.folderTracks(folder)
+    // ---------- M3U ----------
+
+    fun exportM3u(id: Long, target: Uri) {
+        viewModelScope.launch {
+            val ok = runCatching {
+                withContext(Dispatchers.IO) {
+                    val list = dao.playlistTracks(id).first()
+                    val sb = StringBuilder("#EXTM3U\n")
+                    list.forEach { t ->
+                        sb.append("#EXTINF:").append(t.durationMs / 1000).append(',').append(t.artist).append(" - ").append(t.title).append('\n')
+                        val loc = when {
+                            Online.isOnline(t.uri) -> Online.pageOf(t) ?: t.uri
+                            t.path.isNotBlank() -> t.path
+                            else -> t.uri
+                        }
+                        sb.append(loc).append('\n')
+                    }
+                    getApplication<Application>().contentResolver.openOutputStream(target)?.use { it.write(sb.toString().toByteArray()) }
+                        ?: error("no stream")
+                }
+            }.isSuccess
+            toast(if (ok) "Плейлист сохранён в M3U" else "Не удалось сохранить файл")
+        }
+    }
+
+    /** M3U из другого плеера: ищем треки по пути, имени файла или «исполнитель — название». */
+    fun importM3u(src: Uri) {
+        viewModelScope.launch {
+            val res = runCatching {
+                withContext(Dispatchers.IO) {
+                    val ctx = getApplication<Application>()
+                    val text = ctx.contentResolver.openInputStream(src)?.use { it.readBytes().toString(Charsets.UTF_8) } ?: error("no stream")
+                    val name = androidx.documentfile.provider.DocumentFile.fromSingleUri(ctx, src)?.name
+                        ?.substringBeforeLast('.')?.ifBlank { null } ?: "Импорт"
+                    val all = dao.allTracksOnce()
+                    val byPath = all.filter { it.path.isNotBlank() }.associateBy { it.path.lowercase() }
+                    val byFile = all.filter { it.path.isNotBlank() }.associateBy { it.path.substringAfterLast('/').lowercase() }
+                    val byName = all.associateBy { normalize(it.artist + " " + it.title) }
+                    val found = ArrayList<String>()
+                    var lastInfo: String? = null
+                    var total = 0
+                    text.lines().forEach { raw ->
+                        val line = raw.trim().removePrefix("\uFEFF")
+                        when {
+                            line.startsWith("#EXTINF", true) -> lastInfo = line.substringAfter(',', "").trim()
+                            line.isEmpty() || line.startsWith("#") -> {}
+                            else -> {
+                                total++
+                                val clean = line.replace('\\', '/').removePrefix("file://")
+                                val t = byPath[clean.lowercase()]
+                                    ?: byFile[clean.substringAfterLast('/').lowercase()]
+                                    ?: lastInfo?.let { byName[normalize(it.replace(" - ", " "))] }
+                                t?.let { found += it.uri }
+                                lastInfo = null
+                            }
+                        }
+                    }
+                    Triple(name, found.distinct(), total)
+                }
+            }.getOrNull()
+            if (res == null) { toast("Не удалось прочитать файл"); return@launch }
+            val (name, uris, total) = res
+            if (uris.isEmpty()) { toast("Ни один трек из плейлиста не нашёлся в библиотеке"); return@launch }
+            createPlaylist(name, uris) { toast("«$name»: найдено ${uris.size} из $total") }
+        }
+    }
+
+    /** Текущая очередь → новый плейлист. */
+    fun saveQueueAsPlaylist() {
+        val uris = player.value.queue.map { it.mediaId }.filter { it.isNotBlank() }
+        if (uris.isEmpty()) return
+        val name = "Очередь " + java.text.SimpleDateFormat("d MMM, HH:mm", java.util.Locale("ru")).format(java.util.Date())
+        createPlaylist(name, uris) { toast("Сохранено: «$name»") }
+    }
+
+    /** Трек, который просят удалить (ждёт подтверждения). */
+    val deleteAsk = MutableStateFlow<TrackEntity?>(null)
+
+    fun onFileDeleted(t: TrackEntity) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { dao.deleteTrack(t.uri) }
+            toast("Удалено: ${t.title}")
+            g.rescan()
+        }
+    }
+
+    /** Удаление без системного окна (свои папки, старые Android). */
+    fun deleteNow(t: TrackEntity) {
+        viewModelScope.launch {
+            val ok = deleteDirect(listOf(t.uri)).isNotEmpty()
+            if (ok) onFileDeleted(t) else toast("Android не дал удалить файл")
+        }
+    }
+
+    val genres = dao.genres().state(emptyList())
+    fun genreTracks(genre: String) = dao.genreTracks(genre)
 }
 
 private val TRANSLIT = mapOf(

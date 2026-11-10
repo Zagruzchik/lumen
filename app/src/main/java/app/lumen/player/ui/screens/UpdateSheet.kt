@@ -246,3 +246,64 @@ private fun ProgressTrack(p: Float, accent: Color) {
         )
     }
 }
+
+
+/** «Что нового»: показывается один раз после того, как обновление установилось. */
+@Composable
+fun WhatsNewSheet(notes: String, version: String, onClose: () -> Unit, sheetModifier: Modifier = Modifier) {
+    val accent = LocalAccent.current
+    BackHandler { onClose() }
+    Box(Modifier.fillMaxSize()) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color(0x99000000))
+                .clickable(remember { MutableInteractionSource() }, null) { onClose() }
+        )
+        Column(
+            sheetModifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(10.dp)
+                .navigationBarsPadding()
+                .clip(RoundedCornerShape(32.dp))
+                .background(app.lumen.player.ui.theme.LT.sheetBrush())
+                .border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(32.dp))
+                .clickable(remember { MutableInteractionSource() }, null) {}
+                .padding(22.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(46.dp).clip(CircleShape).background(accent.copy(alpha = 0.18f)),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(LIcons.Check, null, Modifier.size(24.dp), tint = accent) }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Что нового", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+                    Text("Lumen обновился до $version", fontSize = 13.sp, color = LC.Dim)
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                notes.lines().map { it.trim() }.filter { it.isNotEmpty() }.forEach { line ->
+                    val bullet = line.startsWith("-") || line.startsWith("•") || line.startsWith("*")
+                    val text = if (bullet) line.trimStart('-', '•', '*', ' ') else line
+                    Row(Modifier.padding(vertical = 3.dp)) {
+                        if (bullet) {
+                            Box(Modifier.padding(top = 8.dp).size(5.dp).clip(CircleShape).background(accent))
+                            Spacer(Modifier.width(10.dp))
+                        }
+                        Text(
+                            text,
+                            fontSize = if (bullet) 14.sp else 15.sp,
+                            fontWeight = if (bullet) FontWeight.Normal else FontWeight.Bold,
+                            lineHeight = 20.sp,
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            PillButton("Отлично", null, onClose, Modifier.fillMaxWidth())
+        }
+    }
+}

@@ -140,6 +140,25 @@ fun LazyListScope.playlistsTab(
             Text("Новый плейлист", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = LocalAccent.current)
         }
     }
+    item(key = "importM3u") {
+        val m3uIn = androidx.activity.compose.rememberLauncherForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+        ) { uri -> if (uri != null) vm.importM3u(uri) }
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable { m3uIn.launch(arrayOf("audio/x-mpegurl", "audio/mpegurl", "application/vnd.apple.mpegurl", "application/x-mpegurl", "*/*")) }
+                .padding(horizontal = 20.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(60.dp), contentAlignment = Alignment.Center) { Icon(LIcons.Download, null, Modifier.size(24.dp), tint = LC.Dim) }
+            Spacer(Modifier.width(14.dp))
+            Column {
+                Text("Импорт из M3U", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text("Плейлист из другого плеера или с компьютера", fontSize = 12.sp, color = LC.Dim)
+            }
+        }
+    }
     smartPlaylistRows(nav, smart)
     if (list.isEmpty()) {
         item(key = "plEmpty") {
@@ -184,6 +203,9 @@ fun PlaylistScreen(vm: MainViewModel, id: Long, nav: Nav, actions: TrackActions,
     var menu by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     val haptic = LocalHapticFeedback.current
+    val m3uOut = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("audio/x-mpegurl")
+    ) { uri -> if (uri != null) vm.exportM3u(id, uri) }
 
     // Локальная копия порядка: во время перетаскивания двигаем её, в базу пишем при отпускании.
     val order = remember(id) { mutableStateListOf<TrackEntity>() }
@@ -206,6 +228,7 @@ fun PlaylistScreen(vm: MainViewModel, id: Long, nav: Nav, actions: TrackActions,
             onInfo = actions.onInfo,
             onDislike = actions.onDislike,
             onDownload = actions.onDownload,
+            onDelete = actions.onDelete,
             onMenu = actions.onMenu,
         )
     }
@@ -223,6 +246,11 @@ fun PlaylistScreen(vm: MainViewModel, id: Long, nav: Nav, actions: TrackActions,
                                 text = { Text("Переименовать") },
                                 leadingIcon = { Icon(LIcons.Edit, null, Modifier.size(20.dp)) },
                                 onClick = { menu = false; renaming = true },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Экспорт в M3U") },
+                                leadingIcon = { Icon(LIcons.Download, null, Modifier.size(20.dp)) },
+                                onClick = { menu = false; m3uOut.launch((pl?.name ?: "playlist") + ".m3u") },
                             )
                             DropdownMenuItem(
                                 text = { Text("Удалить плейлист") },

@@ -70,6 +70,24 @@ class UpdateRepository(private val context: Context) {
         }
     }
 
+    /** Заметки к конкретной версии — для экрана «Что нового» после обновления. */
+    suspend fun notesFor(code: Int): String? = withContext(Dispatchers.IO) {
+        val c = URL("$base/rest/v1/lumen_releases?select=notes&version_code=eq.$code&limit=1").openConnection() as HttpURLConnection
+        c.connectTimeout = 8000
+        c.readTimeout = 8000
+        c.setRequestProperty("apikey", key)
+        c.setRequestProperty("Authorization", "Bearer $key")
+        try {
+            if (c.responseCode !in 200..299) return@withContext null
+            val arr = JSONArray(c.inputStream.bufferedReader().readText())
+            if (arr.length() == 0) null else arr.getJSONObject(0).optString("notes").takeIf { it.isNotBlank() }
+        } catch (e: Exception) {
+            null
+        } finally {
+            c.disconnect()
+        }
+    }
+
     private fun dir() = File(context.cacheDir, "updates").apply { mkdirs() }
 
     /** Скачивает APK с прогрессом 0..1. Уже скачанный и проверенный файл повторно не качается. */

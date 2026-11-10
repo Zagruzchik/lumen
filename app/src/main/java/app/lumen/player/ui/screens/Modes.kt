@@ -513,3 +513,64 @@ fun AutoSection(onCarMode: () -> Unit) {
         }
     }
 }
+
+// ================= фоновая работа =================
+
+/**
+ * Помощник «чтобы музыку не выключало»: оптимизация батареи и автозапуск (на Xiaomi/Redmi/POCO
+ * без этого система иногда закрывает плеер в фоне).
+ */
+@Composable
+fun BackgroundSection() {
+    val ctx = LocalContext.current
+    var tick by remember { mutableIntStateOf(0) }
+    val pm = ctx.getSystemService(android.os.PowerManager::class.java)
+    val ignoring = remember(tick) { pm?.isIgnoringBatteryOptimizations(ctx.packageName) == true }
+    val xiaomi = Build.MANUFACTURER.lowercase().let { it.contains("xiaomi") || it.contains("redmi") || it.contains("poco") }
+    // Вернулись из настроек — перепроверяем.
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) tick++ }
+        lifecycle.addObserver(obs)
+        onDispose { lifecycle.removeObserver(obs) }
+    }
+    fun open(i: Intent) = runCatching { ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
+
+    Text("Работа в фоне", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+    Text("Чтобы система не выключала музыку при погашенном экране.", fontSize = 13.sp, color = LC.Dim)
+    Spacer(Modifier.height(10.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(if (ignoring) LIcons.Check else LIcons.Info, null, Modifier.size(20.dp), tint = if (ignoring) LocalAccent.current else Color(0xFFFFB38A))
+        Spacer(Modifier.width(10.dp))
+        Text(
+            if (ignoring) "Экономия батареи не мешает Lumen" else "Экономия батареи может останавливать музыку",
+            fontSize = 14.sp,
+            modifier = Modifier.weight(1f),
+        )
+    }
+    if (!ignoring) {
+        Spacer(Modifier.height(8.dp))
+        PillButton("Разрешить работу в фоне", null, {
+            open(Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, android.net.Uri.parse("package:${ctx.packageName}")))
+                || open(Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+        }, Modifier.fillMaxWidth())
+    }
+    if (xiaomi) {
+        Spacer(Modifier.height(10.dp))
+        Text("На Xiaomi, Redmi и POCO ещё включи «Автозапуск» и в «Контроле активности» выбери «Нет ограничений».", fontSize = 13.sp, color = LC.Dim)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            PillButton("Автозапуск", null, {
+                open(Intent().setComponent(android.content.ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")))
+                    || open(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:${ctx.packageName}")))
+            }, Modifier.weight(1f), primary = false)
+            PillButton("Батарея", null, {
+                open(
+                    Intent("miui.intent.action.HIDDEN_APPS_CONFIG_ACTIVITY")
+                        .putExtra("package_name", ctx.packageName)
+                        .putExtra("package_label", "Lumen")
+                ) || open(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:${ctx.packageName}")))
+            }, Modifier.weight(1f), primary = false)
+        }
+    }
+}

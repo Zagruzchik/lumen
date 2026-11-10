@@ -130,6 +130,7 @@ sealed interface Dest {
     data class Album(val key: String) : Dest
     data class Artist(val name: String) : Dest
     data class Folder(val path: String, val name: String) : Dest
+    data class Genre(val name: String) : Dest
     data object Stats : Dest
     data object Recs : Dest
     data class Playlist(val id: Long) : Dest
@@ -411,6 +412,7 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
             onInfo = { vm.infoTrack.value = it },
             onDislike = { vm.toggleDislike(it) },
             onDownload = { vm.downloadOnline(it) },
+            onDelete = { vm.deleteAsk.value = it },
             onMenu = { t, fav, a -> vm.trackMenu.value = app.lumen.player.ui.components.TrackMenuRequest(t, fav, a) },
         )
     }
@@ -509,6 +511,7 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                         is Dest.Album -> AlbumScreen(vm, d.key, nav, actions, bottomPad)
                         is Dest.Artist -> ArtistScreen(vm, d.name, nav, actions, bottomPad)
                         is Dest.Folder -> FolderScreen(vm, d.path, d.name, nav, actions, bottomPad)
+                        is Dest.Genre -> app.lumen.player.ui.screens.GenreScreen(vm, d.name, nav, actions, bottomPad)
                         is Dest.Playlist -> app.lumen.player.ui.screens.PlaylistScreen(vm, d.id, nav, actions, bottomPad)
                         Dest.Wrapped -> app.lumen.player.ui.screens.WrappedScreen(vm, nav)
                         is Dest.ThemeEditor -> app.lumen.player.ui.screens.ThemeEditorScreen(d.baseId, nav)
@@ -606,6 +609,37 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                 )
             }
         }
+        // Удаление файла: своё подтверждение, на Android 11+ потом ещё системное.
+        val delT by vm.deleteAsk.collectAsStateWithLifecycle()
+        var pendingDelete by remember { mutableStateOf<app.lumen.player.data.TrackEntity?>(null) }
+        val delLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult()
+        ) { res ->
+            val t = pendingDelete
+            pendingDelete = null
+            if (res.resultCode == android.app.Activity.RESULT_OK && t != null) vm.onFileDeleted(t)
+        }
+        if (delT != null) {
+            val t = delT!!
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { vm.deleteAsk.value = null },
+                title = { Text("Удалить файл?") },
+                text = { Text("«${t.title}» исчезнет с телефона насовсем.") },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(onClick = {
+                        vm.deleteAsk.value = null
+                        val sender = vm.deleteRequest(listOf(t.uri))
+                        if (sender != null) {
+                            pendingDelete = t
+                            delLauncher.launch(androidx.activity.result.IntentSenderRequest.Builder(sender).build())
+                        } else vm.deleteNow(t)
+                    }) { Text("Удалить", color = Color(0xFFFF8A8A)) }
+                },
+                dismissButton = { androidx.compose.material3.TextButton(onClick = { vm.deleteAsk.value = null }) { Text("Отмена") } },
+                containerColor = app.lumen.player.ui.theme.LT.sheetTop,
+            )
+        }
+
         // Редактор текста песни — поверх всего.
         val lyrEdit by vm.lyricsEditor.collectAsStateWithLifecycle()
         var lastLyrEdit by remember { mutableStateOf<app.lumen.player.data.TrackEntity?>(null) }
@@ -765,6 +799,21 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                 Spacer(Modifier.width(10.dp))
                 Text(lastToast, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             }
+        }
+        val whatsNew by vm.whatsNew.collectAsStateWithLifecycle()
+        LaunchedEffect(Unit) { vm.checkWhatsNew() }
+        AnimatedVisibility(whatsNew != null, enter = fadeIn(tween(260)), exit = fadeOut(tween(220))) {
+            var kept by remember { mutableStateOf("") }
+            whatsNew?.let { kept = it }
+            app.lumen.player.ui.screens.WhatsNewSheet(
+                kept,
+                vm.versionName,
+                onClose = { vm.hideWhatsNew() },
+                sheetModifier = Modifier.animateEnterExit(
+                    enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 360f)) { it },
+                    exit = slideOutVertically(tween(240)) { it },
+                ),
+            )
         }
         val updSheet by vm.updateSheet.collectAsStateWithLifecycle()
         AnimatedVisibility(updSheet, enter = fadeIn(tween(260)), exit = fadeOut(tween(220))) {

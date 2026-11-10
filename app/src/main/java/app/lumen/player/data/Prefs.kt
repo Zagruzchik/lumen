@@ -39,6 +39,11 @@ class Prefs(context: Context) {
         get() = sp.getInt("eqPreset", -1)
         set(v) = sp.edit().putInt("eqPreset", v).apply()
 
+    /** Версия, «Что нового» которой уже показали (0 — первая установка). */
+    var seenVersion: Int
+        get() = sp.getInt("seenVersion", 0)
+        set(v) = sp.edit().putInt("seenVersion", v).apply()
+
     var bassStrength: Int
         get() = sp.getInt("bassStrength", 0)
         set(v) = sp.edit().putInt("bassStrength", v).apply()

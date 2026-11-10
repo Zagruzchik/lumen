@@ -253,6 +253,8 @@ class TrackActions(
     val onDislike: ((TrackEntity) -> Unit)? = null,
     /** Скачать онлайн-трек в медиатеку телефона. */
     val onDownload: ((TrackEntity) -> Unit)? = null,
+    /** Удалить файл трека с телефона. */
+    val onDelete: ((TrackEntity) -> Unit)? = null,
     /** Открыть нижнее меню трека (с действиями того экрана, откуда открыли). */
     val onMenu: ((TrackEntity, Boolean, TrackActions) -> Unit)? = null,
 )

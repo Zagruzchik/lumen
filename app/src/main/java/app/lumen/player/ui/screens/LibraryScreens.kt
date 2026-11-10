@@ -557,6 +557,21 @@ private fun LibraryContent(
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     Box(Modifier.padding(horizontal = 0.dp)) { LibraryHeaderNoPad(tab, onTab) }
                 }
+                // Жанры из тегов — короткой лентой над альбомами.
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    val genres by vm.genres.collectAsStateWithLifecycle()
+                    if (genres.isNotEmpty()) {
+                        androidx.compose.foundation.lazy.LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            contentPadding = PaddingValues(vertical = 4.dp),
+                        ) {
+                            items(genres.size) { i ->
+                                val g = genres[i]
+                                app.lumen.player.ui.components.LChip("${g.name} · ${g.count}", false) { nav.open(Dest.Genre(g.name)) }
+                            }
+                        }
+                    }
+                }
                 items(albums, key = { it.albumKey }) { a ->
                     AlbumTile(a, { nav.open(Dest.Album(a.albumKey)) })
                 }
@@ -729,6 +744,28 @@ fun FolderScreen(vm: MainViewModel, path: String, name: String, nav: Nav, action
         badge = null,
         coverUri = tracks.firstOrNull()?.uri,
         seed = path,
+        round = false,
+        tracks = tracks,
+        numbered = false,
+        discs = false,
+    )
+}
+
+@Composable
+fun GenreScreen(vm: MainViewModel, genre: String, nav: Nav, actions: TrackActions, bottomPad: Dp) {
+    val tracks by remember(genre) { vm.genreTracks(genre) }.collectAsState(initial = emptyList())
+    CollectionScreen(
+        vm = vm,
+        nav = nav,
+        actions = actions,
+        bottomPad = bottomPad,
+        title = genre,
+        link = null,
+        onLink = null,
+        subtitle = "Жанр · " + pluralRu(tracks.size, "трек", "трека", "треков"),
+        badge = null,
+        coverUri = tracks.firstOrNull()?.uri,
+        seed = "genre:$genre",
         round = false,
         tracks = tracks,
         numbered = false,

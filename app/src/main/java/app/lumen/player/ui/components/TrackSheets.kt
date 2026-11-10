@@ -210,6 +210,9 @@ fun TrackMenuSheet(
                 }
             }
             a.onInfo?.let { f -> SheetItem(LIcons.Info, "Информация о треке") { run { f(t) } } }
+            if (!app.lumen.player.data.Online.isOnline(t.uri)) {
+                a.onDelete?.let { f -> SheetItem(LIcons.Trash, "Удалить файл", tint = LC.Dim) { run { f(t) } } }
+            }
             a.onRemoveFromPlaylist?.let { f -> SheetItem(LIcons.Trash, "Убрать из плейлиста", tint = Color(0xFFFF8A8A)) { run { f(t) } } }
         }
     }

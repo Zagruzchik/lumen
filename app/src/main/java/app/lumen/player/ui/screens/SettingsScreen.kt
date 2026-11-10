@@ -564,6 +564,9 @@ fun SettingsScreen(
         item { Card { SyncSection(vm) } }
         item { Card { LastFmSection(vm) } }
 
+        // ---------- работа в фоне ----------
+        item { Card { BackgroundSection() } }
+
         // ---------- будильник ----------
         item { Card { AlarmSection(vm) } }
 

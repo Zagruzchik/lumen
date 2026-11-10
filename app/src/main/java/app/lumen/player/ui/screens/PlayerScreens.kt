@@ -1506,6 +1506,8 @@ fun QueueSheet(vm: MainViewModel, onClose: () -> Unit, sheetModifier: Modifier =
                             color = LC.Dim,
                         )
                     }
+                    IconBtn(LIcons.Playlist, "Сохранить очередь как плейлист", { vm.saveQueueAsPlaylist() })
+                    Spacer(Modifier.width(6.dp))
                     IconBtn(
                         LIcons.Shuffle,
                         if (p.shuffle) "Вернуть исходный порядок" else "Перемешать очередь",
