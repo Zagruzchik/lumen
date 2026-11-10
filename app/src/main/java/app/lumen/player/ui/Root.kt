@@ -394,7 +394,8 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                 // У онлайн-трека нет альбома в библиотеке — ищем ещё треки исполнителя в сети.
                 if (app.lumen.player.data.Online.isOnline(it.uri)) {
                     nav.tab(Dest.Home, null)
-                    vm.searchRequest.value = it.artist
+                    // Альбом найден в каталоге — ищем его целиком, иначе — исполнителя.
+                    vm.searchRequest.value = if (it.album != app.lumen.player.data.Online.labelOf(it.uri)) "${it.artist} ${it.album}" else it.artist
                 } else nav.open(Dest.Album(it.albumKey))
             },
             onOpenArtist = {

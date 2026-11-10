@@ -57,6 +57,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -153,6 +154,12 @@ fun RecsScreen(vm: MainViewModel, bottomPad: Dp) {
             }
             Spacer(Modifier.height(10.dp))
         }
+
+        // ---- подборки: сейчас, настроение, занятие, твои миксы ----
+        item(key = "mixNow") { NowMixTile(vm) }
+        item(key = "mixMoods") { MixRow(vm, "Под настроение", app.lumen.player.data.Mixes.moods) }
+        item(key = "mixActs") { MixRow(vm, "Под занятие", app.lumen.player.data.Mixes.activities) }
+        item(key = "mixArtists") { ArtistMixRow(vm) }
 
         if (state.sections.isEmpty()) {
             if (state.loading) {
@@ -460,3 +467,131 @@ private fun SkeletonRow() {
     }
 }
 
+
+
+// ---------- подборки под настроение и занятие ----------
+
+@Composable
+private fun NowMixTile(vm: MainViewModel) {
+    val busy by vm.mixBusy.collectAsStateWithLifecycle()
+    val cal = remember { java.util.Calendar.getInstance() }
+    val m = remember {
+        val dow = cal.get(java.util.Calendar.DAY_OF_WEEK)
+        app.lumen.player.data.Mixes.now(cal.get(java.util.Calendar.HOUR_OF_DAY), dow == java.util.Calendar.SATURDAY || dow == java.util.Calendar.SUNDAY)
+    }
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (pressed) 0.97f else 1f, spring(dampingRatio = 0.6f, stiffness = 500f), label = "nowPress")
+    Box(
+        Modifier
+            .padding(horizontal = 20.dp, vertical = 6.dp)
+            .fillMaxWidth()
+            .height(120.dp)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(RoundedCornerShape(26.dp))
+            .background(Brush.linearGradient(listOf(Color(m.from), Color(m.to))))
+            .clickable(interaction, null) { vm.playMix(m) }
+            .padding(20.dp),
+    ) {
+        Column(Modifier.align(Alignment.CenterStart)) {
+            Text("СЕЙЧАС ПОДОЙДЁТ", fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp, color = Color.White.copy(alpha = 0.75f))
+            Text(m.title, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
+            Text(m.subtitle, fontSize = 13.sp, color = Color.White.copy(alpha = 0.8f))
+        }
+        Box(
+            Modifier.align(Alignment.CenterEnd).size(52.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.22f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (busy == m.id) CircularProgressIndicator(Modifier.size(24.dp), color = Color.White, strokeWidth = 2.5.dp)
+            else Icon(LIcons.Play, null, Modifier.size(24.dp), tint = Color.White)
+        }
+    }
+}
+
+@Composable
+private fun MixRow(vm: MainViewModel, title: String, mixes: List<app.lumen.player.data.MoodMix>) {
+    val busy by vm.mixBusy.collectAsStateWithLifecycle()
+    Column {
+        Text(title, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(start = 20.dp, top = 14.dp, bottom = 10.dp))
+        LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(mixes, key = { it.id }) { m -> MixTile(m, busy == m.id) { vm.playMix(m) } }
+        }
+    }
+}
+
+@Composable
+private fun MixTile(m: app.lumen.player.data.MoodMix, busy: Boolean, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (pressed) 0.94f else 1f, spring(dampingRatio = 0.55f, stiffness = 600f), label = "mixPress")
+    Box(
+        Modifier
+            .size(width = 140.dp, height = 104.dp)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(RoundedCornerShape(20.dp))
+            .background(Brush.linearGradient(listOf(Color(m.from), Color(m.to))))
+            .clickable(interaction, null, onClick = onClick)
+            .padding(14.dp),
+    ) {
+        Column(Modifier.align(Alignment.BottomStart)) {
+            Text(m.title, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, maxLines = 1)
+            Text(m.subtitle, fontSize = 11.sp, color = Color.White.copy(alpha = 0.78f), maxLines = 2, lineHeight = 13.sp)
+        }
+        if (busy) {
+            CircularProgressIndicator(Modifier.align(Alignment.TopEnd).size(18.dp), color = Color.White, strokeWidth = 2.dp)
+        }
+    }
+}
+
+@Composable
+private fun ArtistMixRow(vm: MainViewModel) {
+    val mixes by vm.artistMixes.collectAsStateWithLifecycle()
+    val busy by vm.mixBusy.collectAsStateWithLifecycle()
+    if (mixes.isEmpty()) return
+    Column {
+        Text("Твои миксы", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(start = 20.dp, top = 14.dp))
+        Text("Любимые исполнители, похожее и новое из сети", fontSize = 13.sp, color = LC.Dim, modifier = Modifier.padding(start = 20.dp, bottom = 10.dp))
+        LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(mixes, key = { it.name }) { a ->
+                val interaction = remember { MutableInteractionSource() }
+                val pressed by interaction.collectIsPressedAsState()
+                val scale by animateFloatAsState(if (pressed) 0.94f else 1f, spring(dampingRatio = 0.55f, stiffness = 600f), label = "amPress")
+                Column(
+                    Modifier
+                        .width(132.dp)
+                        .graphicsLayer { scaleX = scale; scaleY = scale }
+                        .clickable(interaction, null) { vm.playArtistMix(a) },
+                ) {
+                    Box(Modifier.size(132.dp).clip(RoundedCornerShape(22.dp)).background(LocalAccent.current.copy(alpha = 0.25f))) {
+                        app.lumen.player.ui.components.Cover(a.coverUri, Modifier.size(132.dp), corner = 22.dp, sizePx = 384)
+                        Box(
+                            Modifier
+                                .matchParentSize()
+                                .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xCC000000)))),
+                        )
+                        Text(
+                            "МИКС",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.5.sp,
+                            color = Color.White.copy(alpha = 0.85f),
+                            modifier = Modifier.align(Alignment.TopStart).padding(10.dp),
+                        )
+                        if (busy == "artist:" + a.name) {
+                            CircularProgressIndicator(Modifier.align(Alignment.Center).size(28.dp), color = Color.White, strokeWidth = 2.5.dp)
+                        }
+                        Text(
+                            a.name,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color.White,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.align(Alignment.BottomStart).padding(10.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}

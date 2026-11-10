@@ -12,6 +12,7 @@ import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
 import org.schabi.newpipe.extractor.localization.ContentCountry
 import org.schabi.newpipe.extractor.localization.Localization
 import org.schabi.newpipe.extractor.playlist.PlaylistInfo
+import org.schabi.newpipe.extractor.playlist.PlaylistInfoItem
 import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.services.soundcloud.SoundcloudParsingHelper
 import org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper
@@ -298,6 +299,43 @@ object NewPipeEngine {
         } catch (e: Throwable) {
             throw OnlineError(friendly(e))
         }
+    }
+
+    // ---------- подборки: готовые плейлисты под настроение ----------
+
+    /**
+     * Ищет плейлисты по запросу (YouTube Music / SoundCloud) и берёт треки из первого подходящего.
+     * Так «Для бега» — это настоящая подборка для бега, а не песни со словом «бег» в названии.
+     */
+    fun playlistMix(query: String, source: String, maxItems: Int): List<OnlineTrack> {
+        ensureInit()
+        val s = service(source)
+        val filter = when (source) {
+            "youtube" -> "music_playlists"
+            "soundcloud" -> "playlists"
+            else -> return emptyList()
+        }
+        val found = runCatching {
+            SearchInfo.getInfo(s, s.searchQHFactory.fromQuery(query, listOf(filter), "")).relatedItems
+                .filterIsInstance<PlaylistInfoItem>()
+                .filter { it.streamCount < 0 || it.streamCount >= 8 }
+        }.getOrElse { throw OnlineError(friendly(it)) }
+        for (pl in found.take(3)) {
+            val url = pl.url.replace("music.youtube.com", "www.youtube.com")
+            val items = runCatching {
+                val info = PlaylistInfo.getInfo(s, url)
+                val all = ArrayList<StreamInfoItem>(info.relatedItems)
+                if (all.size < maxItems && info.hasNextPage()) {
+                    runCatching { all += PlaylistInfo.getMoreItems(s, url, info.nextPage).items }
+                }
+                all
+            }.getOrNull().orEmpty()
+                .filter { it.duration == -1L || it.duration in 60..900 }
+                .map { toTrack(source, it) }
+                .filter { it.id.isNotBlank() }
+            if (items.size >= 8) return items.take(maxItems)
+        }
+        return emptyList()
     }
 
     // ---------- SoundCloud: оригинальный файл автора (бывает FLAC/WAV) ----------

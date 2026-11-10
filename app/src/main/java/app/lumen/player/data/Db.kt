@@ -40,6 +40,8 @@ data class TrackEntity(
     val size: Long,
     val bitrate: Int,
     val source: Int,
+    /** Жанр из тегов файла или из каталога (для онлайн-треков). */
+    @androidx.room.ColumnInfo(defaultValue = "") val genre: String = "",
 )
 
 @Entity(tableName = "favorites")
@@ -140,6 +142,8 @@ data class SmartPlaylistEntity(
     val createdAt: Long,
     val updatedAt: Long,
 )
+
+data class GenreRow(val name: String, val count: Int)
 
 /** Обрезка трека: начинать с startMs, заканчивать на endMs (0 — до конца). */
 @Entity(tableName = "trims")
@@ -514,6 +518,17 @@ abstract class LibraryDao {
     @Query("SELECT * FROM tracks")
     abstract suspend fun allTracksOnce(): List<TrackEntity>
 
+    // ---------- жанры ----------
+
+    @Query("SELECT genre AS name, COUNT(*) AS count FROM tracks WHERE $VISIBLE AND genre != '' GROUP BY genre COLLATE NOCASE ORDER BY count DESC")
+    abstract fun genres(): Flow<List<GenreRow>>
+
+    @Query("SELECT * FROM tracks WHERE $VISIBLE AND genre = :genre COLLATE NOCASE ORDER BY artist COLLATE NOCASE, albumKey, discNo, trackNo")
+    abstract fun genreTracks(genre: String): Flow<List<TrackEntity>>
+
+    @androidx.room.Update
+    abstract suspend fun updateTrack(t: TrackEntity)
+
     // ---------- онлайн-треки ----------
 
     @Query("SELECT * FROM tracks WHERE source = 2")
@@ -659,7 +674,7 @@ abstract class LibraryDao {
         PositionEntity::class, LoudnessEntity::class,
         DislikeEntity::class, SmartPlaylistEntity::class, TrimEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = false,
 )
 abstract class LumenDb : RoomDatabase() {
@@ -726,6 +741,30 @@ val MIGRATION_5_6 = object : Migration(5, 6) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("CREATE TABLE IF NOT EXISTS `trims` (`uri` TEXT NOT NULL, `startMs` INTEGER NOT NULL, `endMs` INTEGER NOT NULL, PRIMARY KEY(`uri`))")
     }
+}
+
+/** 6 → 7: жанр трека. */
+val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `tracks` ADD COLUMN `genre` TEXT NOT NULL DEFAULT ''")
+    }
+}
+
+/** Жанр из тега: «(17)», «17» и «Rock (17)» → нормальное название. */
+fun cleanGenre(raw: String?): String {
+    val s = raw?.trim().orEmpty()
+    if (s.isEmpty()) return ""
+    val id3 = mapOf(
+        0 to "Blues", 1 to "Classic Rock", 2 to "Country", 3 to "Dance", 4 to "Disco", 5 to "Funk", 6 to "Grunge",
+        7 to "Hip-Hop", 8 to "Jazz", 9 to "Metal", 10 to "New Age", 11 to "Oldies", 13 to "Pop", 14 to "R&B", 15 to "Rap",
+        16 to "Reggae", 17 to "Rock", 18 to "Techno", 19 to "Industrial", 20 to "Alternative", 21 to "Ska",
+        22 to "Death Metal", 24 to "Soundtrack", 26 to "Ambient", 28 to "Vocal", 31 to "Trance", 32 to "Classical",
+        33 to "Instrumental", 35 to "House", 37 to "Sound Clip", 40 to "Alternative Rock", 43 to "Punk", 52 to "Electronic",
+        66 to "New Wave", 79 to "Hard Rock", 98 to "Easy Listening", 102 to "Chanson", 113 to "Tango", 127 to "Drum & Bass",
+    )
+    val num = Regex("^\\(?(\\d{1,3})\\)?$").find(s)?.groupValues?.get(1)?.toIntOrNull()
+    if (num != null) return id3[num] ?: ""
+    return s.replace(Regex("^\\(\\d{1,3}\\)\\s*"), "").replace(Regex("\\s*\\(\\d{1,3}\\)$"), "").substringBefore(';').substringBefore('/').trim()
 }
 
 /** Применяет свои правки к треку из сканера. */

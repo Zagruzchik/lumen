@@ -228,6 +228,17 @@ object Online {
         (0 until a.length()).map { track(a.getJSONObject(it), source) }.filter { it.id.isNotBlank() }
     }
 
+    /** Подборка по запросу: готовые плейлисты YouTube Music, потом SoundCloud, в крайнем случае — поиск треков. */
+    suspend fun mix(query: String, source: String, max: Int): List<OnlineTrack> = withContext(Dispatchers.IO) {
+        if (builtin) {
+            for (src in listOf("youtube", "soundcloud")) {
+                val r = runCatching { NewPipeEngine.playlistMix(query, src, max) }.getOrNull().orEmpty()
+                if (r.isNotEmpty()) return@withContext r
+            }
+        }
+        search(query, source, max)
+    }
+
     /** Разобрать ссылку: один трек или плейлист. */
     suspend fun open(url: String): Pair<OnlineTrack?, OnlinePlaylist?> = withContext(Dispatchers.IO) {
         if (builtin) return@withContext NewPipeEngine.open(url)

@@ -1,5 +1,7 @@
 package app.lumen.player.ui
 
+import app.lumen.player.data.UNKNOWN_ARTIST
+import app.lumen.player.data.MetaLookup
 import app.lumen.player.data.Online
 import app.lumen.player.playback.LumenAlarm
 import app.lumen.player.playback.AlarmConfig
@@ -282,6 +284,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // ---------- обложка, цвета, качество ----------
 
     private fun onTrackChanged(id: String?) {
+        if (Online.isOnline(id)) trackIndex.value[id]?.let { enrichLater(listOf(it), first = true) }
         if (ab.value.a >= 0 || ab.value.b >= 0) ab.value = AbState()
         lyricsJob?.cancel()
         lyrics.value = LyricsResult.Idle
@@ -1942,6 +1945,140 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun saveOnlineTracks(list: List<TrackEntity>) = withContext(Dispatchers.IO) {
         val online = list.filter { Online.isOnline(it.uri) }
         if (online.isNotEmpty()) dao.insertTracksIgnore(online)
+        enrichLater(online.take(40))
+    }
+
+    // ---------- подборки под настроение и занятие ----------
+
+    /** id подборки, которая сейчас собирается (для крутилки на плитке). */
+    val mixBusy = MutableStateFlow<String?>(null)
+    private val mixCache = HashMap<String, Pair<Long, List<TrackEntity>>>()
+
+    data class ArtistMix(val name: String, val coverUri: String?, val count: Int)
+
+    /** «Твои миксы»: по любимым исполнителям — их треки, похожие и новое из сети. */
+    val artistMixes: StateFlow<List<ArtistMix>> = combine(tracks, dislikedUris) { all, _ -> all }
+        .debounce(800)
+        .mapLatest { all ->
+            val top = runCatching { withContext(Dispatchers.IO) { dao.topArtists(12) } }.getOrDefault(emptyList())
+            val names = (top.map { it.name } + all.groupingBy { it.artist }.eachCount().entries.sortedByDescending { it.value }.map { it.key })
+                .filter { it.isNotBlank() && it != UNKNOWN_ARTIST }
+                .distinctBy { it.lowercase() }
+                .take(6)
+            names.map { n ->
+                val mine = all.filter { Artists.has(it, n) }
+                ArtistMix(n, mine.firstOrNull()?.uri, mine.size)
+            }
+        }
+        .state(emptyList())
+
+    private fun interleave(local: List<TrackEntity>, online: List<TrackEntity>, max: Int): List<TrackEntity> {
+        val out = ArrayList<TrackEntity>()
+        val seen = HashSet<String>()
+        var i = 0
+        var j = 0
+        // Свой трек, потом два из сети — чтобы подборка была и знакомой, и новой.
+        while (out.size < max && (i < local.size || j < online.size)) {
+            if (i < local.size) local[i++].let { if (seen.add(normalize(it.artist + " " + it.title))) out += it }
+            repeat(2) { if (j < online.size && out.size < max) online[j++].let { if (seen.add(normalize(it.artist + " " + it.title))) out += it } }
+        }
+        return out
+    }
+
+    private suspend fun buildMix(m: app.lumen.player.data.MoodMix): List<TrackEntity> {
+        val dis = dislikedUris.value
+        val favs = favoriteUris.value
+        val local = tracks.value
+            .filter { t -> t.uri !in dis && t.genre.isNotBlank() && m.genres.any { g -> t.genre.lowercase().contains(g) } }
+            .sortedByDescending { (if (it.uri in favs) 2.0 else 0.0) + kotlin.random.Random.nextDouble() * 2 }
+            .take(25)
+        val known = tracks.value.mapTo(HashSet()) { normalize(it.artist) }
+        val online = if (Online.configured) {
+            runCatching { Online.mix(m.playlists.random(), netSource.value, 60) }.getOrNull().orEmpty()
+                .map { Online.toEntity(it) }
+                .filter { it.uri !in dis }
+                // Знакомые исполнители — повыше.
+                .sortedByDescending { (if (normalize(it.artist) in known) 1.0 else 0.0) + kotlin.random.Random.nextDouble() }
+        } else emptyList()
+        return interleave(local, online, 60)
+    }
+
+    fun playMix(m: app.lumen.player.data.MoodMix) {
+        if (mixBusy.value != null) return
+        viewModelScope.launch {
+            mixBusy.value = m.id
+            try {
+                val now = System.currentTimeMillis()
+                val cached = mixCache[m.id]?.takeIf { now - it.first < 6 * 3600_000L }?.second
+                val list = cached ?: buildMix(m).also { if (it.isNotEmpty()) mixCache[m.id] = now to it }
+                if (list.isEmpty()) {
+                    toast(if (Online.configured) "Не получилось собрать «${m.title}» — проверь интернет" else "Для «${m.title}» нужны жанры в тегах или онлайн-музыка")
+                    return@launch
+                }
+                saveOnlineTracks(list)
+                lovedMode.value = 0
+                play(list.shuffled(), 0)
+                toast("${m.title}: ${pluralRuVm(list.size, "трек", "трека", "треков")}")
+            } finally {
+                mixBusy.value = null
+            }
+        }
+    }
+
+    fun playArtistMix(a: ArtistMix) {
+        if (mixBusy.value != null) return
+        viewModelScope.launch {
+            mixBusy.value = "artist:" + a.name
+            try {
+                val dis = dislikedUris.value
+                val mine = tracks.value.filter { Artists.has(it, a.name) && it.uri !in dis }.shuffled().take(15)
+                val similar = runCatching {
+                    withContext(Dispatchers.IO) { app.lumen.player.data.Similar.pick(dao, mine.take(5), mine.mapTo(HashSet()) { it.uri }, 15) }
+                }.getOrDefault(emptyList())
+                val online = if (Online.configured) {
+                    runCatching { Online.search(a.name, netSource.value, 25) }.getOrNull().orEmpty()
+                        .filter { Online.matchScore(it, a.name, "") >= 0.9 }
+                        .map { Online.toEntity(it) }
+                        .filter { it.uri !in dis }
+                } else emptyList()
+                val list = interleave((mine + similar).shuffled(), online, 50)
+                if (list.isEmpty()) {
+                    toast("Не нашлось треков для микса «${a.name}»")
+                    return@launch
+                }
+                saveOnlineTracks(list)
+                play(list, 0)
+            } finally {
+                mixBusy.value = null
+            }
+        }
+    }
+
+    // ---------- настоящий альбом для онлайн-треков ----------
+
+    private val enrichQueue = java.util.concurrent.ConcurrentLinkedDeque<String>()
+    private val enrichQueued = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
+    private var enrichJob: Job? = null
+
+    /** Ищем альбом, год, жанр и квадратную обложку в iTunes/Deezer — по одному треку, без спешки. */
+    private fun enrichLater(list: List<TrackEntity>, first: Boolean = false) {
+        list.filter { MetaLookup.needsEnrich(it) && enrichQueued.add(it.uri) }.forEach {
+            if (first) enrichQueue.addFirst(it.uri) else enrichQueue.addLast(it.uri)
+        }
+        if (enrichJob?.isActive == true) return
+        enrichJob = g.appScope.launch(Dispatchers.IO) {
+            while (true) {
+                val uri = enrichQueue.pollFirst() ?: break
+                val t = dao.byUri(uri)
+                if (t != null && MetaLookup.needsEnrich(t)) {
+                    MetaLookup.enrich(t)?.let { e ->
+                        dao.updateTrack(e)
+                        Artwork.forget(uri)
+                    }
+                    kotlinx.coroutines.delay(350)
+                }
+            }
+        }
     }
 
     fun playNet(list: List<TrackEntity>, index: Int) {
@@ -2036,14 +2173,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         toast("Скачиваю «${t.title}»…")
         g.appScope.launch {
             try {
-                val res = Online.download(getApplication<Application>(), t, g.prefs.onlineDownloadMp3) { p ->
+                // Свежая запись трека: с найденным альбомом, годом и обложкой.
+                val tt = withContext(Dispatchers.IO) {
+                    val row = dao.byUri(t.uri) ?: t
+                    if (MetaLookup.needsEnrich(row)) MetaLookup.enrich(row)?.also { dao.updateTrack(it) } ?: row else row
+                }
+                val res = Online.download(getApplication<Application>(), tt, g.prefs.onlineDownloadMp3) { p ->
                     downloads.value = downloads.value + (t.uri to p)
                 }
                 val local = res.uri.toString()
                 // Названия и обложку берём из онлайн-трека: у скачанного файла тегов может не быть.
                 withContext(Dispatchers.IO) {
-                    dao.putOverride(app.lumen.player.data.TrackOverride(local, t.title, t.artist, Online.labelOf(t.uri), t.artist, null))
-                    Online.thumbOf(t)?.let { url ->
+                    val album = tt.album.takeIf { it.isNotBlank() && it != Online.labelOf(tt.uri) } ?: tt.title
+                    dao.putOverride(app.lumen.player.data.TrackOverride(local, tt.title, tt.artist, album, tt.albumArtist.ifBlank { tt.artist }, tt.year.takeIf { it > 0 }))
+                    Online.thumbOf(tt)?.let { url ->
                         runCatching {
                             val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
                             c.connectTimeout = 8000

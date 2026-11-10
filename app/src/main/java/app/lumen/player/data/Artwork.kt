@@ -46,6 +46,12 @@ object Artwork {
 
     fun hasCustom(context: Context, uri: String) = customFile(context, uri).exists()
 
+    /** Забыть закэшированную обложку (например, онлайн-трек получил обложку альбома). */
+    fun forget(uri: String) {
+        missing.remove(uri)
+        cache.snapshot().keys.filter { it.startsWith("$uri@") }.forEach { cache.remove(it) }
+    }
+
     suspend fun load(context: Context, uri: String, size: Int): Bitmap? {
         peek(uri, size)?.let { return it }
         if (uri in missing) return null

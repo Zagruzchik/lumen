@@ -107,6 +107,7 @@ class MediaScanner(
             cols += "album_artist"
             cols += "disc_number"
             cols += "bitrate"
+            cols += "genre"
         }
         cols += MediaStore.Audio.Media.IS_MUSIC
         // Берём все звуки, а не только «музыку»: лишние папки пользователь исключает сам в настройках.
@@ -133,6 +134,7 @@ class MediaScanner(
             val iData = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
             val iAdded = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)
             val iSize = c.getColumnIndexOrThrow(MediaStore.Audio.Media.SIZE)
+            val iGenre = c.getColumnIndex("genre")
             val iAlbumArtist = if (modern) c.getColumnIndex("album_artist") else -1
             val iDisc = if (modern) c.getColumnIndex("disc_number") else -1
             val iBitrate = if (modern) c.getColumnIndex("bitrate") else -1
@@ -182,6 +184,7 @@ class MediaScanner(
                     size = c.getLong(iSize),
                     bitrate = if (iBitrate >= 0) c.getInt(iBitrate) else 0,
                     source = SOURCE_MEDIASTORE,
+                    genre = if (iGenre >= 0) cleanGenre(c.getString(iGenre)) else "",
                 )
             }
         }
@@ -256,6 +259,7 @@ class MediaScanner(
                 size = f.length(),
                 bitrate = m(MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toIntOrNull() ?: 0,
                 source = SOURCE_FOLDER,
+                genre = cleanGenre(m(MediaMetadataRetriever.METADATA_KEY_GENRE)),
             )
         } catch (e: Exception) {
             null
