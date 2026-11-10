@@ -84,6 +84,9 @@ object LrcParser {
         text.lines().map { LyricLine(-1, it.trim()) }
 }
 
+const val USER_SOURCE = "Свой текст"
+private const val USER_MARK = "[re:Lumen editor]"
+
 class LyricsRepository(
     private val context: Context,
     private val dao: LibraryDao,
@@ -148,6 +151,8 @@ class LyricsRepository(
     }
 
     private suspend fun loadLocked(t: TrackEntity, force: Boolean): LyricsResult {
+        // 0. свой текст из редактора — главнее всего, даже .lrc рядом с файлом
+        userText(t)?.let { text -> found(text, USER_SOURCE)?.let { return it } }
         // 1. .lrc рядом с треком
         localLrc(t)?.let { text ->
             found(text, ".lrc")?.let { return it }
@@ -201,6 +206,77 @@ class LyricsRepository(
             }
             else -> LyricsResult.NotFound
         }
+    }
+
+    // ---------- свой текст (редактор) ----------
+
+    private fun userText(t: TrackEntity): String? {
+        val f = fileFor(t)
+        if (!f.exists()) return null
+        val text = runCatching { f.readText() }.getOrNull() ?: return null
+        return if (USER_MARK in text) text else null
+    }
+
+    /** Текст для редактора: что есть сейчас (свой, .lrc рядом, сохранённый или из базы), без служебных тегов. */
+    suspend fun rawText(t: TrackEntity): String = withContext(Dispatchers.IO) {
+        val raw = userText(t)
+            ?: localLrc(t)
+            ?: runCatching { fileFor(t).takeIf { it.exists() }?.readText() }.getOrNull()
+            ?: dao.lyrics(t.uri)?.let { it.synced ?: it.plain }
+            ?: ""
+        raw.lines()
+            .filterNot { Regex("""^\[(ar|ti|al|length|re|by|offset|au|ve|#):.*]$""", RegexOption.IGNORE_CASE).matches(it.trim()) }
+            .joinToString("\n")
+            .trim()
+    }
+
+    /** Сохранить свой текст: он главнее найденного в сети и не перезаписывается. */
+    suspend fun saveUser(t: TrackEntity, text: String) = withContext(Dispatchers.IO) {
+        val synced = LrcParser.parse(text).isNotEmpty()
+        val content = header(t) + "$USER_MARK\n\n" + text.trim() + "\n"
+        fileFor(t).writeText(content)
+        writeSibling(t, header(t) + "\n" + text.trim() + "\n")
+        dao.putLyrics(
+            LyricsEntity(
+                t.uri,
+                if (synced) text.trim() else null,
+                if (synced) null else text.trim(),
+                false,
+                USER_SOURCE,
+                System.currentTimeMillis(),
+            )
+        )
+    }
+
+    /** Убрать свой текст — дальше снова ищем в сети. */
+    suspend fun removeUser(t: TrackEntity) = withContext(Dispatchers.IO) {
+        if (userText(t) != null) fileFor(t).delete()
+        dao.lyrics(t.uri)?.takeIf { it.source == USER_SOURCE }?.let {
+            dao.putLyrics(LyricsEntity(t.uri, null, null, false, "LRCLIB", 0L))
+        }
+    }
+
+    data class Candidate(val title: String, val artist: String, val album: String, val durationSec: Int, val synced: String?, val plain: String?)
+
+    /** Поиск текстов в LRCLIB для выбора вручную. */
+    suspend fun search(query: String): List<Candidate> = withContext(Dispatchers.IO) {
+        val (code, body) = get("https://lrclib.net/api/search?q=${enc(query)}")
+        if (code != 200 || body == null) throw java.io.IOException("LRCLIB ответил $code")
+        val arr = JSONArray(body)
+        (0 until arr.length()).map { arr.getJSONObject(it) }
+            .filter { !str(it, "syncedLyrics").isNullOrBlank() || !str(it, "plainLyrics").isNullOrBlank() }
+            .map {
+                Candidate(
+                    it.optString("trackName"),
+                    it.optString("artistName"),
+                    it.optString("albumName"),
+                    it.optDouble("duration", 0.0).toInt(),
+                    str(it, "syncedLyrics"),
+                    str(it, "plainLyrics"),
+                )
+            }
+            .sortedByDescending { if (it.synced != null) 1 else 0 }
+            .take(25)
     }
 
     /** Нужно ли ещё что-то качать для этого трека (для массовой загрузки). */

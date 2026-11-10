@@ -388,6 +388,8 @@ fun PlayerScreen(
                         IconBtn(LIcons.Down, "Свернуть текст", { onLyricsFull(false) })
                         Spacer(Modifier.width(12.dp))
                         Text("Текст песни", fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        IconBtn(LIcons.Edit, "Изменить текст и тайминги", { vm.openLyricsEditor() })
+                        Spacer(Modifier.width(8.dp))
                         IconBtn(LIcons.Close, "Скрыть текст", {
                             onLyricsFull(false)
                             vm.toggleShowLyrics()
@@ -630,15 +632,18 @@ private fun CoverArea(
                 SwipeCover(vm, key.id, swipeThreshold)
             }
             if (note != null) {
+                // «Текст не найден» — тап открывает редактор, чтобы добавить свой.
+                val canAdd = note == "Текст не найден"
                 Box(
                     Modifier
                         .align(Alignment.BottomCenter)
                         .padding(14.dp)
                         .clip(RoundedCornerShape(14.dp))
                         .background(Color(0x99000000))
+                        .then(if (canAdd) Modifier.clickable { vm.openLyricsEditor() } else Modifier)
                         .padding(horizontal = 12.dp, vertical = 6.dp)
                 ) {
-                    Text(note, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                    Text(if (canAdd) "Текст не найден · добавить" else note, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                 }
             }
             androidx.compose.animation.AnimatedVisibility(

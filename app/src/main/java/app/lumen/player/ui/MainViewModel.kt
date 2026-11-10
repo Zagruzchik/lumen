@@ -1268,6 +1268,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val nightClock = MutableStateFlow(g.prefs.nightClock)
     fun setNightClock(v: Boolean) { g.prefs.nightClock = v; nightClock.value = v }
 
+    // ---------- редактор текста песни ----------
+
+    val lyricsEditor = MutableStateFlow<TrackEntity?>(null)
+
+    fun openLyricsEditor(t: TrackEntity? = currentTrack.value) {
+        lyricsEditor.value = t ?: return
+    }
+
+    suspend fun lyricsRaw(t: TrackEntity): String = g.lyrics.rawText(t)
+
+    suspend fun searchLyricsOnline(q: String) = g.lyrics.search(q)
+
+    fun saveLyrics(t: TrackEntity, text: String) {
+        viewModelScope.launch {
+            if (text.isBlank()) g.lyrics.removeUser(t) else g.lyrics.saveUser(t, text)
+            if (player.value.currentId == t.uri) loadLyrics(force = text.isBlank())
+            toast(if (text.isBlank()) "Свой текст убран" else "Текст сохранён")
+        }
+    }
+
+    /** Включить трек из редактора, чтобы расставлять тайминги. */
+    fun playForEditor(t: TrackEntity) {
+        viewModelScope.launch {
+            saveOnlineTracks(listOf(t))
+            play(listOf(t), 0)
+        }
+    }
+
     // ---------- цитаты и караоке ----------
 
     val quoteReq = MutableStateFlow<app.lumen.player.ui.components.QuoteRequest?>(null)

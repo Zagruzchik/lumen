@@ -156,6 +156,7 @@ fun TrackMenuSheet(
     onSound: (() -> Unit)? = null,
     onTrim: ((TrackEntity) -> Unit)? = null,
     onCar: (() -> Unit)? = null,
+    onLyrics: ((TrackEntity) -> Unit)? = null,
 ) {
     val t = req.track
     val a = req.actions
@@ -190,6 +191,7 @@ fun TrackMenuSheet(
             SheetItem(LIcons.Disc, "К альбому") { run { a.onOpenAlbum(t) } }
             SheetItem(LIcons.Person, "К исполнителю") { run { a.onOpenArtist(t) } }
             a.onEdit?.let { f -> SheetItem(LIcons.Edit, "Изменить теги и обложку") { run { f(t) } } }
+            onLyrics?.let { f -> SheetItem(LIcons.Lyrics, "Текст песни и тайминги") { run { f(t) } } }
             onTrim?.let { f -> SheetItem(LIcons.Trim, "Обрезать начало и конец") { run { f(t) } } }
             if (app.lumen.player.data.Online.isOnline(t.uri)) {
                 a.onDownload?.let { f -> SheetItem(LIcons.Download, "Скачать на телефон") { run { f(t) } } }

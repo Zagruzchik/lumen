@@ -596,12 +596,28 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                     onClose = { vm.trackMenu.value = null },
                     onSound = { vm.soundSheet.value = true },
                     onCar = { vm.carMode.value = true },
+                    onLyrics = { vm.openLyricsEditor(it) },
                     onTrim = { vm.trimTrack.value = it },
                     sheetModifier = Modifier.animateEnterExit(
                         enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 380f)) { it },
                         exit = slideOutVertically(tween(220)) { it },
                     ),
                 )
+            }
+        }
+        // Редактор текста песни — поверх всего.
+        val lyrEdit by vm.lyricsEditor.collectAsStateWithLifecycle()
+        var lastLyrEdit by remember { mutableStateOf<app.lumen.player.data.TrackEntity?>(null) }
+        if (lyrEdit != null) lastLyrEdit = lyrEdit
+        AnimatedVisibility(
+            lyrEdit != null,
+            enter = fadeIn(tween(250)) + slideInVertically(spring(dampingRatio = 0.9f, stiffness = 380f)) { it / 6 },
+            exit = fadeOut(tween(200)) + slideOutVertically(tween(220)) { it / 6 },
+        ) {
+            lastLyrEdit?.let { t ->
+                androidx.compose.runtime.key(t.uri) {
+                    app.lumen.player.ui.screens.LyricsEditorScreen(vm, t) { vm.lyricsEditor.value = null }
+                }
             }
         }
         // Автомобильный режим и ночные часы — поверх всего.
