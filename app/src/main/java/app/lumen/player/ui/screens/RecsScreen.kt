@@ -514,7 +514,10 @@ private fun MixRow(vm: MainViewModel, title: String, mixes: List<app.lumen.playe
     Column {
         Text(title, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(start = 20.dp, top = 14.dp, bottom = 10.dp))
         LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(mixes, key = { it.id }) { m -> MixTile(m, busy == m.id) { vm.playMix(m) } }
+            items(mixes.size, key = { mixes[it].id }) { i ->
+                val m = mixes[i]
+                MixTile(m, busy == m.id) { vm.playMix(m) }
+            }
         }
     }
 }
@@ -552,7 +555,8 @@ private fun ArtistMixRow(vm: MainViewModel) {
         Text("Твои миксы", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(start = 20.dp, top = 14.dp))
         Text("Любимые исполнители, похожее и новое из сети", fontSize = 13.sp, color = LC.Dim, modifier = Modifier.padding(start = 20.dp, bottom = 10.dp))
         LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(mixes, key = { it.name }) { a ->
+            items(mixes.size, key = { mixes[it].name }) { i ->
+                val a = mixes[i]
                 val interaction = remember { MutableInteractionSource() }
                 val pressed by interaction.collectIsPressedAsState()
                 val scale by animateFloatAsState(if (pressed) 0.94f else 1f, spring(dampingRatio = 0.55f, stiffness = 600f), label = "amPress")
