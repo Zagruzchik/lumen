@@ -93,7 +93,12 @@ import kotlin.math.roundToInt
 /** Маленькая копия интерфейса в цветах темы — рисуется по самой теме, а не по текущей. */
 @Composable
 fun ThemePreview(t: ThemeSpec, modifier: Modifier = Modifier, accentOverride: Color? = null) {
-    val accent = accentOverride ?: if (t.accentMode == AccentMode.FIXED) t.accent else Color(0xFFFF7A59)
+    val sysCtx = androidx.compose.ui.platform.LocalContext.current
+    val accent = accentOverride ?: when (t.accentMode) {
+        AccentMode.FIXED -> t.accent
+        AccentMode.SYSTEM -> app.lumen.player.ui.theme.systemAccent(sysCtx) ?: Color(0xFFFF7A59)
+        else -> Color(0xFFFF7A59)
+    }
     Box(modifier.clip(RoundedCornerShape(22.dp)).background(t.background)) {
         Canvas(Modifier.fillMaxSize()) {
             when (t.backdrop) {
@@ -320,8 +325,12 @@ fun ThemeEditorScreen(baseId: String, nav: Nav) {
                     ColorRow("Бледный текст", t.textFaint) { pick("Бледный текст", t.textFaint) { c -> t = t.copy(textFaint = c) } }
                     Segmented(
                         "Акцент",
-                        listOf("Из обложки" to (t.accentMode == AccentMode.COVER), "Свой цвет" to (t.accentMode == AccentMode.FIXED)),
-                    ) { i -> t = t.copy(accentMode = if (i == 0) AccentMode.COVER else AccentMode.FIXED) }
+                        listOf(
+                            "Из обложки" to (t.accentMode == AccentMode.COVER),
+                            "Свой цвет" to (t.accentMode == AccentMode.FIXED),
+                            "Системный" to (t.accentMode == AccentMode.SYSTEM),
+                        ),
+                    ) { i -> t = t.copy(accentMode = when (i) { 0 -> AccentMode.COVER; 1 -> AccentMode.FIXED; else -> AccentMode.SYSTEM }) }
                     if (t.accentMode == AccentMode.FIXED) {
                         ColorRow("Цвет акцента", t.accent) { pick("Цвет акцента", t.accent) { c -> t = t.copy(accent = c) } }
                     }

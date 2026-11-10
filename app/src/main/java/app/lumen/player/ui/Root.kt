@@ -160,9 +160,12 @@ fun LumenRoot(vm: MainViewModel) {
     val theme = app.lumen.player.ui.theme.ThemeStore.current
     // Акцент: из обложки или постоянный — как задано в теме.
     val fixedAccent by animateColorAsState(theme.accent, tween(500), label = "fixedAccent")
+    val sysCtx = androidx.compose.ui.platform.LocalContext.current
+    val sysAccent = remember(sysCtx) { app.lumen.player.ui.theme.systemAccent(sysCtx) }
     val accent = when {
         moon -> app.lumen.player.ui.screens.MoonAccent
         theme.accentMode == app.lumen.player.ui.theme.AccentMode.FIXED -> fixedAccent
+        theme.accentMode == app.lumen.player.ui.theme.AccentMode.SYSTEM -> sysAccent ?: coverAccent
         else -> coverAccent
     }
     val showFormat by vm.showFormat.collectAsStateWithLifecycle()

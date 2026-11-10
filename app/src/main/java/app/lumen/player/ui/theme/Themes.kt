@@ -19,7 +19,7 @@ import java.io.File
  * только из текущей темы, поэтому новая тема — это просто новый JSON-файл, без кода.
  * Формат и все поля описаны в мануале; ниже — их значение по умолчанию (тема «Lumen»).
  */
-enum class AccentMode { COVER, FIXED }
+enum class AccentMode { COVER, FIXED, SYSTEM }
 enum class BackdropMode { COVER, GRADIENT, SOLID }
 
 @Immutable
@@ -144,7 +144,19 @@ object BuiltinThemes {
         playerDim = 0.6f,
     )
 
-    val all = listOf(Lumen, Amoled, Glass, Neon)
+    /** Material You: акцент берётся из системной палитры (обои Android 12+), фон — мягкий градиент. */
+    val You = ThemeSpec(
+        id = "you",
+        name = "Material You",
+        author = "CheKavo",
+        description = "Цвет акцента из системной палитры Android — под твои обои",
+        accentMode = AccentMode.SYSTEM,
+        backdrop = BackdropMode.COVER,
+        backdropStrength = 0.45f,
+        playerBackdrop = BackdropMode.COVER,
+    )
+
+    val all = listOf(Lumen, Amoled, Glass, Neon, You)
 }
 
 /** Текущая тема и пользовательские темы (хранятся файлами в памяти приложения). */
@@ -236,6 +248,7 @@ object ThemeJson {
             accentMode = when (c.optString("accentMode").lowercase()) {
                 "fixed" -> AccentMode.FIXED
                 "cover" -> AccentMode.COVER
+                "system" -> AccentMode.SYSTEM
                 else -> base.accentMode
             },
             accent = col(c, "accent", base.accent),
@@ -325,3 +338,8 @@ object ThemeJson {
         return Color(h.toLong(16).toInt())
     }
 }
+
+
+/** Системный акцент Material You (Android 12+), иначе null. */
+fun systemAccent(ctx: android.content.Context): Color? =
+    if (android.os.Build.VERSION.SDK_INT >= 31) Color(ctx.getColor(android.R.color.system_accent1_200)) else null
