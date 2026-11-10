@@ -37,6 +37,8 @@ android {
     }
 
     compileOptions {
+        // NewPipe Extractor использует java.nio и java.time — для Android ниже 13 нужен desugaring.
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -52,6 +54,9 @@ android {
     }
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        resources.excludes += "/META-INF/DEPENDENCIES"
+        resources.excludes += "/META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+        resources.excludes += "/META-INF/INDEX.LIST"
     }
 }
 
@@ -74,6 +79,9 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-session:1.5.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
+    // Встроенный онлайн-движок: SoundCloud, YouTube (Music), Bandcamp без сервера.
+    implementation("com.github.teamnewpipe:NewPipeExtractor:v0.26.5")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.4")
     implementation("androidx.glance:glance-appwidget:1.1.1")
     implementation("com.google.guava:guava:33.3.1-android")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")

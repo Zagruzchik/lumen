@@ -193,4 +193,19 @@ class Prefs(context: Context) {
     var onlineAutoDownload: Boolean
         get() = sp.getBoolean("onlineAutoDownload", false)
         set(v) = sp.edit().putBoolean("onlineAutoDownload", v).apply()
+
+    /** builtin — встроенный движок; server — свой music-api. */
+    var onlineMode: String
+        get() = sp.getString("onlineMode", "builtin").orEmpty()
+        set(v) = sp.edit().putString("onlineMode", v).apply()
+
+    /** Скачивать YouTube в Opus (чуть лучше), а не в M4A (играет везде). */
+    var onlineOpus: Boolean
+        get() = sp.getBoolean("onlineOpus", false)
+        set(v) = sp.edit().putBoolean("onlineOpus", v).apply()
+
+    /** SoundCloud: брать оригинальный файл автора, если он разрешил (бывает FLAC/WAV). */
+    var onlineOriginal: Boolean
+        get() = sp.getBoolean("onlineOriginal", true)
+        set(v) = sp.edit().putBoolean("onlineOriginal", v).apply()
 }

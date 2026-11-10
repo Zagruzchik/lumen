@@ -11,6 +11,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // NewPipe Extractor (встроенный онлайн-движок) публикуется через JitPack.
+        maven { url = uri("https://jitpack.io") }
     }
 }
 

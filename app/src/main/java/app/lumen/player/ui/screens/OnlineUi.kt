@@ -74,6 +74,8 @@ fun LazyListScope.netResultsSection(
             Row(Modifier.padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 LChip("SoundCloud", src == "soundcloud") { vm.setNetSource("soundcloud") }
                 LChip("YouTube", src == "youtube") { vm.setNetSource("youtube") }
+                val mode by vm.onlineMode.collectAsStateWithLifecycle()
+                if (mode != "server") LChip("Bandcamp", src == "bandcamp") { vm.setNetSource("bandcamp") }
             }
             Spacer(Modifier.height(6.dp))
         }
@@ -196,32 +198,56 @@ private fun SwitchRow(title: String, subtitle: String, checked: Boolean, onChang
     }
 }
 
-/** Настройки → «Онлайн-музыка»: адрес и ключ своего сервера music-api. */
+/** Настройки → «Онлайн-музыка»: встроенный движок или свой сервер music-api. */
 @Composable
 fun OnlineSection(vm: MainViewModel) {
+    val mode by vm.onlineMode.collectAsStateWithLifecycle()
     val ready by vm.onlineReady.collectAsStateWithLifecycle()
     val status by vm.onlineStatus.collectAsStateWithLifecycle()
     val checking by vm.onlineChecking.collectAsStateWithLifecycle()
     val viaServer by vm.onlineViaServer.collectAsStateWithLifecycle()
     val mp3 by vm.onlineMp3.collectAsStateWithLifecycle()
+    val opus by vm.onlineOpus.collectAsStateWithLifecycle()
+    val original by vm.onlineOriginal.collectAsStateWithLifecycle()
     val auto by vm.onlineAutoDownload.collectAsStateWithLifecycle()
     var server by rememberSaveable { mutableStateOf(vm.onlineServerValue()) }
     var key by rememberSaveable { mutableStateOf(vm.onlineKeyValue()) }
     var help by rememberSaveable { mutableStateOf(false) }
+    val builtin = mode != "server"
 
     Text("Онлайн-музыка", fontSize = 17.sp, fontWeight = FontWeight.Bold)
     Text(
-        "Свой сервер music-api: поиск и прослушивание SoundCloud и YouTube прямо в Lumen, ссылки, плейлисты, скачивание в медиатеку.",
+        "Поиск и прослушивание SoundCloud, YouTube Music и Bandcamp прямо в Lumen: лайки, плейлисты, ссылки, скачивание в медиатеку.",
         fontSize = 13.sp,
         color = LC.Dim,
     )
     Spacer(Modifier.height(10.dp))
-    OnlineField(server, "Адрес сервера, например http://127.0.0.1:8787") { server = it.trim() }
-    OnlineField(key, "Ключ доступа (из music-api/.api_key)") { key = it.trim() }
-    Spacer(Modifier.height(8.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        PillButton(if (ready) "Сохранить и проверить" else "Подключить", LIcons.Check, { vm.saveOnline(server, key) }, Modifier.weight(1f))
-        if (ready) PillButton("Проверить", null, { vm.checkOnline() }, Modifier.weight(0.7f), primary = false)
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        LChip("Встроенный", builtin) { vm.setOnlineMode("builtin") }
+        LChip("Свой сервер", !builtin) { vm.setOnlineMode("server") }
+    }
+    Text(
+        if (builtin) "Работает сразу, без Termux и настроек. Ссылки на звук достаются прямо в телефоне."
+        else "Всё идёт через твой music-api (yt-dlp). Нужен запущенный сервер.",
+        fontSize = 12.sp,
+        color = LC.Faint,
+        modifier = Modifier.padding(top = 6.dp),
+    )
+
+    AnimatedVisibility(!builtin) {
+        Column {
+            Spacer(Modifier.height(8.dp))
+            OnlineField(server, "Адрес сервера, например http://127.0.0.1:8787") { server = it.trim() }
+            OnlineField(key, "Ключ доступа (из music-api/.api_key)") { key = it.trim() }
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                PillButton(if (ready) "Сохранить и проверить" else "Подключить", LIcons.Check, { vm.saveOnline(server, key) }, Modifier.weight(1f))
+            }
+        }
+    }
+    if (builtin) {
+        Spacer(Modifier.height(8.dp))
+        PillButton("Проверить связь", null, { vm.checkOnline() }, Modifier.fillMaxWidth(), primary = false)
     }
     Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         if (checking) {
@@ -236,62 +262,73 @@ fun OnlineSection(vm: MainViewModel) {
     if (dl.isNotEmpty()) {
         val known = dl.values.filter { it >= 0f }
         Text(
-            "Скачивается: ${dl.size}" + if (known.isNotEmpty()) " · ${(known.average() * 100).toInt()}%" else " · сервер готовит файл…",
+            "Скачивается: ${dl.size}" + if (known.isNotEmpty()) " · ${(known.average() * 100).toInt()}%" else " · готовлю файл…",
             fontSize = 13.sp,
             color = LocalAccent.current,
             modifier = Modifier.padding(top = 6.dp),
         )
     }
-    AnimatedVisibility(ready) {
-        Column {
-            Spacer(Modifier.height(6.dp))
-            SwitchRow(
-                "Играть через сервер",
-                "Сервер сам перегоняет звук в MP3. Включи, если онлайн-треки не стартуют или рвутся. Перемотка будет медленнее",
-                viaServer,
-            ) { vm.setOnlineViaServer(it) }
-            SwitchRow(
-                "Скачивать в MP3",
-                if (mp3) "Файлы играют везде, но это пережатие (320 кбит/с)" else "Оригинальный формат — лучшее качество (M4A/Opus)",
-                mp3,
-            ) { vm.setOnlineMp3(it) }
-            SwitchRow(
-                "Скачивать понравившееся",
-                "Поставил лайк онлайн-треку — он сам сохраняется в «Музыка/Lumen» и появляется в библиотеке",
-                auto,
-            ) { vm.setOnlineAutoDownload(it) }
+    Spacer(Modifier.height(6.dp))
+    if (builtin) {
+        SwitchRow(
+            "Оригинал автора с SoundCloud",
+            "Если автор разрешил скачивание, берём его исходный файл — часто это FLAC или WAV. Иначе — лучший поток",
+            original,
+        ) { vm.setOnlineOriginal(it) }
+        SwitchRow(
+            "YouTube в Opus",
+            if (opus) "Чуть лучше звучит, но не все плееры понимают .webm" else "M4A (AAC) — играет везде",
+            opus,
+        ) { vm.setOnlineOpus(it) }
+    } else {
+        SwitchRow(
+            "Играть через сервер",
+            "Сервер сам перегоняет звук в MP3. Включи, если онлайн-треки не стартуют или рвутся. Перемотка будет медленнее",
+            viaServer,
+        ) { vm.setOnlineViaServer(it) }
+        SwitchRow(
+            "Скачивать в MP3",
+            if (mp3) "Файлы играют везде, но это пережатие (320 кбит/с)" else "Оригинальный формат — лучшее качество (M4A/Opus)",
+            mp3,
+        ) { vm.setOnlineMp3(it) }
+    }
+    SwitchRow(
+        "Скачивать понравившееся",
+        "Поставил лайк онлайн-треку — он сам сохраняется в «Музыка/Lumen» и появляется в библиотеке",
+        auto,
+    ) { vm.setOnlineAutoDownload(it) }
+    Text(
+        "FLAC бывает только там, где он есть у источника: YouTube и обычные потоки SoundCloud — это сжатый звук, и перегон в FLAC не добавил бы качества.",
+        fontSize = 12.sp,
+        color = LC.Faint,
+        modifier = Modifier.padding(top = 4.dp),
+    )
+    if (!builtin) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .clickable { help = !help }
+                .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Как запустить сервер", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = LocalAccent.current, modifier = Modifier.weight(1f))
+            Icon(LIcons.Down, null, Modifier.size(18.dp).graphicsLayer { rotationZ = if (help) 180f else 0f }, tint = LC.Dim)
         }
-    }
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .clickable { help = !help }
-            .padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text("Как запустить сервер", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = LocalAccent.current, modifier = Modifier.weight(1f))
-        Icon(LIcons.Down, null, Modifier.size(18.dp).graphicsLayer { rotationZ = if (help) 180f else 0f }, tint = LC.Dim)
-    }
-    AnimatedVisibility(help) {
-        Column {
-            listOf(
-                "В Termux: cd ~/music-api && ./run.sh — сервер напишет ключ доступа.",
-                "Сервер на этом же телефоне — адрес http://127.0.0.1:8787. На компьютере или другом устройстве в той же сети — его IP, например http://192.168.1.5:8787.",
-                "Скопируй ключ из music-api/.api_key в поле выше и нажми «Подключить».",
-                "Чтобы Android не усыплял Termux: в уведомлении Termux нажми «Acquire wakelock» и сними для него ограничения батареи.",
-            ).forEachIndexed { i, step ->
-                Row(Modifier.padding(vertical = 4.dp)) {
-                    Text("${i + 1}.", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = LocalAccent.current, modifier = Modifier.width(22.dp))
-                    Text(step, fontSize = 14.sp)
+        AnimatedVisibility(help) {
+            Column {
+                listOf(
+                    "В Termux: cd ~/music-api && ./run.sh — сервер напишет ключ доступа.",
+                    "Сервер на этом же телефоне — адрес http://127.0.0.1:8787. На другом устройстве в той же сети — его IP, например http://192.168.1.5:8787.",
+                    "Скопируй ключ из music-api/.api_key в поле выше и нажми «Подключить».",
+                    "Чтобы Android не усыплял Termux: в уведомлении Termux нажми «Acquire wakelock» и сними для него ограничения батареи.",
+                ).forEachIndexed { i, step ->
+                    Row(Modifier.padding(vertical = 4.dp)) {
+                        Text("${i + 1}.", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = LocalAccent.current, modifier = Modifier.width(22.dp))
+                        Text(step, fontSize = 14.sp)
+                    }
                 }
             }
-            Text(
-                "Сервер личный: не открывай его порт в интернет без HTTPS-прокси.",
-                fontSize = 12.sp,
-                color = LC.Faint,
-                modifier = Modifier.padding(top = 4.dp),
-            )
         }
     }
 }

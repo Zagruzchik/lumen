@@ -1888,6 +1888,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    val onlineMode = MutableStateFlow(g.prefs.onlineMode)
+    fun setOnlineMode(m: String) {
+        g.prefs.onlineMode = m
+        onlineMode.value = m
+        if (m == "server" && netSource.value == "bandcamp") setNetSource("soundcloud")
+        Online.configure(g.prefs)
+        onlineReady.value = Online.configured
+        onlineStatus.value = null
+        netResults.value = null
+    }
+    val onlineOpus = MutableStateFlow(g.prefs.onlineOpus)
+    fun setOnlineOpus(v: Boolean) { g.prefs.onlineOpus = v; onlineOpus.value = v; Online.configure(g.prefs) }
+    val onlineOriginal = MutableStateFlow(g.prefs.onlineOriginal)
+    fun setOnlineOriginal(v: Boolean) { g.prefs.onlineOriginal = v; onlineOriginal.value = v; Online.configure(g.prefs) }
+
     val onlineViaServer = MutableStateFlow(g.prefs.onlineViaServer)
     fun setOnlineViaServer(v: Boolean) { g.prefs.onlineViaServer = v; onlineViaServer.value = v; Online.configure(g.prefs) }
     val onlineMp3 = MutableStateFlow(g.prefs.onlineDownloadMp3)
@@ -1993,9 +2008,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         toast("Скачиваю «${t.title}»…")
         g.appScope.launch {
             try {
-                val local = Online.download(getApplication<Application>(), t, g.prefs.onlineDownloadMp3) { p ->
+                val res = Online.download(getApplication<Application>(), t, g.prefs.onlineDownloadMp3) { p ->
                     downloads.value = downloads.value + (t.uri to p)
-                }.toString()
+                }
+                val local = res.uri.toString()
                 // Названия и обложку берём из онлайн-трека: у скачанного файла тегов может не быть.
                 withContext(Dispatchers.IO) {
                     dao.putOverride(app.lumen.player.data.TrackOverride(local, t.title, t.artist, Online.labelOf(t.uri), t.artist, null))
@@ -2028,7 +2044,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         g.scanner.scan()
                     }
                 }
-                toast("Скачано: ${t.title} — теперь в библиотеке")
+                toast("Скачано: ${t.title} · ${res.format}")
             } catch (e: Exception) {
                 toast("Не скачалось: ${e.message ?: "ошибка"}")
             } finally {

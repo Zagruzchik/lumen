@@ -197,18 +197,36 @@ class PlaybackService : MediaLibraryService() {
                 val idx = player.currentMediaItemIndex
                 if (id !in onlineRetried) {
                     onlineRetried += id
-                    player.replaceMediaItem(idx, LumenMedia.playable(item, id, forceProxy = true))
-                    player.prepare()
+                    if (app.lumen.player.data.Online.builtin) {
+                        // Ссылка могла протухнуть — достаём свежую и продолжаем с того же места.
+                        app.lumen.player.data.NewPipeEngine.invalidate(id)
+                        val pos = player.currentPosition
+                        player.prepare()
+                        player.seekTo(idx, pos)
+                    } else {
+                        player.replaceMediaItem(idx, LumenMedia.playable(item, id, forceProxy = true))
+                        player.prepare()
+                    }
                     player.play()
-                } else if (player.hasNextMediaItem()) {
-                    player.seekToNextMediaItem()
-                    player.prepare()
-                    player.play()
+                } else {
+                    val reason = generateSequence(error as Throwable?) { it.cause }
+                        .firstOrNull { it is app.lumen.player.data.OnlineError }?.message
+                    android.widget.Toast.makeText(
+                        this@PlaybackService,
+                        "Не удалось включить «${item.mediaMetadata.title}»" + (reason?.let { ": $it" } ?: ""),
+                        android.widget.Toast.LENGTH_LONG,
+                    ).show()
+                    if (player.hasNextMediaItem()) {
+                        player.seekToNextMediaItem()
+                        player.prepare()
+                        player.play()
+                    }
                 }
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 val id = mediaItem?.mediaId
+                onlineRetried.remove(id)
                 // Следующий онлайн-трек: просим сервер заранее достать ссылку — переход будет без паузы.
                 if (player.hasNextMediaItem()) {
                     val next = player.getMediaItemAt(player.nextMediaItemIndex).mediaId
