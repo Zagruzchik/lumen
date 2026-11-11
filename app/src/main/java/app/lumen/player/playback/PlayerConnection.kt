@@ -92,7 +92,8 @@ class PlayerConnection(private val context: Context) {
             c.playbackState != Player.STATE_ENDED &&
             c.playbackSuppressionReason == Player.PLAYBACK_SUPPRESSION_REASON_NONE
         val w = wanted ?: return real
-        if (android.os.SystemClock.uptimeMillis() < wantedUntil && real != w) return w
+        // Всё окно удержания показываем нажатое, даже если плеер успел «передумать» туда-обратно.
+        if (android.os.SystemClock.uptimeMillis() < wantedUntil) return w
         wanted = null
         return real
     }
@@ -101,6 +102,8 @@ class PlayerConnection(private val context: Context) {
         wanted = playing
         wantedUntil = android.os.SystemClock.uptimeMillis() + 1200
         _state.value = _state.value.copy(isPlaying = playing)
+        // Окно закончилось — сверяемся с плеером ещё раз (вдруг событий больше не будет).
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ refresh(false) }, 1250)
     }
 
     private fun refresh(queueChanged: Boolean) {
