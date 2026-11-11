@@ -168,6 +168,22 @@ fun LazyListScope.playlistsTab(
             PillButton("Новое", LIcons.Sparkle, { nav.open(app.lumen.player.ui.Dest.Recent) }, Modifier.weight(1f), primary = false)
         }
     }
+    item(key = "receiveShare") {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable { vm.receiveShare() }
+                .padding(horizontal = 20.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(60.dp), contentAlignment = Alignment.Center) { Icon(LIcons.Share, null, Modifier.size(24.dp), tint = LocalAccent.current) }
+            Spacer(Modifier.width(14.dp))
+            Column {
+                Text("Получить с телефона рядом", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text("Треки и плейлисты по Wi‑Fi, без интернета", fontSize = 12.sp, color = LC.Dim)
+            }
+        }
+    }
     smartPlaylistRows(nav, smart)
     if (list.isEmpty()) {
         item(key = "plEmpty") {
@@ -255,6 +271,11 @@ fun PlaylistScreen(vm: MainViewModel, id: Long, nav: Nav, actions: TrackActions,
                                 text = { Text("Переименовать") },
                                 leadingIcon = { Icon(LIcons.Edit, null, Modifier.size(20.dp)) },
                                 onClick = { menu = false; renaming = true },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Поделиться на телефон рядом") },
+                                leadingIcon = { Icon(LIcons.Share, null, Modifier.size(20.dp)) },
+                                onClick = { menu = false; vm.sharePlaylist(id, pl?.name ?: "Плейлист") },
                             )
                             DropdownMenuItem(
                                 text = { Text("Экспорт в M3U") },

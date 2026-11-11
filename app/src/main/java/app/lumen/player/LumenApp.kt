@@ -61,6 +61,7 @@ class AppGraph(val context: Context) {
     val beats = app.lumen.player.playback.BeatAnalyzer(context)
     val recs = app.lumen.player.data.RecommendationsRepository(context, db.dao(), prefs)
     val updates = app.lumen.player.data.UpdateRepository(context)
+    val share by lazy { app.lumen.player.data.NearShare(context, appScope, db.dao(), scanner, lyrics) }
 
     init {
         app.lumen.player.data.Online.configure(prefs)

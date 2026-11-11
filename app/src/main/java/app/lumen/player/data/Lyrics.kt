@@ -230,6 +230,11 @@ class LyricsRepository(
             .trim()
     }
 
+    /** Свой текст из редактора (если есть) — его передаём вместе с треком. */
+    suspend fun userLyrics(t: TrackEntity): String? = withContext(Dispatchers.IO) {
+        if (userText(t) != null) rawText(t) else null
+    }
+
     /** Сохранить свой текст: он главнее найденного в сети и не перезаписывается. */
     suspend fun saveUser(t: TrackEntity, text: String) = withContext(Dispatchers.IO) {
         val synced = LrcParser.parse(text).isNotEmpty()

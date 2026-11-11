@@ -13,8 +13,8 @@ android {
         applicationId = "app.lumen.player"
         minSdk = 26
         targetSdk = 35
-        versionCode = 53
-        versionName = "0.26.2"
+        versionCode = 54
+        versionName = "0.27.0"
     }
 
     signingConfigs {
@@ -83,6 +83,8 @@ dependencies {
     implementation("com.github.teamnewpipe:NewPipeExtractor:v0.26.5")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.4")
     implementation("androidx.glance:glance-appwidget:1.1.1")
+    // Передача на телефон рядом: Bluetooth для поиска, Wi‑Fi (точка доступа / Wi‑Fi Direct) для файлов.
+    implementation("com.google.android.gms:play-services-nearby:19.3.0")
     implementation("com.google.guava:guava:33.3.1-android")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.9.0")

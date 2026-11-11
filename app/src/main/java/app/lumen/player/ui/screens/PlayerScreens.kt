@@ -494,6 +494,8 @@ private fun PlayerTopBar(
                     .padding(horizontal = 8.dp, vertical = 2.dp),
             )
         }
+        IconBtn(LIcons.Share, "Поделиться", { track?.let { vm.shareTracks(listOf(it), it.title, playlist = false) } })
+        Spacer(Modifier.width(6.dp))
         Box {
             IconBtn(LIcons.MoreH, "Меню трека", {
                 val t = track

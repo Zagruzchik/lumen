@@ -2222,60 +2222,133 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun downloadOnline(t: TrackEntity) {
         if (!Online.isOnline(t.uri) || t.uri in downloads.value) return
         if (Build.VERSION.SDK_INT < 29) { toast("Скачивание работает на Android 10 и новее"); return }
-        downloads.value = downloads.value + (t.uri to -1f)
         toast("Скачиваю «${t.title}»…")
         g.appScope.launch {
             try {
-                // Свежая запись трека: с найденным альбомом, годом и обложкой.
-                val tt = withContext(Dispatchers.IO) {
-                    val row = dao.byUri(t.uri) ?: t
-                    if (MetaLookup.needsEnrich(row)) MetaLookup.enrich(row)?.also { dao.updateTrack(it) } ?: row else row
-                }
-                val res = Online.download(getApplication<Application>(), tt, g.prefs.onlineDownloadMp3) { p ->
-                    downloads.value = downloads.value + (t.uri to p)
-                }
-                val local = res.uri.toString()
-                // Названия и обложку берём из онлайн-трека: у скачанного файла тегов может не быть.
-                withContext(Dispatchers.IO) {
-                    val album = tt.album.takeIf { it.isNotBlank() && it != Online.labelOf(tt.uri) } ?: tt.title
-                    dao.putOverride(app.lumen.player.data.TrackOverride(local, tt.title, tt.artist, album, tt.albumArtist.ifBlank { tt.artist }, tt.year.takeIf { it > 0 }))
-                    Online.thumbOf(tt)?.let { url ->
-                        runCatching {
-                            val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-                            c.connectTimeout = 8000
-                            c.readTimeout = 15000
-                            val bytes = try { c.inputStream.use { it.readBytes() } } finally { c.disconnect() }
-                            val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                            val side = minOf(bmp.width, bmp.height)
-                            val sq = android.graphics.Bitmap.createBitmap(bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side)
-                            val out = java.io.ByteArrayOutputStream()
-                            sq.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, out)
-                            Artwork.setCustom(getApplication<Application>(), local, out.toByteArray())
-                        }
-                    }
-                }
-                // Ждём, пока сканер увидит файл, и переносим на него лайк, плейлисты и историю.
-                g.scanner.scan()
-                withContext(Dispatchers.IO) {
-                    repeat(10) {
-                        if (dao.byUri(local) != null) {
-                            dao.mergeInto(t.uri, local)
-                            // Сам онлайн-трек оставляем: он может ещё играть в очереди.
-                            dao.insertTracksIgnore(listOf(t))
-                            return@withContext
-                        }
-                        kotlinx.coroutines.delay(1500)
-                        g.scanner.scan()
-                    }
-                }
-                toast("Скачано: ${t.title} · ${res.format}")
+                val (_, format) = downloadOnlineNow(t)
+                toast("Скачано: ${t.title} · $format")
             } catch (e: Exception) {
                 toast("Не скачалось: ${e.message ?: "ошибка"}")
-            } finally {
-                downloads.value = downloads.value - t.uri
             }
         }
     }
+
+    /**
+     * Скачивает онлайн-трек в «Музыка/Lumen», переносит на файл лайк, плейлисты и историю.
+     * Возвращает адрес файла в медиатеке и формат.
+     */
+    suspend fun downloadOnlineNow(t: TrackEntity, onProgress: (Float) -> Unit = {}): Pair<String, String> {
+        if (Build.VERSION.SDK_INT < 29) throw IllegalStateException("Скачивание работает на Android 10 и новее")
+        downloads.value = downloads.value + (t.uri to -1f)
+        try {
+            // Свежая запись трека: с найденным альбомом, годом и обложкой.
+            val tt = withContext(Dispatchers.IO) {
+                val row = dao.byUri(t.uri) ?: t
+                if (MetaLookup.needsEnrich(row)) MetaLookup.enrich(row)?.also { dao.updateTrack(it) } ?: row else row
+            }
+            val res = Online.download(getApplication<Application>(), tt, g.prefs.onlineDownloadMp3) { p ->
+                downloads.value = downloads.value + (t.uri to p)
+                onProgress(p)
+            }
+            val local = res.uri.toString()
+            // Названия и обложку берём из онлайн-трека: у скачанного файла тегов может не быть.
+            withContext(Dispatchers.IO) {
+                val album = tt.album.takeIf { it.isNotBlank() && it != Online.labelOf(tt.uri) } ?: tt.title
+                dao.putOverride(app.lumen.player.data.TrackOverride(local, tt.title, tt.artist, album, tt.albumArtist.ifBlank { tt.artist }, tt.year.takeIf { it > 0 }))
+                Online.thumbOf(tt)?.let { url ->
+                    runCatching {
+                        val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                        c.connectTimeout = 8000
+                        c.readTimeout = 15000
+                        val bytes = try { c.inputStream.use { it.readBytes() } } finally { c.disconnect() }
+                        val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        val side = minOf(bmp.width, bmp.height)
+                        val sq = android.graphics.Bitmap.createBitmap(bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side)
+                        val out = java.io.ByteArrayOutputStream()
+                        sq.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, out)
+                        Artwork.setCustom(getApplication<Application>(), local, out.toByteArray())
+                    }
+                }
+            }
+            // Ждём, пока сканер увидит файл, и переносим на него лайк, плейлисты и историю.
+            g.scanner.scan()
+            withContext(Dispatchers.IO) {
+                repeat(10) {
+                    if (dao.byUri(local) != null) {
+                        dao.mergeInto(t.uri, local)
+                        // Сам онлайн-трек оставляем: он может ещё играть в очереди.
+                        dao.insertTracksIgnore(listOf(t))
+                        return@withContext
+                    }
+                    kotlinx.coroutines.delay(1500)
+                    g.scanner.scan()
+                }
+            }
+            return local to res.format
+        } finally {
+            downloads.value = downloads.value - t.uri
+        }
+    }
+
+    // ---------- поделиться с телефоном рядом ----------
+
+    val shareUi = g.share.state
+    private var shareJob: Job? = null
+
+    /** Поделиться треками: недостающие онлайн-треки сначала скачиваются, потом — поиск телефона рядом. */
+    fun shareTracks(list: List<TrackEntity>, title: String, playlist: Boolean) {
+        if (list.isEmpty()) { toast("Нечего отправлять"); return }
+        shareJob?.cancel()
+        shareJob = g.appScope.launch {
+            val online = list.count { Online.isOnline(it.uri) }
+            val ready = ArrayList<TrackEntity>()
+            var done = 0
+            // Уже скачанные копии онлайн-треков находим по названию и исполнителю — второй раз не качаем.
+            val local = if (online > 0) withContext(Dispatchers.IO) {
+                dao.visibleTracksOnce().groupBy { normalize(it.artist) + "|" + normalize(it.title) }
+            } else emptyMap()
+            for (t in list) {
+                if (!Online.isOnline(t.uri)) { ready += t; continue }
+                val have = local[normalize(t.artist) + "|" + normalize(t.title)]?.firstOrNull()
+                if (have != null) { ready += have; done++; continue }
+                g.share.state.value = app.lumen.player.data.ShareUi.Preparing(done, online, t.title, 0f)
+                try {
+                    val (uri, _) = downloadOnlineNow(t) { p ->
+                        if (g.share.state.value is app.lumen.player.data.ShareUi.Preparing) {
+                            g.share.state.value = app.lumen.player.data.ShareUi.Preparing(done, online, t.title, p.coerceAtLeast(0f))
+                        }
+                    }
+                    ready += withContext(Dispatchers.IO) { dao.byUri(uri) } ?: t.copy(uri = uri)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    g.share.fail("Не скачалось «${t.title}»: ${e.message ?: "ошибка"}")
+                    return@launch
+                }
+                done++
+            }
+            g.share.startSend(ready, title, playlist)
+        }
+    }
+
+    fun sharePlaylist(id: Long, name: String) {
+        viewModelScope.launch {
+            val list = dao.playlistTracks(id).first()
+            shareTracks(list, name, playlist = true)
+        }
+    }
+
+    fun receiveShare() = g.share.startReceive()
+    fun shareGo() = g.share.go()
+    fun shareCancel() {
+        shareJob?.cancel()
+        g.share.cancel()
+    }
+    fun shareConnect(p: app.lumen.player.data.SharePeer) = g.share.connect(p)
+    fun shareAccept() = g.share.accept()
+    fun shareReject() = g.share.reject()
+    fun shareFail(msg: String) = g.share.fail(msg)
+    fun shareUris() = g.share.outgoingUris()
 
     private val historyUris = MutableStateFlow(g.prefs.searchHistory)
     val searchHistory: StateFlow<List<TrackEntity>> =

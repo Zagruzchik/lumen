@@ -46,6 +46,9 @@ object Artwork {
 
     fun hasCustom(context: Context, uri: String) = customFile(context, uri).exists()
 
+    /** Своя обложка файлом (для передачи на другой телефон). */
+    fun customBytes(context: Context, uri: String): ByteArray? = customFile(context, uri).takeIf { it.exists() }?.readBytes()
+
     /** Забыть закэшированную обложку (например, онлайн-трек получил обложку альбома). */
     fun forget(uri: String) {
         missing.remove(uri)

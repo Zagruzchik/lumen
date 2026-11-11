@@ -620,6 +620,7 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                     onCar = { vm.carMode.value = true },
                     onLyrics = { vm.openLyricsEditor(it) },
                     onTrim = { vm.trimTrack.value = it },
+                    onShare = { vm.shareTracks(listOf(it), it.title, playlist = false) },
                     sheetModifier = Modifier.animateEnterExit(
                         enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 380f)) { it },
                         exit = slideOutVertically(tween(220)) { it },
@@ -817,6 +818,22 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                 Spacer(Modifier.width(10.dp))
                 Text(lastToast, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             }
+        }
+        // ---------- поделиться / получить ----------
+        val shareSt by vm.shareUi.collectAsStateWithLifecycle()
+        var lastShare by remember { mutableStateOf<app.lumen.player.data.ShareUi>(app.lumen.player.data.ShareUi.Idle) }
+        if (shareSt !is app.lumen.player.data.ShareUi.Idle) lastShare = shareSt
+        AnimatedVisibility(shareSt !is app.lumen.player.data.ShareUi.Idle, enter = fadeIn(tween(240)), exit = fadeOut(tween(220))) {
+            app.lumen.player.ui.screens.ShareSheet(
+                vm,
+                lastShare,
+                onClose = { vm.shareCancel() },
+                onOpenPlaylist = { id -> nav.open(Dest.Playlist(id)) },
+                sheetModifier = Modifier.animateEnterExit(
+                    enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 360f)) { it },
+                    exit = slideOutVertically(tween(240)) { it },
+                ),
+            )
         }
         val whatsNew by vm.whatsNew.collectAsStateWithLifecycle()
         LaunchedEffect(Unit) { vm.checkWhatsNew() }
