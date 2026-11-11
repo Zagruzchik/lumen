@@ -21,6 +21,10 @@ data class SyncState(
     val lastSyncAt: Long = 0L,
     val message: String? = null,
     val error: Boolean = false,
+    /** Регистрация ждёт подтверждения почты (ссылкой или кодом из письма). */
+    val pendingEmail: String? = null,
+    /** Вошли по ссылке «Забыл пароль» — нужно задать новый. */
+    val needNewPassword: Boolean = false,
 )
 
 /**
@@ -37,6 +41,11 @@ class LibrarySync(private val context: Context, private val dao: LibraryDao, pri
     private val sp = context.getSharedPreferences("lumen_sync", Context.MODE_PRIVATE)
     private val mutex = Mutex()
     private val baseFile = File(context.filesDir, "sync_base.json")
+
+    companion object {
+        /** Куда ведут ссылки из писем: открывают Lumen. Должен быть в Redirect URLs проекта Supabase. */
+        const val REDIRECT = "lumen://auth"
+    }
 
     private val _state = MutableStateFlow(SyncState(email = sp.getString("email", null), lastSyncAt = sp.getLong("last", 0L)))
     val state: StateFlow<SyncState> = _state
@@ -80,7 +89,10 @@ class LibrarySync(private val context: Context, private val dao: LibraryDao, pri
         val m = (o?.optString("msg")?.takeIf { it.isNotBlank() } ?: o?.optString("error_description")?.takeIf { it.isNotBlank() } ?: o?.optString("message")).orEmpty()
         return when {
             "Invalid login" in m -> "Неверная почта или пароль"
-            "Email not confirmed" in m -> "Почта не подтверждена — открой письмо от Supabase и нажми ссылку"
+            "Email not confirmed" in m -> "Почта не подтверждена — открой ссылку из письма или введи код"
+            "User already registered" in m -> "Эта почта уже зарегистрирована — войди с её паролем"
+            "Unable to validate email" in m || "invalid format" in m -> "Похоже, в почте опечатка"
+            "same_password" in m || "should be different" in m -> "Новый пароль должен отличаться от старого"
             "already registered" in m -> "Такая почта уже зарегистрирована — просто войди"
             "Password should be" in m -> "Пароль слишком короткий (нужно от 6 символов)"
             "rate limit" in m.lowercase() -> "Сервер временно не отправляет письма (лимит). Попробуй через час"
@@ -132,6 +144,181 @@ class LibrarySync(private val context: Context, private val dao: LibraryDao, pri
             _state.value = _state.value.copy(busy = false, message = e.message ?: "Ошибка", error = true)
             false
         }
+    }
+
+    // ---------- регистрация с подтверждением почты ----------
+
+    private fun enc(s: String) = java.net.URLEncoder.encode(s, "UTF-8")
+    private val redirect get() = "?redirect_to=" + enc(REDIRECT)
+
+    private fun busy() {
+        _state.value = _state.value.copy(busy = true, message = null, error = false)
+    }
+
+    private fun done(msg: String?, error: Boolean = false) {
+        _state.value = _state.value.copy(busy = false, message = msg, error = error)
+    }
+
+    /** Регистрация: письмо со ссылкой (откроет Lumen) и кодом. true — уже вошли. */
+    suspend fun register(email: String, password: String): Boolean = withContext(Dispatchers.IO) {
+        busy()
+        val mail = email.trim().lowercase()
+        try {
+            val body = JSONObject().put("email", mail).put("password", password).toString()
+            val (code, text) = http("POST", "/auth/v1/signup$redirect", body, null)
+            if (code !in 200..299) error(errorText(text))
+            val o = JSONObject(text)
+            if (o.optString("access_token").isNotBlank()) {
+                saveSession(o, mail)
+                _state.value = _state.value.copy(email = mail, busy = false, pendingEmail = null, message = null, error = false)
+                return@withContext true
+            }
+            val user = o.optJSONObject("user") ?: o
+            val repeated = user.optJSONArray("identities")?.length() == 0
+            // Аккаунт уже есть (или подтверждение выключено) — пробуем сразу войти.
+            val (c2, t2) = http("POST", "/auth/v1/token?grant_type=password", body, null)
+            if (c2 in 200..299) {
+                saveSession(JSONObject(t2), mail)
+                _state.value = _state.value.copy(email = mail, busy = false, pendingEmail = null, message = null, error = false)
+                return@withContext true
+            }
+            if (repeated && "не подтверждена" !in errorText(t2)) {
+                done("Эта почта уже зарегистрирована — войди с её паролем или нажми «Забыл пароль»", error = true)
+                return@withContext false
+            }
+            _state.value = _state.value.copy(busy = false, pendingEmail = mail, message = null, error = false)
+            false
+        } catch (e: Exception) {
+            done(e.message ?: "Ошибка", error = true)
+            false
+        }
+    }
+
+    /** Код из письма (6 цифр). */
+    suspend fun verifyCode(email: String, token: String): Boolean = withContext(Dispatchers.IO) {
+        busy()
+        val mail = email.trim().lowercase()
+        try {
+            var last = ""
+            for (type in listOf("signup", "email")) {
+                val body = JSONObject().put("type", type).put("email", mail).put("token", token.trim()).toString()
+                val (code, text) = http("POST", "/auth/v1/verify", body, null)
+                if (code in 200..299) {
+                    saveSession(JSONObject(text), mail)
+                    _state.value = _state.value.copy(email = mail, busy = false, pendingEmail = null, message = null, error = false)
+                    return@withContext true
+                }
+                last = text
+            }
+            val m = errorText(last)
+            done(if ("expired" in m.lowercase() || "invalid" in m.lowercase()) "Код не подошёл или устарел — проверь цифры или отправь письмо ещё раз" else m, error = true)
+            false
+        } catch (e: Exception) {
+            done(e.message ?: "Ошибка", error = true)
+            false
+        }
+    }
+
+    suspend fun resend(email: String): Boolean = withContext(Dispatchers.IO) {
+        busy()
+        try {
+            val body = JSONObject().put("type", "signup").put("email", email.trim().lowercase()).toString()
+            val (code, text) = http("POST", "/auth/v1/resend$redirect", body, null)
+            if (code !in 200..299) error(errorText(text))
+            done("Письмо отправлено ещё раз")
+            true
+        } catch (e: Exception) {
+            done(e.message ?: "Ошибка", error = true)
+            false
+        }
+    }
+
+    /** «Забыл пароль»: письмо со ссылкой, она откроет Lumen и попросит новый пароль. */
+    suspend fun recover(email: String): Boolean = withContext(Dispatchers.IO) {
+        busy()
+        try {
+            val (code, text) = http("POST", "/auth/v1/recover$redirect", JSONObject().put("email", email.trim().lowercase()).toString(), null)
+            if (code !in 200..299) error(errorText(text))
+            done("Письмо для смены пароля отправлено на ${email.trim()}. Открой ссылку из него на этом телефоне")
+            true
+        } catch (e: Exception) {
+            done(e.message ?: "Ошибка", error = true)
+            false
+        }
+    }
+
+    suspend fun setNewPassword(password: String): Boolean = withContext(Dispatchers.IO) {
+        busy()
+        try {
+            val tok = token() ?: error("Вход устарел — запроси письмо ещё раз")
+            val (code, text) = http("PUT", "/auth/v1/user", JSONObject().put("password", password).toString(), tok)
+            if (code !in 200..299) error(errorText(text))
+            _state.value = _state.value.copy(busy = false, needNewPassword = false, message = "Пароль изменён", error = false)
+            true
+        } catch (e: Exception) {
+            done(e.message ?: "Ошибка", error = true)
+            false
+        }
+    }
+
+    fun cancelPending() {
+        _state.value = _state.value.copy(pendingEmail = null, message = null, error = false)
+    }
+
+    /**
+     * Ссылка из письма: lumen://auth#access_token=…&refresh_token=…&type=signup|recovery
+     * (или #error_description=… если ссылка устарела).
+     */
+    suspend fun handleLink(uri: android.net.Uri): Boolean = withContext(Dispatchers.IO) {
+        val raw = (uri.fragment ?: "").ifBlank { uri.query ?: "" }
+        val p = raw.split('&').mapNotNull { kv ->
+            val i = kv.indexOf('=')
+            if (i <= 0) null else kv.substring(0, i) to java.net.URLDecoder.decode(kv.substring(i + 1), "UTF-8")
+        }.toMap()
+        p["error_description"]?.let { d ->
+            done(
+                if ("expired" in d.lowercase() || "invalid" in d.lowercase()) "Ссылка устарела — войди или отправь письмо ещё раз" else d,
+                error = true,
+            )
+            return@withContext false
+        }
+        val access = p["access_token"] ?: return@withContext false
+        busy()
+        try {
+            val (code, text) = http("GET", "/auth/v1/user", null, access)
+            if (code !in 200..299) error(errorText(text))
+            val user = JSONObject(text)
+            val mail = user.optString("email")
+            saveSession(
+                JSONObject()
+                    .put("access_token", access)
+                    .put("refresh_token", p["refresh_token"].orEmpty())
+                    .put("expires_in", p["expires_in"]?.toLongOrNull() ?: 3600)
+                    .put("user", user),
+                mail,
+            )
+            _state.value = _state.value.copy(
+                email = mail,
+                busy = false,
+                pendingEmail = null,
+                needNewPassword = p["type"] == "recovery",
+                message = if (p["type"] == "recovery") null else "Почта подтверждена",
+                error = false,
+            )
+            true
+        } catch (e: Exception) {
+            done(e.message ?: "Не удалось войти по ссылке", error = true)
+            false
+        }
+    }
+
+    /** Флаг с сервера: обязателен ли вход (на случай проблем с почтой его можно выключить без обновления). */
+    suspend fun fetchAuthRequired(): Boolean? = withContext(Dispatchers.IO) {
+        runCatching {
+            val (code, text) = http("GET", "/rest/v1/lumen_config?key=eq.auth_required&select=value", null, null)
+            if (code !in 200..299) null
+            else JSONArray(text).optJSONObject(0)?.opt("value")?.toString()?.trim('"')?.let { it == "true" }
+        }.getOrNull()
     }
 
     fun signOut() {
