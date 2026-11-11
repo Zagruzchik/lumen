@@ -372,6 +372,7 @@ fun SettingsScreen(
                         color = LC.Faint,
                         modifier = Modifier.padding(top = 2.dp),
                     )
+                    DoubleTapLockRow()
                 }
             }
         }
@@ -1111,5 +1112,34 @@ private fun ExpandableCard(
         ) {
             Column { content() }
         }
+    }
+}
+
+
+/** «Двойной тап гасит экран»: включается в «Специальных возможностях» (служба Lumen). */
+@Composable
+private fun DoubleTapLockRow() {
+    val ctx = LocalContext.current
+    var tick by remember { mutableStateOf(0) }
+    val on = remember(tick) { app.lumen.player.playback.ScreenLockService.enabled(ctx) }
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    androidx.compose.runtime.DisposableEffect(lifecycle) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) tick++ }
+        lifecycle.addObserver(obs)
+        onDispose { lifecycle.removeObserver(obs) }
+    }
+    ToggleRow(
+        "Двойной тап гасит экран",
+        if (on) "Включено: двойной тап по пустому месту экрана блокировки Lumen гасит экран"
+        else "Откроются «Специальные возможности» — включи там «Lumen — гашение экрана». Служба ничего не читает с экрана",
+        on,
+    ) { app.lumen.player.playback.ScreenLockService.openSettings(ctx) }
+    if (!on) {
+        Text(
+            "Если переключатель там серый: «О приложении» Lumen → ⋮ → «Разрешить ограниченные настройки», потом снова включи службу.",
+            fontSize = 12.sp,
+            color = LC.Faint,
+            modifier = Modifier.padding(top = 2.dp),
+        )
     }
 }

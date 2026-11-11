@@ -44,6 +44,21 @@ class UpdateRepository(private val context: Context) {
         context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?"
     }
 
+    /** Есть ли среди версий новее установленной обязательная (срочный патч). */
+    private fun hasMandatoryAbove(): Boolean = runCatching {
+        val c = URL("$base/rest/v1/lumen_releases?select=version_code&mandatory=eq.true&version_code=gt.$currentCode&limit=1")
+            .openConnection() as HttpURLConnection
+        c.connectTimeout = 8000
+        c.readTimeout = 8000
+        c.setRequestProperty("apikey", key)
+        c.setRequestProperty("Authorization", "Bearer $key")
+        try {
+            c.responseCode in 200..299 && JSONArray(c.inputStream.bufferedReader().readText()).length() > 0
+        } finally {
+            c.disconnect()
+        }
+    }.getOrDefault(false)
+
     /** Самая свежая опубликованная версия (или null, если нет сети/записей). */
     suspend fun latest(): Release? = withContext(Dispatchers.IO) {
         val c = URL("$base/rest/v1/lumen_releases?select=*&order=version_code.desc&limit=1").openConnection() as HttpURLConnection
@@ -63,7 +78,9 @@ class UpdateRepository(private val context: Context) {
                 apkUrl = o.getString("apk_url"),
                 sizeBytes = o.optLong("size_bytes"),
                 sha256 = o.optString("sha256").takeIf { it.isNotBlank() && it != "null" },
-                mandatory = o.optBoolean("mandatory"),
+                mandatory = o.optBoolean("mandatory") ||
+                    o.optString("notes").contains("[обязательное]", ignoreCase = true) ||
+                    hasMandatoryAbove(),
             )
         } finally {
             c.disconnect()

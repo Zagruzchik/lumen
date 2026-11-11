@@ -141,6 +141,9 @@ private fun LockScreen(conn: PlayerConnection, onUnlock: () -> Unit) {
     val ctx = LocalContext.current
     val g = ctx.graph
     val scope = rememberCoroutineScope()
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    var lockHint by remember { mutableStateOf(false) }
+    LaunchedEffect(lockHint) { if (lockHint) { kotlinx.coroutines.delay(4500); lockHint = false } }
     LaunchedEffect(Unit) { runCatching { conn.connect() } }
     val p by conn.state.collectAsStateWithLifecycle()
     var position by remember { mutableLongStateOf(0L) }
@@ -179,6 +182,15 @@ private fun LockScreen(conn: PlayerConnection, onUnlock: () -> Unit) {
             Modifier
                 .fillMaxSize()
                 .background(app.lumen.player.ui.theme.ThemeStore.current.background)
+                // Двойной тап в любом месте, кроме строк текста, — погасить экран.
+                .pointerInput(Unit) {
+                    androidx.compose.foundation.gestures.detectTapGestures(onDoubleTap = {
+                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                        if (!app.lumen.player.playback.ScreenLockService.lock()) {
+                            lockHint = true
+                        }
+                    })
+                }
                 .pointerInput(Unit) {
                     detectVerticalDragGestures(
                         onDragEnd = {
@@ -316,7 +328,15 @@ private fun LockScreen(conn: PlayerConnection, onUnlock: () -> Unit) {
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Icon(LIcons.ArrowUp, null, Modifier.size(20.dp), tint = Color.White.copy(alpha = 0.6f))
-                    Text("Смахни вверх, чтобы разблокировать", fontSize = 13.sp, color = Color.White.copy(alpha = 0.6f), textAlign = TextAlign.Center)
+                    androidx.compose.animation.AnimatedContent(lockHint, label = "lockHint") { hint ->
+                        Text(
+                            if (hint) "Чтобы гасить экран двойным тапом, включи это в Lumen:\nНастройки → Воспроизведение → «Двойной тап гасит экран»"
+                            else "Смахни вверх, чтобы разблокировать · двойной тап — погасить экран",
+                            fontSize = 13.sp,
+                            color = if (hint) accent else Color.White.copy(alpha = 0.6f),
+                            textAlign = TextAlign.Center,
+                        )
+                    }
                 }
             }
         }
