@@ -67,7 +67,17 @@ class PlaybackService : MediaLibraryService() {
     override fun onCreate() {
         super.onCreate()
         instance = this
-        val renderers = DefaultRenderersFactory(this)
+        val renderers = object : DefaultRenderersFactory(this) {
+            // Вывод звука с кроссфейдом внутри (см. CrossfadeSink).
+            override fun buildAudioSink(
+                context: android.content.Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean,
+            ): androidx.media3.exoplayer.audio.AudioSink? {
+                val inner = super.buildAudioSink(context, enableFloatOutput, enableAudioTrackPlaybackParams) ?: return null
+                return CrossfadeSink(inner).also { CrossfadeSink.current = it }
+            }
+        }
             .setEnableAudioFloatOutput(true)
             // Скорость и тон — силами AudioTrack: так они работают и для 24-битного FLAC.
             .setEnableAudioTrackPlaybackParams(true)
