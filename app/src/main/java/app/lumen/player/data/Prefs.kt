@@ -84,6 +84,11 @@ class Prefs(context: Context) {
         set(v) = sp.edit().putBoolean("fadePause", v).apply()
 
     /** Продолжать длинные треки (от 20 минут) с места остановки. */
+    /** Пропускать тишину в начале, конце и паузах трека. */
+    var skipSilence: Boolean
+        get() = sp.getBoolean("skipSilence", false)
+        set(v) = sp.edit().putBoolean("skipSilence", v).apply()
+
     var resumeLong: Boolean
         get() = sp.getBoolean("resumeLong", true)
         set(v) = sp.edit().putBoolean("resumeLong", v).apply()

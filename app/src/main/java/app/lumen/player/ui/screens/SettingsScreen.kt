@@ -127,6 +127,7 @@ fun SettingsScreen(
     val fadeP by vm.fadePause.collectAsStateWithLifecycle()
     val resumeL by vm.resumeLong.collectAsStateWithLifecycle()
     val btR by vm.btResume.collectAsStateWithLifecycle()
+    val skipSil by vm.skipSilence.collectAsStateWithLifecycle()
     val lockS by vm.lockScreen.collectAsStateWithLifecycle()
     var playbackOpen by rememberSaveable { mutableStateOf(false) }
     val bulk by vm.lyricsBulk.collectAsStateWithLifecycle()
@@ -351,6 +352,7 @@ fun SettingsScreen(
                 ToggleRow("Выравнивание громкости", "Громкие треки звучат на одном уровне с тихими — без скачков между песнями", norm) { vm.setNormalize(it) }
                 ToggleRow("Плавная пауза и старт", "Музыка мягко затихает при паузе и нарастает при запуске", fadeP) { vm.setFadePause(it) }
                 ToggleRow("Умная очередь", "Когда очередь кончается, Lumen продолжит похожими треками из твоей библиотеки", smartQ) { vm.setSmartQueue(it) }
+                ToggleRow("Пропускать тишину", "Тихие вступления, хвосты и паузы внутри трека проматываются сами", skipSil) { vm.setSkipSilence(it) }
                 ToggleRow("Помнить место в длинных треках", "Подкасты, миксы и аудиокниги от 20 минут продолжатся с того же места", resumeL) { vm.setResumeLong(it) }
                 ToggleRow("Продолжать при подключении наушников", "Bluetooth-наушники подключились — музыка продолжится, если ты недавно поставил паузу", btR) { vm.setBtResume(it) }
                 ToggleRow("Экран блокировки Lumen", "Крупные часы и текст песни на заблокированном экране, пока играет музыка", lockS) { on ->

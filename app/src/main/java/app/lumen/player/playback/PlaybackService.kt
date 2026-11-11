@@ -87,6 +87,7 @@ class PlaybackService : MediaLibraryService() {
         // Порядок воспроизведения = порядок в очереди. Перемешивание физически переставляет треки,
         // поэтому очередь всегда показывает то, что реально будет играть сверху вниз.
         player.setShuffleOrder(ShuffleOrder.UnshuffledShuffleOrder(0))
+        player.skipSilenceEnabled = applicationContext.graph.prefs.skipSilence
         exo = player
         val mixer = VolumeMix(player)
         mix = mixer
@@ -908,6 +909,10 @@ class PlaybackService : MediaLibraryService() {
         if (p == null || !p.playWhenReady || p.mediaItemCount == 0) {
             stopSelf()
         }
+    }
+
+    fun setSkipSilence(on: Boolean) {
+        exo?.skipSilenceEnabled = on
     }
 
     override fun onDestroy() {

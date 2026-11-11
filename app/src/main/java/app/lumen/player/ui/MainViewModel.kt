@@ -1218,6 +1218,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         player.value.currentId?.let { id -> svc?.applyLoudness(id, ramp = true) }
     }
     fun setFadePause(v: Boolean) { g.prefs.fadePause = v; fadePause.value = v }
+    val skipSilence = MutableStateFlow(g.prefs.skipSilence)
+    fun setSkipSilence(v: Boolean) {
+        g.prefs.skipSilence = v
+        skipSilence.value = v
+        app.lumen.player.playback.PlaybackService.instance?.setSkipSilence(v)
+    }
     fun setResumeLong(v: Boolean) { g.prefs.resumeLong = v; resumeLong.value = v }
     fun setBtResume(v: Boolean) { g.prefs.btResume = v; btResume.value = v }
     fun setLockScreen(v: Boolean) { g.prefs.lockScreen = v; lockScreen.value = v }
