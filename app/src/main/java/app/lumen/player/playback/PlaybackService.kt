@@ -97,7 +97,7 @@ class PlaybackService : MediaLibraryService() {
             // подгружать следующую — переключение (само или кнопкой) идёт без паузы.
             .setLoadControl(
                 androidx.media3.exoplayer.DefaultLoadControl.Builder()
-                    .setBufferDurationsMs(600_000, 600_000, 1_000, 2_500)
+                    .setBufferDurationsMs(600_000, 600_000, 500, 1_500)
                     .setBackBuffer(30_000, true)
                     .build()
             )
@@ -246,17 +246,17 @@ class PlaybackService : MediaLibraryService() {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 val id = mediaItem?.mediaId
                 onlineRetried.remove(id)
-                // Следующий онлайн-трек: просим сервер заранее достать ссылку — переход будет без паузы.
-                if (player.hasNextMediaItem()) {
-                    val next = player.getMediaItemAt(player.nextMediaItemIndex).mediaId
-                    if (app.lumen.player.data.Online.isOnline(next)) {
-                        applicationContext.graph.appScope.launch(Dispatchers.IO) { app.lumen.player.data.Online.warmUp(next) }
-                    }
-                }
+                // Ближайшие онлайн-треки: заранее достаём ссылки (параллельно) — переходы без паузы.
+                prefetchAhead(player)
                 if (abUri != null && abUri != id) abUri = null
                 // Обрезанное начало: сразу прыгаем к нужному месту.
                 val t = id?.let { trims[it] }
                 if (t != null && t.startMs > 0 && player.currentPosition < t.startMs - 300) player.seekTo(t.startMs)
+            }
+
+            override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
+                // Новая очередь — сразу готовим ссылки на текущий и следующие онлайн-треки.
+                if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) prefetchAhead(player)
             }
 
             override fun onPlaybackParametersChanged(playbackParameters: androidx.media3.common.PlaybackParameters) {
@@ -631,6 +631,17 @@ class PlaybackService : MediaLibraryService() {
     private var abB = 0L
     /** Идёт ускорение по удержанию — не сохраняем его как настройку. */
     private var tempSpeed = false
+
+    private fun prefetchAhead(player: Player) {
+        if (player.mediaItemCount == 0) return
+        val from = player.currentMediaItemIndex.coerceAtLeast(0)
+        val ids = (from until minOf(from + 4, player.mediaItemCount)).map { player.getMediaItemAt(it).mediaId }
+        if (!ids.any { app.lumen.player.data.Online.isOnline(it) }) return
+        if (app.lumen.player.data.Online.builtin) app.lumen.player.data.NewPipeEngine.prefetch(ids)
+        else ids.drop(1).take(1).filter { app.lumen.player.data.Online.isOnline(it) }.forEach { id ->
+            applicationContext.graph.appScope.launch(Dispatchers.IO) { app.lumen.player.data.Online.warmUp(id) }
+        }
+    }
 
     private val guard = object : Runnable {
         override fun run() {

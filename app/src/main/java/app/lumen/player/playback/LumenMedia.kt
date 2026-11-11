@@ -6,7 +6,6 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
-import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
@@ -17,12 +16,15 @@ import app.lumen.player.data.Online
 /** Источники звука: локальные файлы и онлайн-треки через свой сервер music-api. */
 object LumenMedia {
     fun sourceFactory(context: Context): MediaSource.Factory {
-        val http = DefaultHttpDataSource.Factory()
-            // Сервер отвечает 302 на https-ссылку CDN — переход с http на https нужно разрешить явно.
-            .setAllowCrossProtocolRedirects(true)
-            // Свой сервер сначала разбирает трек через yt-dlp — это бывает небыстро.
-            .setConnectTimeoutMs(20_000)
-            .setReadTimeoutMs(45_000)
+        NewPipeEngine.attach(context.applicationContext)
+        // Общий клиент OkHttp: соединения с CDN переиспользуются (сегменты SoundCloud, догрузка YouTube),
+        // HTTP/2 там, где сервер умеет; редиректы http→https он проходит сам.
+        val http = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(
+            app.lumen.player.data.Net.client.newBuilder()
+                // Свой сервер сначала разбирает трек через yt-dlp — это бывает небыстро.
+                .readTimeout(45, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+        )
             // User-Agent по умолчанию; для YouTube движок подставляет свой (иначе CDN отвечает 403).
             .setDefaultRequestProperties(mapOf("User-Agent" to NewPipeEngine.DESKTOP_UA))
         val upstream = DefaultDataSource.Factory(context, http)

@@ -13,8 +13,8 @@ android {
         applicationId = "app.lumen.player"
         minSdk = 26
         targetSdk = 35
-        versionCode = 61
-        versionName = "0.27.7"
+        versionCode = 62
+        versionName = "0.27.8"
     }
 
     signingConfigs {
@@ -79,6 +79,8 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-session:1.5.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
+    implementation("androidx.media3:media3-datasource-okhttp:1.5.1")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     // Встроенный онлайн-движок: SoundCloud, YouTube (Music), Bandcamp без сервера.
     implementation("com.github.teamnewpipe:NewPipeExtractor:v0.26.5")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.4")

@@ -1958,6 +1958,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val ents = list.map { Online.toEntity(it) }
                 withContext(Dispatchers.IO) { dao.insertTracksIgnore(ents) }
                 netResults.value = ents
+                // Первые результаты почти всегда и включают — ссылки на них готовим заранее.
+                if (Online.builtin) app.lumen.player.data.NewPipeEngine.prefetch(ents.take(3).map { it.uri })
             }.onFailure {
                 netResults.value = emptyList()
                 netError.value = it.message ?: "Ошибка сети"

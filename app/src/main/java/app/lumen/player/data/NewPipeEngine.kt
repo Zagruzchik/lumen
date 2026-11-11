@@ -28,30 +28,27 @@ import java.util.concurrent.ConcurrentHashMap
 
 /** Запросы библиотеки NewPipe Extractor — обычным HttpURLConnection, без лишних зависимостей. */
 private class LumenDownloader : Downloader() {
+    // Общий клиент: соединения с youtube.com / soundcloud.com переиспользуются между запросами,
+    // поэтому получение ссылки на трек не тратит время на новые TLS-рукопожатия.
     override fun execute(request: Request): Response {
-        val c = URL(request.url()).openConnection() as HttpURLConnection
-        c.requestMethod = request.httpMethod()
-        c.connectTimeout = 12_000
-        c.readTimeout = 20_000
-        c.instanceFollowRedirects = true
-        c.setRequestProperty("User-Agent", NewPipeEngine.DESKTOP_UA)
+        val b = okhttp3.Request.Builder().url(request.url())
+        b.header("User-Agent", NewPipeEngine.DESKTOP_UA)
         request.headers().forEach { (k, values) ->
-            if (values.isNotEmpty()) c.setRequestProperty(k, values.joinToString(", "))
+            if (values.isNotEmpty()) b.header(k, values.joinToString(", "))
         }
         val body = request.dataToSend()
+        val method = request.httpMethod()
         if (body != null) {
-            c.doOutput = true
-            c.outputStream.use { it.write(body) }
+            b.method(method, okhttp3.RequestBody.create(null, body))
+        } else if (method == "POST" || method == "PUT") {
+            b.method(method, okhttp3.RequestBody.create(null, ByteArray(0)))
+        } else {
+            b.method(method, null)
         }
-        try {
-            val code = c.responseCode
-            if (code == 429) throw ReCaptchaException("reCaptcha Challenge requested", request.url())
-            val stream = if (code in 200..399) c.inputStream else c.errorStream
-            val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
-            val headers = c.headerFields.entries.filter { it.key != null }.associate { it.key!! to it.value }
-            return Response(code, c.responseMessage ?: "", headers, text, c.url.toString())
-        } finally {
-            c.disconnect()
+        Net.client.newCall(b.build()).execute().use { r ->
+            if (r.code == 429) throw ReCaptchaException("reCaptcha Challenge requested", request.url())
+            val text = r.body?.string()
+            return Response(r.code, r.message, r.headers.toMultimap(), text, r.request.url.toString())
         }
     }
 }
@@ -175,8 +172,62 @@ object NewPipeEngine {
 
     private val cache = ConcurrentHashMap<String, ResolvedStream>()
     private val locks = ConcurrentHashMap<String, Any>()
+    private var disk: android.content.SharedPreferences? = null
 
-    fun invalidate(uri: String) { cache.remove(uri) }
+    /** Ссылки на потоки помним и на диске: после перезапуска трек стартует без нового разбора. */
+    fun attach(context: android.content.Context) {
+        if (disk != null) return
+        val sp = context.getSharedPreferences("lumen_streams", android.content.Context.MODE_PRIVATE)
+        disk = sp
+        val now = System.currentTimeMillis()
+        val drop = ArrayList<String>()
+        for ((k, v) in sp.all) {
+            val o = runCatching { org.json.JSONObject(v as String) }.getOrNull()
+            val r = o?.let {
+                val h = it.optJSONObject("h")
+                ResolvedStream(
+                    url = it.getString("u"),
+                    hls = it.optBoolean("hls"),
+                    headers = h?.keys()?.asSequence()?.associateWith { key -> h.getString(key) }.orEmpty(),
+                    ext = it.optString("ext"),
+                    bitrate = it.optInt("br"),
+                    at = it.optLong("at"),
+                )
+            }
+            if (r == null || !fresh(k, r, now)) drop += k else cache[k] = r
+        }
+        if (drop.isNotEmpty()) sp.edit().apply { drop.forEach { remove(it) } }.apply()
+    }
+
+    /** Ссылка ещё живая: YouTube пишет срок в самой ссылке (expire=), остальным — по таймеру. */
+    private fun fresh(uri: String, r: ResolvedStream, now: Long = System.currentTimeMillis()): Boolean {
+        val exp = Regex("[?&/]expire[=/](\\d+)").find(r.url)?.groupValues?.get(1)?.toLongOrNull()
+        if (exp != null) return now < exp * 1000 - 20 * 60_000L
+        val src = Online.parse(uri)?.first ?: return false
+        return now - r.at < ttl(src)
+    }
+
+    private fun persist(uri: String, r: ResolvedStream) {
+        val sp = disk ?: return
+        val h = org.json.JSONObject()
+        r.headers.forEach { (k, v) -> h.put(k, v) }
+        val o = org.json.JSONObject().put("u", r.url).put("hls", r.hls).put("h", h).put("ext", r.ext).put("br", r.bitrate).put("at", r.at)
+        sp.edit().putString(uri, o.toString()).apply()
+    }
+
+    fun invalidate(uri: String) {
+        cache.remove(uri)
+        disk?.edit()?.remove(uri)?.apply()
+    }
+
+    private val warmPool = java.util.concurrent.Executors.newFixedThreadPool(3)
+
+    /** Заранее достать ссылки (ближайшие треки очереди, первые результаты поиска) — параллельно. */
+    fun prefetch(uris: List<String>) {
+        uris.filter { Online.isOnline(it) && cache[it]?.let { r -> fresh(it, r) } != true }.distinct().take(4).forEach { u ->
+            warmPool.execute { runCatching { resolve(u) } }
+        }
+    }
 
     private fun ttl(source: String) = if (source == "youtube") 2 * 3600_000L else 15 * 60_000L
 
@@ -229,11 +280,11 @@ object NewPipeEngine {
     }
 
     fun resolve(uri: String): ResolvedStream {
-        val (src, _) = Online.parse(uri) ?: throw OnlineError("Неверный онлайн-трек")
-        cache[uri]?.let { if (System.currentTimeMillis() - it.at < ttl(src)) return it }
+        Online.parse(uri) ?: throw OnlineError("Неверный онлайн-трек")
+        cache[uri]?.let { if (fresh(uri, it)) return it }
         val lock = locks.getOrPut(uri) { Any() }
         synchronized(lock) {
-            cache[uri]?.let { if (System.currentTimeMillis() - it.at < ttl(src)) return it }
+            cache[uri]?.let { if (fresh(uri, it)) return it }
             val (_, list) = streams(uri)
             val best = list.maxBy { score(it, forDownload = false, preferOpus = true) }
             val r = ResolvedStream(
@@ -244,6 +295,7 @@ object NewPipeEngine {
                 bitrate = best.averageBitrate,
             )
             cache[uri] = r
+            persist(uri, r)
             return r
         }
     }
