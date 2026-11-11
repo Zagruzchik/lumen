@@ -61,6 +61,8 @@ data class ResolvedStream(
     val ext: String,
     val bitrate: Int,
     val at: Long = System.currentTimeMillis(),
+    /** Длина трека, с (для обёртки обычного файла в HLS-плейлист). */
+    val durationSec: Long = 0,
 )
 
 /**
@@ -125,7 +127,48 @@ object NewPipeEngine {
         durationSec = item.duration.takeIf { it > 0 }?.toDouble(),
         thumbnail = bestThumb(item),
         pageUrl = item.url,
-    )
+    ).also { hint(Online.uriOf(it.source, it.id), it.artist, it.title, it.durationSec?.toLong() ?: 0) }
+
+    // ---------- запасной путь для SoundCloud ----------
+
+    private data class Hint(val artist: String, val title: String, val durationSec: Long)
+    private val hints = ConcurrentHashMap<String, Hint>()
+
+    /** Что это за трек (исполнитель, название) — пригодится, если SoundCloud не отдаст звук. */
+    fun hint(uri: String, artist: String, title: String, durationSec: Long = 0) {
+        if (title.isNotBlank()) hints[uri] = Hint(artist, title, durationSec)
+    }
+
+    /**
+     * SoundCloud всё чаще отдаёт трек только зашифрованным (DRM) или как превью Go+ — такой звук
+     * NewPipe не может взять. Тогда ищем тот же трек на YouTube (исполнитель, название, длительность)
+     * и берём его M4A — его понимает и HLS-обёртка, и Android при скачивании.
+     */
+    private fun viaYoutube(uri: String): Pair<StreamInfo, List<AudioStream>>? {
+        val (src, id) = Online.parse(uri) ?: return null
+        var h = hints[uri]
+        if (h == null) {
+            h = runCatching {
+                val ex = service(src).getStreamExtractor(urlOf(src, id))
+                ex.fetchPage()
+                Hint(ex.uploaderName.orEmpty(), ex.name, ex.length)
+            }.getOrNull()
+        }
+        if (h == null || h.title.isBlank()) return null
+        val found = runCatching { search("${h.artist} ${h.title}", "youtube", 8) }.getOrNull().orEmpty()
+        val best = found
+            .filter { h.durationSec <= 0 || it.durationSec == null || kotlin.math.abs(it.durationSec - h.durationSec) <= 12 }
+            .map { it to Online.matchScore(it, h.artist, h.title) }
+            .filter { it.second >= 1.4 }
+            .maxByOrNull { it.second }?.first ?: return null
+        val yt = Online.uriOf("youtube", best.id)
+        val info = runCatching { StreamInfo.getInfo(service("youtube"), urlOf("youtube", best.id)) }.getOrNull() ?: return null
+        val m4a = info.audioStreams.filter(::usable)
+            .filter { it.format?.suffix == "m4a" && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
+        if (m4a.isEmpty()) return null
+        android.util.Log.i("Lumen", "SoundCloud $uri → YouTube $yt")
+        return info to m4a
+    }
 
     /** Поиск. Для YouTube — сначала каталог YouTube Music (чистые названия и исполнители). */
     fun search(query: String, source: String, limit: Int): List<OnlineTrack> {
@@ -158,6 +201,8 @@ object NewPipeEngine {
         val m = (e.message ?: "").lowercase()
         return when {
             e is ReCaptchaException -> "Сервис просит капчу — попробуй позже или смени сеть"
+            "could not get any stream" in m || "go+" in m || "goplus" in m ->
+                "SoundCloud не отдаёт звук этого трека (защищён или только для Go+), а на YouTube он не нашёлся"
             "sign in" in m || "bot" in m -> "YouTube просит подтвердить, что ты не робот. Попробуй позже или через другую сеть"
             "geo" in m || "country" in m -> "Трек недоступен в твоей стране"
             "private" in m -> "Трек закрыт автором"
@@ -192,6 +237,7 @@ object NewPipeEngine {
                     ext = it.optString("ext"),
                     bitrate = it.optInt("br"),
                     at = it.optLong("at"),
+                    durationSec = it.optLong("d"),
                 )
             }
             if (r == null || !fresh(k, r, now)) drop += k else cache[k] = r
@@ -211,7 +257,7 @@ object NewPipeEngine {
         val sp = disk ?: return
         val h = org.json.JSONObject()
         r.headers.forEach { (k, v) -> h.put(k, v) }
-        val o = org.json.JSONObject().put("u", r.url).put("hls", r.hls).put("h", h).put("ext", r.ext).put("br", r.bitrate).put("at", r.at)
+        val o = org.json.JSONObject().put("u", r.url).put("hls", r.hls).put("h", h).put("ext", r.ext).put("br", r.bitrate).put("at", r.at).put("d", r.durationSec)
         sp.edit().putString(uri, o.toString()).apply()
     }
 
@@ -257,10 +303,14 @@ object NewPipeEngine {
         val info = try {
             StreamInfo.getInfo(service(src), urlOf(src, id))
         } catch (e: Throwable) {
+            if (src == "soundcloud") viaYoutube(uri)?.let { return it }
             throw OnlineError(friendly(e))
         }
         val list = info.audioStreams.filter(::usable)
-        if (list.isEmpty()) throw OnlineError("У трека нет доступного звука")
+        if (list.isEmpty()) {
+            if (src == "soundcloud") viaYoutube(uri)?.let { return it }
+            throw OnlineError("У трека нет доступного звука")
+        }
         return info to list
     }
 
@@ -285,7 +335,7 @@ object NewPipeEngine {
         val lock = locks.getOrPut(uri) { Any() }
         synchronized(lock) {
             cache[uri]?.let { if (fresh(uri, it)) return it }
-            val (_, list) = streams(uri)
+            val (info, list) = streams(uri)
             val best = list.maxBy { score(it, forDownload = false, preferOpus = true) }
             val r = ResolvedStream(
                 url = best.content,
@@ -293,6 +343,7 @@ object NewPipeEngine {
                 headers = headersFor(best.content),
                 ext = best.format?.suffix ?: "m4a",
                 bitrate = best.averageBitrate,
+                durationSec = info.duration,
             )
             cache[uri] = r
             persist(uri, r)

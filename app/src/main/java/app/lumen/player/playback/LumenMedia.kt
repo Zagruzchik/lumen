@@ -39,8 +39,10 @@ object LumenMedia {
         val r = NewPipeEngine.resolve(u)
         val target = if (Online.isHls(u) && !r.hls) {
             // Ждали HLS, а пришёл обычный файл — заворачиваем его в плейлист из одного сегмента.
-            val m3u8 = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:3600\n#EXT-X-MEDIA-SEQUENCE:0\n" +
-                "#EXTINF:3600.0,\n${r.url}\n#EXT-X-ENDLIST\n"
+            // Длительность — настоящая (иначе шкала и конец трека врут).
+            val d = if (r.durationSec > 0) r.durationSec else 3600L
+            val m3u8 = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:$d\n#EXT-X-MEDIA-SEQUENCE:0\n" +
+                "#EXTINF:$d.0,\n${r.url}\n#EXT-X-ENDLIST\n"
             "data:application/vnd.apple.mpegurl;base64," +
                 android.util.Base64.encodeToString(m3u8.toByteArray(), android.util.Base64.NO_WRAP)
         } else r.url
@@ -50,6 +52,14 @@ object LumenMedia {
     /** Готовый к проигрыванию элемент: у онлайн-трека адрес — поток на сервере, у файла — сам файл. */
     fun playable(base: MediaItem, mediaId: String, forceProxy: Boolean = false): MediaItem {
         val b = base.buildUpon().setMediaId(mediaId)
+        if (Online.isOnline(mediaId)) {
+            // Подсказка движку: что это за трек — для запасного поиска, если SoundCloud не отдаст звук.
+            NewPipeEngine.hint(
+                mediaId,
+                base.mediaMetadata.artist?.toString().orEmpty(),
+                base.mediaMetadata.title?.toString().orEmpty(),
+            )
+        }
         if (Online.isOnline(mediaId) && Online.builtin) {
             // Встроенный движок: ссылка достаётся в момент загрузки (см. resolve).
             b.setUri(Uri.parse(mediaId))
