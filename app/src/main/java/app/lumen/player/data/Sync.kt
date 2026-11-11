@@ -83,6 +83,8 @@ class LibrarySync(private val context: Context, private val dao: LibraryDao, pri
             "Email not confirmed" in m -> "Почта не подтверждена — открой письмо от Supabase и нажми ссылку"
             "already registered" in m -> "Такая почта уже зарегистрирована — просто войди"
             "Password should be" in m -> "Пароль слишком короткий (нужно от 6 символов)"
+            "rate limit" in m.lowercase() -> "Сервер временно не отправляет письма (лимит). Попробуй через час"
+            "not authorized" in m.lowercase() -> "Сервер пока не может отправить письмо на эту почту"
             m.isNotBlank() -> m
             else -> "Не получилось — проверь интернет"
         }
@@ -97,10 +99,28 @@ class LibrarySync(private val context: Context, private val dao: LibraryDao, pri
                 if (code !in 200..299) error(errorText(text))
                 val o = JSONObject(text)
                 if (o.optString("access_token").isBlank()) {
-                    _state.value = _state.value.copy(busy = false, message = "Письмо отправлено на ${email.trim()} — подтверди почту и нажми «Войти»")
-                    return@withContext false
+                    // Supabase на повторную регистрацию отвечает «успехом» без письма (identities пустой).
+                    val user = o.optJSONObject("user") ?: o
+                    val repeated = user.optJSONArray("identities")?.length() == 0
+                    // Пробуем сразу войти тем же паролем: если почту подтверждать не нужно
+                    // или аккаунт уже есть — вход пройдёт без всяких писем.
+                    val (c2, t2) = http("POST", "/auth/v1/token?grant_type=password", body, null)
+                    if (c2 in 200..299) {
+                        saveSession(JSONObject(t2), email.trim())
+                    } else {
+                        val err = errorText(t2)
+                        val msg = when {
+                            repeated -> "Эта почта уже зарегистрирована. Нажми «Войти» с паролем от неё"
+                            "не подтверждена" in err ->
+                                "Письмо с подтверждением отправлено на ${email.trim()}. Нет письма — проверь «Спам» или подожди пару минут, потом нажми «Войти»"
+                            else -> err
+                        }
+                        _state.value = _state.value.copy(busy = false, message = msg, error = repeated)
+                        return@withContext false
+                    }
+                } else {
+                    saveSession(o, email.trim())
                 }
-                saveSession(o, email.trim())
             } else {
                 val (code, text) = http("POST", "/auth/v1/token?grant_type=password", body, null)
                 if (code !in 200..299) error(errorText(text))
