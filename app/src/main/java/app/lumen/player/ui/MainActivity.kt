@@ -32,6 +32,9 @@ class MainActivity : ComponentActivity() {
             // «Поделиться» ссылкой SoundCloud/YouTube в Lumen — трек сразу играет через свой сервер.
             val text = intent.getStringExtra(Intent.EXTRA_TEXT).orEmpty()
             Regex("https?://\\S+").find(text)?.value?.let { vm.openLink(it) }
+        } else if (intent.action == Intent.ACTION_VIEW && intent.data?.scheme == "lumen") {
+            // Ссылка из письма: подтверждение почты или смена пароля.
+            intent.data?.let { vm.handleAuthLink(it) }
         } else if (intent.action == Intent.ACTION_VIEW) {
             intent.data?.let { vm.playExternal(it) }
         } else if (intent.action?.startsWith("app.lumen.player.action.") == true) {

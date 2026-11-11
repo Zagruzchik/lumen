@@ -312,15 +312,6 @@ class LibrarySync(private val context: Context, private val dao: LibraryDao, pri
         }
     }
 
-    /** Флаг с сервера: обязателен ли вход (на случай проблем с почтой его можно выключить без обновления). */
-    suspend fun fetchAuthRequired(): Boolean? = withContext(Dispatchers.IO) {
-        runCatching {
-            val (code, text) = http("GET", "/rest/v1/lumen_config?key=eq.auth_required&select=value", null, null)
-            if (code !in 200..299) null
-            else JSONArray(text).optJSONObject(0)?.opt("value")?.toString()?.trim('"')?.let { it == "true" }
-        }.getOrNull()
-    }
-
     fun signOut() {
         sp.edit().clear().apply()
         baseFile.delete()

@@ -1282,11 +1282,46 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     val syncState = g.sync.state
     fun syncSignIn(email: String, pass: String, create: Boolean) = viewModelScope.launch {
-        if (g.sync.signIn(email, pass, create)) {
+        if (if (create) g.sync.register(email, pass) else g.sync.signIn(email, pass, false)) {
             if (g.sync.sync()) toast("Библиотека синхронизирована")
         }
     }
     fun syncNow() = viewModelScope.launch { if (g.sync.sync()) toast("Синхронизировано") }
+
+    // ---------- вход в аккаунт (обязательный) ----------
+
+    /** Пользователь Lumen ещё до появления обязательного входа — ему другое приветствие. */
+    val existingUser = g.prefs.playStarts > 0 || g.prefs.seenVersion in 1..54
+
+    private fun afterLogin() {
+        viewModelScope.launch {
+            if (g.sync.sync()) toast("Готово — библиотека сохранена в аккаунте")
+        }
+    }
+
+    fun authSignIn(email: String, pass: String) = viewModelScope.launch {
+        if (g.sync.signIn(email, pass, create = false)) afterLogin()
+    }
+
+    fun authRegister(email: String, pass: String) = viewModelScope.launch {
+        if (g.sync.register(email, pass)) afterLogin()
+    }
+
+    fun authVerify(email: String, code: String) = viewModelScope.launch {
+        if (g.sync.verifyCode(email, code)) afterLogin()
+    }
+
+    fun authResend(email: String) = viewModelScope.launch { g.sync.resend(email) }
+    fun authRecover(email: String) = viewModelScope.launch { g.sync.recover(email) }
+    fun authSetPassword(pass: String) = viewModelScope.launch {
+        if (g.sync.setNewPassword(pass)) afterLogin()
+    }
+    fun authCancelPending() = g.sync.cancelPending()
+
+    /** Ссылка из письма lumen://auth#… */
+    fun handleAuthLink(uri: android.net.Uri) = viewModelScope.launch {
+        if (g.sync.handleLink(uri) && !g.sync.state.value.needNewPassword) afterLogin()
+    }
     fun syncSignOut() = g.sync.signOut()
 
     // ---------- машина, будильник, ночные часы ----------
@@ -2124,9 +2159,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val uri = enrichQueue.pollFirst() ?: break
                 val t = dao.byUri(uri)
                 if (t != null && MetaLookup.needsEnrich(t)) {
-                    MetaLookup.enrich(t)?.let { e ->
-                        dao.updateTrack(e)
-                        Artwork.forget(uri)
+                    // Фоновая мелочь: любая ошибка тут не должна ронять приложение.
+                    runCatching {
+                        MetaLookup.enrich(t)?.let { e ->
+                            dao.updateTrack(e)
+                            Artwork.forget(uri)
+                        }
                     }
                     kotlinx.coroutines.delay(350)
                 }

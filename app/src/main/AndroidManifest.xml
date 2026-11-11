@@ -55,6 +55,13 @@
             <meta-data
                 android:name="android.app.shortcuts"
                 android:resource="@xml/shortcuts" />
+            <!-- Ссылки из писем входа: подтверждение почты и смена пароля. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="lumen" android:host="auth" />
+            </intent-filter>
             <!-- Ссылку на трек или плейлист можно «поделиться» в Lumen. -->
             <intent-filter android:label="Слушать в Lumen">
                 <action android:name="android.intent.action.SEND" />

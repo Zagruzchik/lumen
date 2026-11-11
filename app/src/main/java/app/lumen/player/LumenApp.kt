@@ -42,7 +42,10 @@ class LumenApp : Application() {
 
 /** Простой контейнер зависимостей, живёт столько же, сколько процесс. */
 class AppGraph(val context: Context) {
-    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    val appScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Main.immediate +
+            kotlinx.coroutines.CoroutineExceptionHandler { _, e -> android.util.Log.e("Lumen", "Фоновая задача упала", e) }
+    )
     val db: LumenDb = Room.databaseBuilder(context, LumenDb::class.java, "lumen.db")
         .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
         .fallbackToDestructiveMigration()

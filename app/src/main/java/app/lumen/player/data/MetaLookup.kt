@@ -25,7 +25,9 @@ data class TrackMeta(
  * Совпадение проверяется по исполнителю, названию и длительности — чтобы не подставить чужой альбом.
  */
 object MetaLookup {
-    private val cache = ConcurrentHashMap<String, TrackMeta?>()
+    // ConcurrentHashMap не хранит null, поэтому «не нашли» помним отдельно.
+    private val cache = ConcurrentHashMap<String, TrackMeta>()
+    private val misses = ConcurrentHashMap.newKeySet<String>()
 
     private fun http(url: String): String? {
         val c = URL(url).openConnection() as HttpURLConnection
@@ -123,10 +125,11 @@ object MetaLookup {
 
     fun find(artist: String, title: String, durationMs: Long): TrackMeta? {
         val key = normalize("$artist|$title")
-        if (cache.containsKey(key)) return cache[key]
+        cache[key]?.let { return it }
+        if (key in misses) return null
         val r = runCatching { itunes(artist, title, durationMs) }.getOrNull()
             ?: runCatching { deezer(artist, title, durationMs) }.getOrNull()
-        cache[key] = r
+        if (r != null) cache[key] = r else misses += key
         return r
     }
 
