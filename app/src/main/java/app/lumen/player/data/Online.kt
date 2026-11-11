@@ -300,6 +300,44 @@ object Online {
         return Downloaded(u, if (mp3) "MP3" else "оригинал")
     }
 
+    /** WebM (Opus) → OGG (Opus): тот же звук, другой контейнер. Android 10+. */
+    private fun remuxToOgg(src: java.io.File, dst: java.io.File): Boolean {
+        if (Build.VERSION.SDK_INT < 29) return false
+        val ex = android.media.MediaExtractor()
+        var mux: android.media.MediaMuxer? = null
+        return try {
+            ex.setDataSource(src.path)
+            val track = (0 until ex.trackCount).firstOrNull {
+                ex.getTrackFormat(it).getString(android.media.MediaFormat.KEY_MIME) == android.media.MediaFormat.MIMETYPE_AUDIO_OPUS
+            } ?: return false
+            val fmt = ex.getTrackFormat(track)
+            ex.selectTrack(track)
+            val m = android.media.MediaMuxer(dst.path, android.media.MediaMuxer.OutputFormat.MUXER_OUTPUT_OGG)
+            mux = m
+            val out = m.addTrack(fmt)
+            m.start()
+            val size = if (fmt.containsKey(android.media.MediaFormat.KEY_MAX_INPUT_SIZE)) fmt.getInteger(android.media.MediaFormat.KEY_MAX_INPUT_SIZE) else 0
+            val buf = java.nio.ByteBuffer.allocate(maxOf(size, 256 * 1024))
+            val info = android.media.MediaCodec.BufferInfo()
+            var samples = 0
+            while (true) {
+                val n = ex.readSampleData(buf, 0)
+                if (n < 0) break
+                info.set(0, n, ex.sampleTime, 0)
+                m.writeSampleData(out, buf, info)
+                samples++
+                ex.advance()
+            }
+            m.stop()
+            samples > 0 && dst.length() > 0
+        } catch (e: Exception) {
+            false
+        } finally {
+            runCatching { mux?.release() }
+            ex.release()
+        }
+    }
+
     /** Новый файл в «Музыка/Lumen»; writer пишет содержимое. Возвращает URI в том виде, как его видит сканер. */
     private fun saveToMusic(context: Context, t: TrackEntity, ext: String, writer: (java.io.OutputStream) -> Unit): Uri {
         if (Build.VERSION.SDK_INT < 29) throw OnlineError("Скачивание работает на Android 10 и новее")
@@ -433,7 +471,26 @@ object Online {
                 }
             }
             // 2. Лучший поток, удобный для файла.
-            val st = NewPipeEngine.downloadStream(t.uri, preferOpus)
+            var st = NewPipeEngine.downloadStream(t.uri, preferOpus)
+            // Opus в WebM Android в «Музыку» не пускает — перекладываем звук в OGG без перекодирования.
+            if (!st.hls && (st.ext == "webm" || st.ext == "opus")) {
+                val tmp = java.io.File(context.cacheDir, "dl_${System.nanoTime()}.webm")
+                val ogg = java.io.File(context.cacheDir, "dl_${System.nanoTime()}.ogg")
+                try {
+                    tmp.outputStream().use { out -> fetchRanged(st.url, st.headers, out) { p -> onProgress(p * 0.95f) } }
+                    if (remuxToOgg(tmp, ogg)) {
+                        val uri = saveToMusic(context, t, "ogg") { out -> ogg.inputStream().use { it.copyTo(out, 256 * 1024) } }
+                        onProgress(1f)
+                        val kbps = if (st.bitrate > 0) " · ${st.bitrate} кбит/с" else ""
+                        return@withContext Downloaded(uri, "OPUS$kbps")
+                    }
+                } finally {
+                    tmp.delete()
+                    ogg.delete()
+                }
+                // Не вышло — берём M4A (AAC), его Android принимает всегда.
+                st = NewPipeEngine.downloadStreamOf(t.uri, "m4a") ?: throw OnlineError("Не удалось сохранить: нет подходящего формата")
+            }
             val ext = when {
                 st.hls && st.ext == "m4a" -> "m4a"
                 st.hls -> "mp3"

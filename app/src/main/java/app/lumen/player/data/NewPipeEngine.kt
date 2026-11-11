@@ -249,6 +249,14 @@ object NewPipeEngine {
     }
 
     /** Поток, который удобно скачать файлом. */
+    /** Лучший поток в нужном формате (например, m4a, если Opus не получилось сохранить). */
+    fun downloadStreamOf(uri: String, suffix: String): ResolvedStream? {
+        val (_, list) = streams(uri)
+        val best = list.filter { it.format?.suffix == suffix && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
+            .maxByOrNull { it.averageBitrate } ?: return null
+        return ResolvedStream(best.content, false, headersFor(best.content), suffix, best.averageBitrate)
+    }
+
     fun downloadStream(uri: String, preferOpus: Boolean): ResolvedStream {
         val (_, list) = streams(uri)
         val best = list.maxBy { score(it, forDownload = true, preferOpus = preferOpus) }
