@@ -21,8 +21,15 @@ class VolumeMix(private val player: ExoPlayer) {
     var cross = 1f
         set(v) { field = v.coerceIn(0f, 1f); apply() }
 
+    /** Второй проигрыватель кроссфейда: та же громкость, выравнивание и плавная пауза, своя доля перехода. */
+    var follower: ExoPlayer? = null
+        set(v) { field = v; apply() }
+    var followerCross = 0f
+        set(v) { field = v.coerceIn(0f, 1f); apply() }
+
     private fun apply() {
         player.volume = (user * norm * fade * cross).coerceIn(0f, 1f)
+        follower?.let { f -> runCatching { f.volume = (user * norm * fade * followerCross).coerceIn(0f, 1f) } }
     }
 
     private var normAnim: ValueAnimator? = null

@@ -83,6 +83,14 @@ class PlaybackService : MediaLibraryService() {
             )
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_LOCAL)
+            // Буфер на 10 минут вперёд: текущая песня догружается целиком, и плеер сразу начинает
+            // подгружать следующую — переключение (само или кнопкой) идёт без паузы.
+            .setLoadControl(
+                androidx.media3.exoplayer.DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(600_000, 600_000, 1_000, 2_500)
+                    .setBackBuffer(30_000, true)
+                    .build()
+            )
             .build()
         // Порядок воспроизведения = порядок в очереди. Перемешивание физически переставляет треки,
         // поэтому очередь всегда показывает то, что реально будет играть сверху вниз.
@@ -183,8 +191,8 @@ class PlaybackService : MediaLibraryService() {
         crossfader = Crossfader(
             this, player, applicationContext.graph.prefs, mixer,
             endOf = { id -> trims[id]?.endMs ?: -1L },
+            startOf = { id -> trims[id]?.startMs ?: 0L },
             blocked = { abUri != null },
-            autoEq = applicationContext.graph.autoEq,
         ).also { it.start() }
         scope.launch {
             applicationContext.graph.dao.trims().collect { list -> trims = list.associateBy { it.uri } }
