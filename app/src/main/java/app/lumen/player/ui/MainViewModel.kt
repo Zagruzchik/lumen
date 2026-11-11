@@ -2124,9 +2124,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val uri = enrichQueue.pollFirst() ?: break
                 val t = dao.byUri(uri)
                 if (t != null && MetaLookup.needsEnrich(t)) {
-                    MetaLookup.enrich(t)?.let { e ->
-                        dao.updateTrack(e)
-                        Artwork.forget(uri)
+                    // Фоновая мелочь: любая ошибка тут не должна ронять приложение.
+                    runCatching {
+                        MetaLookup.enrich(t)?.let { e ->
+                            dao.updateTrack(e)
+                            Artwork.forget(uri)
+                        }
                     }
                     kotlinx.coroutines.delay(350)
                 }
