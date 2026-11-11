@@ -241,7 +241,7 @@ fun LyricsEditorScreen(vm: MainViewModel, t: TrackEntity, onClose: () -> Unit) {
                                 .fillMaxWidth()
                                 .weight(1f)
                                 .clip(RoundedCornerShape(18.dp))
-                                .background(Color.White.copy(alpha = 0.06f))
+                                .background(LC.Text.copy(alpha = 0.06f))
                                 .border(1.dp, LC.Border, RoundedCornerShape(18.dp))
                                 .padding(14.dp),
                         ) {
@@ -383,7 +383,7 @@ private fun TimingPane(
                 val bg by animateColorAsState(
                     when {
                         isTarget -> accent.copy(alpha = 0.18f)
-                        i == active -> Color.White.copy(alpha = 0.06f)
+                        i == active -> LC.Text.copy(alpha = 0.06f)
                         else -> Color.Transparent
                     },
                     tween(200),
@@ -418,7 +418,7 @@ private fun TimingPane(
                             l.text.ifBlank { "♪" },
                             fontSize = 16.sp,
                             fontWeight = if (i == active) FontWeight.Bold else FontWeight.Medium,
-                            color = if (i == active) Color.White else LC.Text.copy(alpha = if (l.time != null) 0.95f else 0.7f),
+                            color = if (i == active) LC.Text else LC.Text.copy(alpha = if (l.time != null) 0.95f else 0.7f),
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -446,7 +446,7 @@ private fun TimingPane(
                 IconBtn(LIcons.Back, "Назад 3 с", { vm.seekBy(-3000) }, size = 44.dp, iconSize = 18.dp)
                 Spacer(Modifier.width(8.dp))
                 Box(
-                    Modifier.size(52.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.12f)).clickable(enabled = isCurrent) { vm.toggle() },
+                    Modifier.size(52.dp).clip(CircleShape).background(LC.Text.copy(alpha = 0.12f)).clickable(enabled = isCurrent) { vm.toggle() },
                     contentAlignment = Alignment.Center,
                 ) { Icon(if (playing && isCurrent) LIcons.Pause else LIcons.Play, null, Modifier.size(24.dp), tint = Color.White) }
                 Spacer(Modifier.width(8.dp))
@@ -461,7 +461,7 @@ private fun TimingPane(
                     .fillMaxWidth()
                     .height(64.dp)
                     .clip(RoundedCornerShape(22.dp))
-                    .background(if (isCurrent) accent else Color.White.copy(alpha = 0.1f))
+                    .background(if (isCurrent) accent else LC.Text.copy(alpha = 0.1f))
                     .clickable(enabled = isCurrent, onClick = onStamp),
                 contentAlignment = Alignment.Center,
             ) {
@@ -538,7 +538,7 @@ private fun LrclibSearch(vm: MainViewModel, initial: String, onPick: (String) ->
                     Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(14.dp))
-                        .background(Color.White.copy(alpha = 0.08f))
+                        .background(LC.Text.copy(alpha = 0.08f))
                         .border(1.dp, LC.Border, RoundedCornerShape(14.dp))
                         .padding(horizontal = 14.dp, vertical = 12.dp),
                 ) {

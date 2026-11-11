@@ -109,7 +109,7 @@ fun UpdateSheet(vm: MainViewModel, onClose: () -> Unit, sheetModifier: Modifier 
                 .navigationBarsPadding()
                 .clip(RoundedCornerShape(32.dp))
                 .background(app.lumen.player.ui.theme.LT.sheetBrush())
-                .border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(32.dp))
+                .border(1.dp, LC.ink(0x26), RoundedCornerShape(32.dp))
                 .clickable(remember { MutableInteractionSource() }, null) {}
                 .padding(22.dp),
         ) {
@@ -139,7 +139,7 @@ fun UpdateSheet(vm: MainViewModel, onClose: () -> Unit, sheetModifier: Modifier 
                         .fillMaxWidth()
                         .heightIn(max = 220.dp)
                         .clip(RoundedCornerShape(18.dp))
-                        .background(Color(0x14FFFFFF))
+                        .background(LC.ink(0x14))
                         .verticalScroll(rememberScrollState())
                         .padding(14.dp)
                 ) {
@@ -235,7 +235,7 @@ private fun ProgressTrack(p: Float, accent: Color) {
             .fillMaxWidth()
             .height(10.dp)
             .clip(CircleShape)
-            .background(Color(0x1FFFFFFF))
+            .background(LC.ink(0x1F))
     ) {
         Box(
             Modifier
@@ -268,7 +268,7 @@ fun WhatsNewSheet(notes: String, version: String, onClose: () -> Unit, sheetModi
                 .navigationBarsPadding()
                 .clip(RoundedCornerShape(32.dp))
                 .background(app.lumen.player.ui.theme.LT.sheetBrush())
-                .border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(32.dp))
+                .border(1.dp, LC.ink(0x26), RoundedCornerShape(32.dp))
                 .clickable(remember { MutableInteractionSource() }, null) {}
                 .padding(22.dp),
         ) {

@@ -417,7 +417,7 @@ private fun BigTile(rec: RecItem, onHide: () -> Unit) {
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(18.dp))
                     .background(Color(0x99100B18))
-                    .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(18.dp))
+                    .border(1.dp, LC.ink(0x33), RoundedCornerShape(18.dp))
                     .padding(horizontal = 14.dp, vertical = 10.dp)
             ) {
                 Text(rec.reason.uppercase(), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, color = LocalAccent.current)

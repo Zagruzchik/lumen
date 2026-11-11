@@ -219,7 +219,7 @@ fun StatsScreen(vm: MainViewModel, nav: Nav, bottomPad: Dp) {
                             }
                             Spacer(Modifier.height(4.dp))
                             Canvas(Modifier.fillMaxWidth().height(6.dp)) {
-                                drawRoundRect(Color(0x1FFFFFFF), cornerRadius = CornerRadius(3.dp.toPx()))
+                                drawRoundRect(LC.ink(0x1F), cornerRadius = CornerRadius(3.dp.toPx()))
                                 drawRoundRect(
                                     accent,
                                     size = Size(size.width * a.totalMs / max, size.height),

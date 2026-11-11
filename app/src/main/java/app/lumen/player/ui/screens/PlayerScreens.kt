@@ -765,7 +765,7 @@ private fun SwipeCover(vm: MainViewModel, id: String?, threshold: Float) {
                 scaleX = sc
                 scaleY = sc
             }
-            .border(1.dp, Color(0x2EFFFFFF), RoundedCornerShape(30.dp))
+            .border(1.dp, LC.ink(0x2E), RoundedCornerShape(30.dp))
             .pointerInput(id) {
                 val tracker = VelocityTracker()
                 detectHorizontalDragGestures(
@@ -813,8 +813,8 @@ private fun InlineLyrics(lines: List<LyricLine>, synced: Boolean, position: Long
         Modifier
             .fillMaxSize()
             .clip(shape)
-            .background(Color(0x1AFFFFFF))
-            .border(1.dp, Color(0x26FFFFFF), shape)
+            .background(LC.ink(0x1A))
+            .border(1.dp, LC.ink(0x26), shape)
             .clickable(onClickLabel = "Открыть текст на весь экран", onClick = onOpen)
     ) {
         LyricsList(
@@ -881,9 +881,9 @@ internal fun LyricsList(
             val color by animateColorAsState(
                 when {
                     !synced -> LC.Text
-                    isCur -> Color.White
-                    i < current -> Color(0x52F5F4FA)
-                    else -> Color(0x99F5F4FA)
+                    isCur -> LC.Text
+                    i < current -> LC.Text.copy(alpha = 0.32f)
+                    else -> LC.Text.copy(alpha = 0.6f)
                 },
                 tween(650, easing = FastOutSlowInEasing),
                 label = "lc",
@@ -1034,8 +1034,8 @@ private fun karaokeText(text: String, l: LyricLine, nextStart: Long, pos: Long):
             ((pos - l.timeMs) / dur).coerceIn(0f, 1f) * len
         }
     }
-    val full = Color.White
-    val dim = Color(0x8CF5F4FA)
+    val full = LC.Text
+    val dim = LC.Text.copy(alpha = 0.55f)
     val whole = sung.toInt().coerceIn(0, len)
     return androidx.compose.ui.text.buildAnnotatedString {
         append(text)
@@ -1212,7 +1212,7 @@ private fun CompactControls(
         Modifier
             .fillMaxWidth()
             .padding(bottom = 12.dp)
-            .glass(RoundedCornerShape(26.dp), Color(0x1AFFFFFF), Color(0x2EFFFFFF))
+            .glass(RoundedCornerShape(26.dp), LC.ink(0x1A), LC.ink(0x2E))
             .padding(horizontal = 14.dp, vertical = 12.dp)
     ) {
         Row(
@@ -1270,7 +1270,7 @@ private fun FavButton(p: PlayerState, favs: Set<String>, accent: Color, vm: Main
                 scaleY = s
             }
             .clip(CircleShape)
-            .background(Color(0x1FFFFFFF))
+            .background(LC.ink(0x1F))
             // Тап — лайк; удержание — меню плейлистов, выбор одним движением пальца.
             .likeWithPlaylists(
                 state = qm,
@@ -1474,8 +1474,8 @@ fun QueueSheet(vm: MainViewModel, onClose: () -> Unit, sheetModifier: Modifier =
                 .onSizeChanged { sheetHeight = it.height.toFloat() }
                 .graphicsLayer { translationY = offset }
                 .clip(shape)
-                .background(Color(0xF5141019))
-                .border(1.dp, Color(0x1FFFFFFF), shape)
+                .background(LC.Sheet)
+                .border(1.dp, LC.ink(0x1F), shape)
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                 .navigationBarsPadding()
         ) {
@@ -1495,7 +1495,7 @@ fun QueueSheet(vm: MainViewModel, onClose: () -> Unit, sheetModifier: Modifier =
                         .padding(top = 10.dp)
                         .size(width = 40.dp, height = 4.dp)
                         .clip(RoundedCornerShape(2.dp))
-                        .background(Color(0x40FFFFFF))
+                        .background(LC.ink(0x40))
                 )
                 Row(Modifier.padding(start = 20.dp, end = 12.dp, top = 12.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -1674,7 +1674,7 @@ private fun QueueList(
                         .fillMaxSize()
                         .graphicsLayer { translationX = shownSwipe }
                         .background(if (dragging) app.lumen.player.ui.theme.LT.sheetTop else app.lumen.player.ui.theme.LT.sheetBottom)
-                        .background(if (cur) Color(0x14FFFFFF) else Color.Transparent)
+                        .background(if (cur) LC.ink(0x14) else Color.Transparent)
                         .pointerInput(q.key) {
                             // Свайп включается только при явно горизонтальном движении.
                             // Если палец сначала пошёл вертикально — жест отдаётся списку, и он спокойно листается.
@@ -1814,7 +1814,7 @@ fun TimerSheet(vm: MainViewModel, onClose: () -> Unit, sheetModifier: Modifier =
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
-                .background(Color(0xF5141019))
+                .background(LC.Sheet)
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                 .navigationBarsPadding()
                 .padding(20.dp),
@@ -1946,14 +1946,14 @@ private fun SleepDial(minutes: Int, accent: Color, onMinutes: (Int) -> Unit) {
                 val outer = r + stroke * 0.9f
                 val inner = outer - (if (i % 3 == 0) 10.dp.toPx() else 5.dp.toPx())
                 drawLine(
-                    Color(0x40FFFFFF),
+                    LC.ink(0x40),
                     Offset(c.x + inner * kotlin.math.cos(ang).toFloat(), c.y + inner * kotlin.math.sin(ang).toFloat()),
                     Offset(c.x + outer * kotlin.math.cos(ang).toFloat(), c.y + outer * kotlin.math.sin(ang).toFloat()),
                     2.dp.toPx(),
                     StrokeCap.Round,
                 )
             }
-            drawArc(Color(0x1FFFFFFF), 0f, 360f, false, tl, arcSize, style = Stroke(stroke))
+            drawArc(LC.ink(0x1F), 0f, 360f, false, tl, arcSize, style = Stroke(stroke))
             val total = shownDeg
             val laps = (total / 360f).toInt()
             // Полные обороты — кольцо всё ярче с каждым часом.

@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import org.json.JSONArray
 import org.json.JSONObject
@@ -60,6 +61,9 @@ data class ThemeSpec(
     val motion: Float = 1f,
 ) {
     fun sheetBrush(): Brush = Brush.verticalGradient(listOf(sheetTop, sheetBottom))
+
+    /** Светлая тема: фон светлый, текст тёмный. */
+    val isLight: Boolean get() = background.luminance() > 0.5f
 }
 
 /** Встроенные темы. */
@@ -156,7 +160,33 @@ object BuiltinThemes {
         playerBackdrop = BackdropMode.COVER,
     )
 
-    val all = listOf(Lumen, Amoled, Glass, Neon, You)
+    /** Светлая: молочное стекло, тёмный текст, акцент из обложки. */
+    val Light = ThemeSpec(
+        id = "light",
+        name = "Светлая",
+        author = "CheKavo",
+        description = "Светлое молочное стекло и тёмный текст — для дня и яркого солнца",
+        background = Color(0xFFF3F0F7),
+        text = Color(0xFF17131F),
+        textDim = Color(0xB317131F),
+        textFaint = Color(0x8017131F),
+        onAccent = Color(0xFFFFFFFF),
+        card = Color(0x99FFFFFF),
+        cardStrong = Color(0xCCFFFFFF),
+        border = Color(0x1F17131F),
+        sheetTop = Color(0xF7FFFFFF),
+        sheetBottom = Color(0xFAF3F0F7),
+        panelTint = Color(0xB3FFFFFF),
+        blur = 30f,
+        highlight = 0.7f,
+        noise = 0.03f,
+        backdrop = BackdropMode.COVER,
+        backdropStrength = 0.35f,
+        playerBackdrop = BackdropMode.COVER,
+        playerDim = 0.6f,
+    )
+
+    val all = listOf(Lumen, Amoled, Glass, Neon, You, Light)
 }
 
 /** Текущая тема и пользовательские темы (хранятся файлами в памяти приложения). */

@@ -309,7 +309,7 @@ fun PlaylistScreen(vm: MainViewModel, id: Long, nav: Nav, actions: TrackActions,
                         scaleY = 1f + 0.03f * lift
                         shadowElevation = 18f * lift
                     }
-                    .background(Color(0xFF1A1622).copy(alpha = lift), RoundedCornerShape(14.dp))
+                    .background(LC.Sheet.copy(alpha = lift), RoundedCornerShape(14.dp))
                     .pointerInput(t.uri) {
                         detectDragGesturesAfterLongPress(
                             onDragStart = {
@@ -379,7 +379,7 @@ fun NameDialog(title: String, initial: String, confirm: String, onDone: (String)
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(28.dp))
                 .background(app.lumen.player.ui.theme.LT.sheetBrush())
-                .border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(28.dp))
+                .border(1.dp, LC.ink(0x26), RoundedCornerShape(28.dp))
                 .clickable(remember { MutableInteractionSource() }, null) {}
                 .padding(22.dp),
         ) {
@@ -397,7 +397,7 @@ fun NameDialog(title: String, initial: String, confirm: String, onDone: (String)
                     .fillMaxWidth()
                     .focusRequester(focus)
                     .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0x1AFFFFFF))
+                    .background(LC.ink(0x1A))
                     .padding(horizontal = 16.dp, vertical = 14.dp),
             )
             Spacer(Modifier.height(16.dp))
@@ -432,7 +432,7 @@ fun AddToPlaylistSheet(vm: MainViewModel, t: TrackEntity, onClose: () -> Unit, s
                 .navigationBarsPadding()
                 .clip(RoundedCornerShape(30.dp))
                 .background(app.lumen.player.ui.theme.LT.sheetBrush())
-                .border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(30.dp))
+                .border(1.dp, LC.ink(0x26), RoundedCornerShape(30.dp))
                 .clickable(remember { MutableInteractionSource() }, null) {}
                 .padding(vertical = 18.dp),
         ) {

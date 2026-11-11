@@ -102,7 +102,7 @@ fun BottomGlassSheet(onClose: () -> Unit, sheetModifier: Modifier = Modifier, co
                 .padding(bottom = 10.dp),
         ) {
             Box(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 6.dp), contentAlignment = Alignment.Center) {
-                Box(Modifier.width(38.dp).height(4.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.25f)))
+                Box(Modifier.width(38.dp).height(4.dp).clip(CircleShape).background(LC.Text.copy(alpha = 0.25f)))
             }
             content()
         }
@@ -139,7 +139,7 @@ private fun SheetItem(icon: ImageVector, title: String, tint: Color = LC.Text, o
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
-            Modifier.size(34.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.08f)),
+            Modifier.size(34.dp).clip(CircleShape).background(LC.Text.copy(alpha = 0.08f)),
             contentAlignment = Alignment.Center,
         ) { Icon(icon, null, Modifier.size(19.dp), tint = tint) }
         Spacer(Modifier.width(14.dp))
@@ -286,7 +286,7 @@ private fun Group(title: String, content: @Composable ColumnScope.() -> Unit) {
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(18.dp))
-            .background(Color.White.copy(alpha = 0.06f))
+            .background(LC.Text.copy(alpha = 0.06f))
             .padding(horizontal = 14.dp, vertical = 6.dp),
         content = content,
     )

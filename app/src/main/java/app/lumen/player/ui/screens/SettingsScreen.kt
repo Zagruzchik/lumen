@@ -182,14 +182,39 @@ fun SettingsScreen(
     }
 
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    var catState by rememberSaveable { mutableStateOf<String?>(null) }
+    var query by rememberSaveable { mutableStateOf("") }
+    androidx.activity.compose.BackHandler(catState != null) { catState = null }
+    androidx.compose.animation.AnimatedContent(
+        catState,
+        transitionSpec = {
+            val forward = targetState != null
+            (androidx.compose.animation.slideInHorizontally(androidx.compose.animation.core.spring(dampingRatio = 0.9f, stiffness = 380f)) { if (forward) it / 5 else -it / 5 } +
+                androidx.compose.animation.fadeIn(tween(220))) togetherWith
+                (androidx.compose.animation.slideOutHorizontally(tween(220)) { if (forward) -it / 8 else it / 8 } + androidx.compose.animation.fadeOut(tween(160)))
+        },
+        label = "settingsCat",
+    ) { cat ->
     LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = top + 16.dp, bottom = bottomPad),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        item { Text("Настройки", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold) }
+        item {
+            if (cat == null) Text("Настройки", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
+            else SettingsCatHeader(SETTINGS_CATS.first { it.id == cat }.title) { catState = null }
+        }
 
-        // ---------- статистика ----------
+        if (cat == null) {
+            item { SettingsSearch(query) { query = it } }
+            val matches = settingsMatches(query)
+            if (query.isNotBlank()) {
+                if (matches.isEmpty()) item { Text("Ничего не нашлось", fontSize = 14.sp, color = LC.Dim, modifier = Modifier.padding(8.dp)) }
+                items(matches.size) { i ->
+                    val (c, name) = matches[i]
+                    SettingsMatchRow(c, name) { catState = c.id; query = "" }
+                }
+            } else {
         item {
             Card(Modifier.clickable(onClick = onOpenStats)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -205,8 +230,15 @@ fun SettingsScreen(
                 }
             }
         }
+                items(SETTINGS_CATS.size) { i ->
+                    val c = SETTINGS_CATS[i]
+                    SettingsCatRow(c) { catState = c.id }
+                }
+            }
+        }
 
         // ---------- вспышки ----------
+        if (cat == "look") {
         item {
             Card {
                 Text("Вспышки под бит", fontSize = 17.sp, fontWeight = FontWeight.Bold)
@@ -231,14 +263,16 @@ fun SettingsScreen(
                         colors = SliderDefaults.colors(
                             thumbColor = Color.White,
                             activeTrackColor = LocalAccent.current,
-                            inactiveTrackColor = Color(0x26FFFFFF),
+                            inactiveTrackColor = LC.ink(0x26),
                         ),
                     )
                 }
             }
         }
+        }
 
         // ---------- обновления ----------
+        if (cat == "system") {
         item {
             Card {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -278,13 +312,17 @@ fun SettingsScreen(
                 }
             }
         }
+        }
 
         // ---------- темы ----------
+        if (cat == "look") {
         item {
             Card { ThemesSection(onEditTheme) }
         }
+        }
 
         // ---------- интерфейс ----------
+        if (cat == "look") {
         item {
             Card {
                 ToggleRow(
@@ -294,8 +332,10 @@ fun SettingsScreen(
                 ) { vm.setShowFormat(it) }
             }
         }
+        }
 
         // ---------- воспроизведение ----------
+        if (cat == "play") {
         item {
             ExpandableCard(
                 title = "Воспроизведение",
@@ -333,8 +373,10 @@ fun SettingsScreen(
                 }
             }
         }
+        }
 
         // ---------- кроссфейд ----------
+        if (cat == "play") {
         item {
             Card {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -370,7 +412,7 @@ fun SettingsScreen(
                             colors = SliderDefaults.colors(
                                 thumbColor = Color.White,
                                 activeTrackColor = LocalAccent.current,
-                                inactiveTrackColor = Color(0x26FFFFFF),
+                                inactiveTrackColor = LC.ink(0x26),
                             ),
                         )
                         var soft by remember(cfSoft) { mutableFloatStateOf(cfSoft) }
@@ -395,7 +437,7 @@ fun SettingsScreen(
                             colors = SliderDefaults.colors(
                                 thumbColor = Color.White,
                                 activeTrackColor = LocalAccent.current,
-                                inactiveTrackColor = Color(0x26FFFFFF),
+                                inactiveTrackColor = LC.ink(0x26),
                             ),
                         )
                         Text(
@@ -407,8 +449,10 @@ fun SettingsScreen(
                 }
             }
         }
+        }
 
         // ---------- эквалайзер ----------
+        if (cat == "sound") {
         item {
             ExpandableCard(
                 title = "Эквалайзер",
@@ -459,7 +503,7 @@ fun SettingsScreen(
                             colors = SliderDefaults.colors(
                                 thumbColor = Color.White,
                                 activeTrackColor = LocalAccent.current,
-                                inactiveTrackColor = Color(0x26FFFFFF),
+                                inactiveTrackColor = LC.ink(0x26),
                             ),
                         )
                     }
@@ -478,8 +522,10 @@ fun SettingsScreen(
                 }
             }
         }
+        }
 
         // ---------- AutoEq ----------
+        if (cat == "sound") {
         item {
             val st by vm.autoEq.collectAsStateWithLifecycle()
             val results by vm.autoEqResults.collectAsStateWithLifecycle()
@@ -556,21 +602,31 @@ fun SettingsScreen(
                 }
             }
         }
+        }
 
         // ---------- онлайн-музыка (свой сервер) ----------
+        if (cat == "online") {
         item { Card { OnlineSection(vm) } }
+        }
 
         // ---------- аккаунт и Last.fm ----------
+        if (cat == "account") {
         item { Card { SyncSection(vm) } }
         item { Card { LastFmSection(vm) } }
+        }
 
         // ---------- работа в фоне ----------
+        if (cat == "system") {
         item { Card { BackgroundSection() } }
+        }
 
         // ---------- будильник ----------
+        if (cat == "modes") {
         item { Card { AlarmSection(vm) } }
+        }
 
         // ---------- в машине и ночью ----------
+        if (cat == "modes") {
         item {
             Card {
                 AutoSection(onCarMode = { vm.carMode.value = true })
@@ -583,8 +639,10 @@ fun SettingsScreen(
                 ) { vm.setNightClock(it) }
             }
         }
+        }
 
         // ---------- библиотека ----------
+        if (cat == "library") {
         item {
             Card {
                 Text("Библиотека", fontSize = 17.sp, fontWeight = FontWeight.Bold)
@@ -618,8 +676,10 @@ fun SettingsScreen(
                 }
             }
         }
+        }
 
         // ---------- свои папки ----------
+        if (cat == "library") {
         item {
             Card {
                 Text("Папки с музыкой", fontSize = 17.sp, fontWeight = FontWeight.Bold)
@@ -641,8 +701,10 @@ fun SettingsScreen(
                 PillButton("Добавить папку", LIcons.Plus, { pickFolder.launch(null) }, Modifier.fillMaxWidth())
             }
         }
+        }
 
         // ---------- исключённые папки ----------
+        if (cat == "library") {
         item {
             val hiddenCount = allFolders.count { it.folder in excluded }
             ExpandableCard(
@@ -689,8 +751,10 @@ fun SettingsScreen(
                 }
             }
         }
+        }
 
         // ---------- тексты ----------
+        if (cat == "lyrics") {
         item {
             Card {
                 Text("Тексты песен", fontSize = 17.sp, fontWeight = FontWeight.Bold)
@@ -719,7 +783,7 @@ fun SettingsScreen(
                             progress = { if (b.total > 0) b.done.toFloat() / b.total else 0f },
                             modifier = Modifier.fillMaxWidth(),
                             color = LocalAccent.current,
-                            trackColor = Color(0x26FFFFFF),
+                            trackColor = LC.ink(0x26),
                         )
                         Spacer(Modifier.height(10.dp))
                         PillButton("Остановить", LIcons.Close, { vm.stopLyricsDownload() }, Modifier.fillMaxWidth(), primary = false)
@@ -750,8 +814,10 @@ fun SettingsScreen(
                 }
             }
         }
+        }
 
         // ---------- перенос на ПК ----------
+        if (cat == "account") {
         item {
             Card {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -808,7 +874,7 @@ fun SettingsScreen(
                                 .fillMaxWidth()
                                 .height(8.dp)
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(Color(0x1FFFFFFF))
+                                .background(LC.ink(0x1F))
                         ) {
                             Box(
                                 Modifier
@@ -830,6 +896,9 @@ fun SettingsScreen(
             }
         }
 
+        }
+        // ---------- о приложении ----------
+        if (cat == "system") {
         item {
             Card {
                 Text("О приложении", fontSize = 17.sp, fontWeight = FontWeight.Bold)
@@ -838,6 +907,8 @@ fun SettingsScreen(
                 Text("Никакой рекламы и слежки — всё работает на телефоне.", fontSize = 14.sp, color = LC.Dim)
             }
         }
+        }
+    }
     }
 }
 
@@ -898,10 +969,10 @@ private fun EqBandSlider(band: EqBand, min: Int, max: Int, modifier: Modifier, e
             fun yOf(level: Float) = pad + (1f - (level - min) / range) * usable
             val zeroY = yOf(0f.coerceIn(min.toFloat(), max.toFloat()))
             val knobY = yOf(shown)
-            drawLine(Color(0x24FFFFFF), Offset(cx, pad), Offset(cx, h - pad), 4.dp.toPx(), StrokeCap.Round)
-            drawLine(Color(0x4DFFFFFF), Offset(cx - 9.dp.toPx(), zeroY), Offset(cx + 9.dp.toPx(), zeroY), 1.dp.toPx())
+            drawLine(LC.ink(0x24), Offset(cx, pad), Offset(cx, h - pad), 4.dp.toPx(), StrokeCap.Round)
+            drawLine(LC.ink(0x4D), Offset(cx - 9.dp.toPx(), zeroY), Offset(cx + 9.dp.toPx(), zeroY), 1.dp.toPx())
             drawLine(accent, Offset(cx, zeroY), Offset(cx, knobY), 4.dp.toPx(), StrokeCap.Round)
-            drawCircle(Color(0x1FFFFFFF), 12.dp.toPx(), Offset(cx, knobY))
+            drawCircle(LC.ink(0x1F), 12.dp.toPx(), Offset(cx, knobY))
             drawCircle(Color.White, 8.dp.toPx(), Offset(cx, knobY))
         }
         Spacer(Modifier.height(6.dp))
@@ -931,8 +1002,8 @@ private fun LSwitch(checked: Boolean, enabled: Boolean = true, onChange: (Boolea
             checkedTrackColor = accent,
             checkedBorderColor = accent,
             uncheckedThumbColor = LC.Dim,
-            uncheckedTrackColor = Color(0x1FFFFFFF),
-            uncheckedBorderColor = Color(0x33FFFFFF),
+            uncheckedTrackColor = LC.ink(0x1F),
+            uncheckedBorderColor = LC.ink(0x33),
         ),
     )
 }

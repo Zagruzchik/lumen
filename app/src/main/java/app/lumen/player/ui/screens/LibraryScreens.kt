@@ -850,7 +850,7 @@ private fun CollectionScreen(
                     Modifier
                         .fillMaxWidth()
                         .height(440.dp)
-                        .background(Brush.verticalGradient(listOf(Color(0x0007070D), Color(0x6607070D), LC.Bg)))
+                        .background(Brush.verticalGradient(listOf(LC.Bg.copy(alpha = 0f), LC.Bg.copy(alpha = 0.4f), LC.Bg)))
                 )
                 Column(
                     Modifier
@@ -1352,7 +1352,7 @@ private fun CategoryDock(tab: Int, onTab: (Int) -> Unit, modifier: Modifier = Mo
         Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
             LIB_CATS.forEachIndexed { i, (_, name) ->
                 val on = i == shownIndex
-                val c by androidx.compose.animation.animateColorAsState(if (on) Color.White else LC.Dim, androidx.compose.animation.core.tween(200), label = "dockC")
+                val c by androidx.compose.animation.animateColorAsState(if (on) LC.Text else LC.Dim, androidx.compose.animation.core.tween(200), label = "dockC")
                 Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                     Text(name, fontSize = 12.5.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Medium, color = c, maxLines = 1, softWrap = false)
                 }

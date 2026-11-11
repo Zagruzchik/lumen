@@ -132,9 +132,9 @@ fun PillButton(
                 // Плотное «матовое стекло»: ничего из фона под кнопкой не просвечивает полосами.
                 else Modifier
                     .clip(shape)
-                    .background(Brush.verticalGradient(listOf(Color(0xFF2B2534), Color(0xFF1C1823))))
+                    .background(Brush.verticalGradient(if (LC.Light) listOf(Color(0xFFFFFFFF), Color(0xFFF1EEF5)) else listOf(Color(0xFF2B2534), Color(0xFF1C1823))))
                     .background(accent.copy(alpha = 0.07f))
-                    .border(1.dp, Color(0x2BFFFFFF), shape)
+                    .border(1.dp, LC.ink(0x2B), shape)
             )
             .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 18.dp),

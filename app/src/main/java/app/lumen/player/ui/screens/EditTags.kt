@@ -109,7 +109,7 @@ fun EditTagsSheet(vm: MainViewModel, t: TrackEntity, onClose: () -> Unit, sheetM
                 .imePadding()
                 .clip(RoundedCornerShape(30.dp))
                 .background(app.lumen.player.ui.theme.LT.sheetBrush())
-                .border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(30.dp))
+                .border(1.dp, LC.ink(0x26), RoundedCornerShape(30.dp))
                 .clickable(remember { MutableInteractionSource() }, null) {}
                 .heightIn(max = 640.dp)
                 .verticalScroll(rememberScrollState())
@@ -207,7 +207,7 @@ private fun TagField(label: String, value: String, number: Boolean = false, onCh
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(14.dp))
-                .background(Color(0x1AFFFFFF))
+                .background(LC.ink(0x1A))
                 .padding(horizontal = 14.dp, vertical = 12.dp),
         )
     }

@@ -54,7 +54,7 @@ private fun pitchOf(semi: Int): Float = 2.0.pow(semi / 12.0).toFloat()
 private fun sliderColors() = SliderDefaults.colors(
     thumbColor = Color.White,
     activeTrackColor = LocalAccent.current,
-    inactiveTrackColor = Color.White.copy(alpha = 0.15f),
+    inactiveTrackColor = LC.Text.copy(alpha = 0.15f),
     activeTickColor = Color.Transparent,
     inactiveTickColor = Color.Transparent,
 )
@@ -147,8 +147,8 @@ fun SoundSheet(
                         checkedTrackColor = accent,
                         checkedBorderColor = accent,
                         uncheckedThumbColor = LC.Dim,
-                        uncheckedTrackColor = Color(0x1FFFFFFF),
-                        uncheckedBorderColor = Color(0x33FFFFFF),
+                        uncheckedTrackColor = LC.ink(0x1F),
+                        uncheckedBorderColor = LC.ink(0x33),
                     ),
                 )
             }

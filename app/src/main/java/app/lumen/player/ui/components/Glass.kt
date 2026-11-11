@@ -22,6 +22,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -47,7 +48,7 @@ fun Modifier.glassBlur(state: HazeState, tint: Color = Color(0x660E0A16)): Modif
         state = state,
         style = HazeStyle(
             backgroundColor = t.background,
-            tints = listOf(HazeTint(if (tint == DEFAULT_PANEL) t.panelTint else tint)),
+            tints = listOf(HazeTint(if (tint == DEFAULT_PANEL || (t.isLight && tint.luminance() < 0.2f)) t.panelTint else tint)),
             blurRadius = t.blur.dp,
             noiseFactor = t.noise,
         ),
@@ -67,7 +68,7 @@ fun WavySlider(
     playing: Boolean,
     onSeek: (Float) -> Unit,
     modifier: Modifier = Modifier,
-    color: Color = Color.White,
+    color: Color = app.lumen.player.ui.theme.LC.Text,
 ) {
     val seek by rememberUpdatedState(onSeek)
     var drag by remember { mutableStateOf<Float?>(null) }

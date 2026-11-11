@@ -21,6 +21,11 @@ object LC {
     val OnAccent get() = ThemeStore.current.onAccent
     val DefaultAccent = Color(0xFFFF7A59)
     val Sheet get() = ThemeStore.current.sheetBottom
+    /** Тема светлая (светлый фон) — тогда блики и рамки рисуются тёмными «чернилами». */
+    val Light get() = ThemeStore.current.isLight
+
+    /** Цвет текста темы с прозрачностью alpha/255: белые блики на тёмной теме, тёмные — на светлой. */
+    fun ink(alpha: Int): Color = ThemeStore.current.text.copy(alpha = alpha / 255f)
 }
 
 /** Короткий доступ к текущей теме. */
@@ -39,7 +44,19 @@ val LocalAccent = compositionLocalOf { LC.DefaultAccent }
 
 @Composable
 fun LumenTheme(accent: Color, content: @Composable () -> Unit) {
-    val scheme = darkColorScheme(
+    val scheme = if (LC.Light) androidx.compose.material3.lightColorScheme(
+        primary = accent,
+        onPrimary = LC.OnAccent,
+        secondary = accent,
+        tertiary = accent,
+        background = LC.Bg,
+        onBackground = LC.Text,
+        surface = LC.Sheet,
+        onSurface = LC.Text,
+        surfaceVariant = Color(0xFFEDE9F2),
+        onSurfaceVariant = LC.Dim,
+        surfaceContainer = Color(0xFFF4F1F8),
+    ) else darkColorScheme(
         primary = accent,
         onPrimary = LC.OnAccent,
         secondary = accent,

@@ -171,6 +171,17 @@ fun LumenRoot(vm: MainViewModel) {
     val showFormat by vm.showFormat.collectAsStateWithLifecycle()
     val disliked by vm.dislikedUris.collectAsStateWithLifecycle()
     val karaokeOn by vm.karaoke.collectAsStateWithLifecycle()
+    // Светлая тема — тёмные значки в строке состояния и навигации.
+    val barsView = androidx.compose.ui.platform.LocalView.current
+    val lightBars = app.lumen.player.ui.theme.LC.Light
+    LaunchedEffect(lightBars) {
+        (barsView.context as? android.app.Activity)?.window?.let { w ->
+            androidx.core.view.WindowCompat.getInsetsController(w, barsView).apply {
+                isAppearanceLightStatusBars = lightBars
+                isAppearanceLightNavigationBars = lightBars
+            }
+        }
+    }
     LumenTheme(accent) {
         androidx.compose.runtime.CompositionLocalProvider(
             app.lumen.player.ui.components.LocalShowFormat provides showFormat,
@@ -798,7 +809,7 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                 Modifier
                     .clip(RoundedCornerShape(20.dp))
                     .background(app.lumen.player.ui.theme.LT.sheetBottom)
-                    .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(20.dp))
+                    .border(1.dp, LC.ink(0x33), RoundedCornerShape(20.dp))
                     .padding(horizontal = 18.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -1014,7 +1025,7 @@ private fun MiniPlayer(
             .height((66f + MINI_EXTRA * big).dp)
             .clip(shape)
             .glassBlur(haze, Color(0x8C281630))
-            .border(1.dp, Color(0x2EFFFFFF), shape)
+            .border(1.dp, LC.ink(0x2E), shape)
             .clickable(role = Role.Button, onClickLabel = "Открыть плеер", onClick = onOpen)
             .draggable(
                 orientation = Orientation.Vertical,
@@ -1152,7 +1163,7 @@ private fun MiniPlayer(
                 .align(Alignment.BottomStart)
                 .fillMaxWidth()
                 .height(3.dp)
-                .background(Color(0x1FFFFFFF))
+                .background(LC.ink(0x1F))
         ) {
             Box(Modifier.fillMaxWidth(progress).fillMaxHeight().background(accent))
         }
@@ -1179,7 +1190,7 @@ private fun BottomNav(root: Dest, haze: HazeState, onSelect: (Dest) -> Unit, mod
             .fillMaxWidth()
             .glassBlur(haze, app.lumen.player.ui.components.DEFAULT_PANEL)
             .drawBehind {
-                drawLine(Color(0x1AFFFFFF), Offset(0f, 0f), Offset(size.width, 0f), 1.dp.toPx())
+                drawLine(LC.ink(0x1A), Offset(0f, 0f), Offset(size.width, 0f), 1.dp.toPx())
             }
             .padding(bottom = navBottom)
             .height(68.dp)

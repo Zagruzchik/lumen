@@ -53,7 +53,7 @@ private fun Field(value: String, hint: String, password: Boolean = false, email:
             .fillMaxWidth()
             .padding(vertical = 4.dp)
             .clip(RoundedCornerShape(14.dp))
-            .background(Color.White.copy(alpha = 0.08f))
+            .background(LC.Text.copy(alpha = 0.08f))
             .border(1.dp, LC.Border, RoundedCornerShape(14.dp))
             .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
@@ -165,8 +165,8 @@ fun LastFmSection(vm: MainViewModel) {
                     checkedTrackColor = accent,
                     checkedBorderColor = accent,
                     uncheckedThumbColor = LC.Dim,
-                    uncheckedTrackColor = Color(0x1FFFFFFF),
-                    uncheckedBorderColor = Color(0x33FFFFFF),
+                    uncheckedTrackColor = LC.ink(0x1F),
+                    uncheckedBorderColor = LC.ink(0x33),
                 ),
             )
         }
