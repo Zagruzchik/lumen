@@ -56,6 +56,10 @@ class Crossfader(
     private var syncStartPos = 0L
     private var lastDrift = 0L
     private var lastSpeedAt = 0L
+    private var driftSum = 0L
+    private var driftN = 0
+    private var corrections = 0
+    private var handoffMs = HANDOFF_MS
 
     private val tick = object : Runnable {
         override fun run() {
@@ -118,35 +122,48 @@ class Crossfader(
                 }
                 if (tailReady && main.currentPosition >= syncStartPos - 30) {
                     t.volume = 0f
+                    driftSum = 0
+                    driftN = 0
+                    corrections = 0
+                    lastDrift = 0
+                    lastSpeedAt = now
                     t.play()
                     stage = Stage.SYNC
                     stageStart = now
                 }
             }
             Stage.SYNC -> {
-                // Хвост играет беззвучно; выравниваем его по основному лёгким ускорением/замедлением,
-                // пока расхождение не станет меньше ~10 мс. Тогда подмена будет неслышной.
+                // Хвост играет беззвучно. Расхождение меряем усреднённо и правим тихой точной перемоткой
+                // хвоста (без изменения скорости: растяжение звука даёт щелчки и сбивает позицию).
                 val t = tail ?: return abort()
                 if (main.currentMediaItem?.mediaId != armedFor) return abort()
-                val base = main.playbackParameters.speed
-                if (now - stageStart > 200 && t.isPlaying && now - lastSpeedAt > 250) {
-                    val drift = main.currentPosition - t.currentPosition
-                    val speed = base * (if (kotlin.math.abs(drift) <= 8) 1f else (1f + drift / 900f).coerceIn(0.85f, 1.25f))
-                    if (kotlin.math.abs(t.playbackParameters.speed - speed) > 0.004f) {
-                        t.setPlaybackSpeed(speed)
-                        lastSpeedAt = now
+                if (t.isPlaying && t.playbackState == Player.STATE_READY && now - lastSpeedAt > 350) {
+                    driftSum += main.currentPosition - t.currentPosition
+                    driftN++
+                    if (driftN >= 6) {
+                        val d = driftSum / driftN
+                        driftSum = 0
+                        driftN = 0
+                        lastDrift = d
+                        if (kotlin.math.abs(d) > 10 && corrections < 5 && main.currentPosition < fadeStartPos - 500) {
+                            t.seekTo(t.currentPosition + d)
+                            corrections++
+                            lastSpeedAt = now
+                        }
                     }
-                    lastDrift = drift
                 }
                 if (main.currentPosition >= fadeStartPos) {
-                    t.playbackParameters = main.playbackParameters
+                    // Хвост не успел заиграть (медленная сеть) — обычный переход без кроссфейда.
+                    if (!t.isPlaying) return abort()
                     stage = Stage.HANDOFF
                     stageStart = now
+                    // Совпали точно — долгая неслышная передача; разошлись — короткая, чтобы не было «эха».
+                    handoffMs = if (kotlin.math.abs(lastDrift) <= 15) HANDOFF_MS else 70L
                 }
             }
             Stage.HANDOFF -> {
                 val t = tail ?: return abort()
-                val p = ((now - stageStart) / HANDOFF_MS.toFloat()).coerceIn(0f, 1f)
+                val p = ((now - stageStart) / handoffMs.toFloat()).coerceIn(0f, 1f)
                 // Равномощная передача: суммарная громкость не проседает.
                 t.volume = sin(p * PI.toFloat() / 2f)
                 mix.cross = sin((1f - p) * PI.toFloat() / 2f)
@@ -236,7 +253,7 @@ class Crossfader(
 
     private companion object {
         const val PREPARE_AHEAD_MS = 6_000L
-        const val SYNC_LEAD_MS = 2_000L
+        const val SYNC_LEAD_MS = 3_000L
         const val HANDOFF_MS = 400L
     }
 }

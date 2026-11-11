@@ -494,8 +494,6 @@ private fun PlayerTopBar(
                     .padding(horizontal = 8.dp, vertical = 2.dp),
             )
         }
-        IconBtn(LIcons.Share, "Поделиться", { track?.let { vm.shareTracks(listOf(it), it.title, playlist = false) } })
-        Spacer(Modifier.width(6.dp))
         Box {
             IconBtn(LIcons.MoreH, "Меню трека", {
                 val t = track
@@ -863,18 +861,45 @@ internal fun LyricsList(
     }
     val current = if (synced) lines.indexOfLast { it.timeMs <= position + 250 } else -1
     val listState = rememberLazyListState()
-    LaunchedEffect(current) {
-        if (current < 0 || listState.isScrollInProgress) return@LaunchedEffect
-        // Плавно подводим текущую строку к «точке чтения» (треть высоты), а не прыгаем к ней.
+    val anchorFrac = if (big) 0.36f else 0.3f
+    // Подводим текущую строку к «точке чтения» (треть высоты). Если её не видно — сначала
+    // доезжаем до неё, потом выравниваем точно, чтобы она не оставалась где-то внизу.
+    suspend fun align() {
+        if (current < 0) return
+        fun visible() = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == current }
+        if (visible() == null) listState.animateScrollToItem(current)
+        val item = visible() ?: return
         val info = listState.layoutInfo
-        val item = info.visibleItemsInfo.firstOrNull { it.index == current }
-        if (item != null) {
-            val anchor = info.viewportStartOffset + (info.viewportEndOffset - info.viewportStartOffset) * (if (big) 0.36f else 0.3f)
-            val delta = item.offset + item.size / 2f - anchor
-            listState.animateScrollBy(delta, tween(750, easing = FastOutSlowInEasing))
-        } else {
-            listState.animateScrollToItem((current - if (big) 2 else 1).coerceAtLeast(0))
+        val anchor = info.viewportStartOffset + (info.viewportEndOffset - info.viewportStartOffset) * anchorFrac
+        val delta = item.offset + item.size / 2f - anchor
+        if (kotlin.math.abs(delta) > 2f) listState.animateScrollBy(delta, tween(750, easing = FastOutSlowInEasing))
+    }
+    // Палец на тексте — не мешаем листать; отпустил — через 2,5 с возвращаемся к текущей строке.
+    var dragging by remember { mutableStateOf(false) }
+    var lastDrag by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(listState) {
+        listState.interactionSource.interactions.collect { i ->
+            when (i) {
+                is androidx.compose.foundation.interaction.DragInteraction.Start -> dragging = true
+                is androidx.compose.foundation.interaction.DragInteraction.Stop,
+                is androidx.compose.foundation.interaction.DragInteraction.Cancel -> {
+                    dragging = false
+                    lastDrag = System.currentTimeMillis()
+                }
+            }
         }
+    }
+    LaunchedEffect(current, lines) {
+        if (dragging) return@LaunchedEffect
+        if (System.currentTimeMillis() - lastDrag < 2500) return@LaunchedEffect
+        align()
+    }
+    LaunchedEffect(lastDrag) {
+        if (lastDrag == 0L) return@LaunchedEffect
+        kotlinx.coroutines.delay(2500)
+        // Ждём, пока доедет инерция прокрутки.
+        while (listState.isScrollInProgress) kotlinx.coroutines.delay(100)
+        if (!dragging) align()
     }
     Box(modifier) {
     LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = contentPadding) {
@@ -1155,6 +1180,8 @@ private fun FullControls(
                     )
                 }
             }
+            ShareButton(p, vm, 48.dp)
+            Spacer(Modifier.width(8.dp))
             FavButton(p, favs, accent, vm, 48.dp)
         }
 
@@ -1230,6 +1257,8 @@ private fun CompactControls(
                 Text(p.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(p.artist, fontSize = 13.sp, color = LC.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+            ShareButton(p, vm, 44.dp)
+            Spacer(Modifier.width(6.dp))
             FavButton(p, favs, accent, vm, 44.dp)
         }
         Spacer(Modifier.height(4.dp))
@@ -1246,6 +1275,24 @@ private fun CompactControls(
             RollingText("−" + formatMs(max(0L, dur - position)), 11.sp, LC.Dim)
         }
         TransportRow(vm, p, accent, playSize = 60.dp, sideSize = 52.dp, withModes = true)
+    }
+}
+
+/** «Поделиться на телефон рядом» — круглая кнопка рядом с лайком. */
+@Composable
+private fun ShareButton(p: PlayerState, vm: MainViewModel, size: Dp) {
+    val track by vm.currentTrack.collectAsStateWithLifecycle()
+    Box(
+        Modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(LC.ink(0x1F))
+            .clickable(onClickLabel = "Поделиться") {
+                track?.let { t -> vm.shareTracks(listOf(t), t.title, playlist = false) }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(LIcons.Share, "Поделиться", Modifier.size(22.dp), tint = LC.Text)
     }
 }
 

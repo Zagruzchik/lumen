@@ -2,6 +2,7 @@ package app.lumen.player.ui
 
 import app.lumen.player.data.UNKNOWN_ARTIST
 import app.lumen.player.data.MetaLookup
+import app.lumen.player.data.CrashGuard
 import app.lumen.player.data.Online
 import app.lumen.player.playback.LumenAlarm
 import app.lumen.player.playback.AlarmConfig
@@ -270,6 +271,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (c.mediaItemCount > 0) return
         val uris = g.prefs.queue
         if (uris.isEmpty()) {
+            prepareDefaultSession()
+            return
+        }
+        // Прошлый запуск упал — очередь не восстанавливаем: вылет мог быть из-за неё.
+        if (app.lumen.player.data.CrashGuard.safeMode) {
+            g.prefs.queue = emptyList()
             prepareDefaultSession()
             return
         }
@@ -1482,22 +1489,43 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         autoUpdate.value = on
     }
 
-    fun checkUpdates(manual: Boolean) {
+    /** Отчёт о прошлом вылете (показываем один раз). */
+    val crashReport = MutableStateFlow(CrashGuard.pendingReport(getApplication<Application>()))
+
+    fun dismissCrash() {
+        CrashGuard.markShown(getApplication<Application>())
+        crashReport.value = null
+    }
+
+    /** Сейчас ставится обязательное обновление — окно нельзя закрыть. */
+    val updateMandatory = MutableStateFlow(false)
+
+    /**
+     * Проверка обновлений. [onlyMandatory] — тихая проверка при запуске у тех, кто выключил
+     * автообновления: показываем окно только для срочного (обязательного) патча.
+     */
+    fun checkUpdates(manual: Boolean, onlyMandatory: Boolean = false) {
         val st = updateState.value
         if (st is UpdateUi.Checking || st is UpdateUi.Downloading || st is UpdateUi.Installing) return
         viewModelScope.launch {
             updateState.value = UpdateUi.Checking
             val r = runCatching { g.updates.latest() }
             val rel = r.getOrNull()
+            val newer = rel != null && rel.versionCode > g.updates.currentCode
             updateState.value = when {
                 r.isFailure -> UpdateUi.Error("Нет связи с сервером обновлений", null)
-                rel != null && rel.versionCode > g.updates.currentCode -> {
+                newer && (!onlyMandatory || rel!!.mandatory) -> {
                     updateSheet.value = true
-                    UpdateUi.Available(rel)
+                    UpdateUi.Available(rel!!)
                 }
                 else -> UpdateUi.UpToDate
             }
             if (!manual && updateState.value !is UpdateUi.Available) updateState.value = UpdateUi.Idle
+            // Срочный патч: окно не закрывается, загрузка начинается сама.
+            if (newer && rel!!.mandatory && updateState.value is UpdateUi.Available) {
+                updateMandatory.value = true
+                startUpdate()
+            }
         }
     }
 
@@ -1561,6 +1589,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun hideUpdateSheet() {
+        if (updateMandatory.value && updateState.value !is UpdateUi.Error) return
         updateSheet.value = false
     }
 
@@ -1573,11 +1602,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 updateState.value = UpdateUi.Error(msg, rel)
             }
         }
-        if (g.prefs.autoUpdate) {
-            viewModelScope.launch {
-                kotlinx.coroutines.delay(2500)
-                checkUpdates(manual = false)
-            }
+        // При запуске: обычная проверка (если включены автообновления) или тихая — только срочные патчи.
+        // После вылета проверяем сразу: вдруг исправление уже вышло.
+        val crashed = crashReport.value != null
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(if (crashed) 600 else 2500)
+            checkUpdates(manual = false, onlyMandatory = !g.prefs.autoUpdate && !crashed)
         }
     }
 

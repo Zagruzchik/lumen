@@ -204,8 +204,11 @@ class NearShare(
         fail(
             when {
                 code == ConnectionsStatusCodes.STATUS_BLUETOOTH_ERROR -> "Включи Bluetooth и Wi‑Fi и попробуй снова"
-                m.contains("location", true) -> "Включи геолокацию — без неё Android не даёт искать телефоны рядом"
-                m.contains("permission", true) -> "Нет разрешения «Устройства поблизости» — разреши его Lumen в настройках"
+                m.contains("MISSING_PERMISSION", true) && m.contains("LOCATION", true) ->
+                    "Нужна точная геолокация: «О приложении» Lumen → «Разрешения» → «Геолокация» → «Разрешить» (и «Точное местоположение»)"
+                m.contains("MISSING_PERMISSION", true) || m.contains("permission", true) ->
+                    "Нет разрешения «Устройства поблизости» — «О приложении» Lumen → «Разрешения»"
+                m.contains("location", true) -> "Включи геолокацию в шторке и попробуй снова"
                 m.contains("API_UNAVAILABLE", true) || code == 17 -> "На телефоне нет сервисов Google Play — используй «Другим способом»"
                 code != null -> "Не получилось: " + ConnectionsStatusCodes.getStatusCodeString(code)
                 else -> "Не получилось: ${m.ifBlank { "ошибка" }}"

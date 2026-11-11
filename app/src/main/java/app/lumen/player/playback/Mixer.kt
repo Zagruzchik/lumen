@@ -70,7 +70,14 @@ class LumenPlayer(
         }
     }
 
+    /** Идёт плавное затухание перед паузой: для всех (кнопки, уведомление) мы уже на паузе. */
+    private var fadingOut = false
+
+    override fun getPlayWhenReady(): Boolean = if (fadingOut) false else super.getPlayWhenReady()
+    override fun isPlaying(): Boolean = if (fadingOut) false else super.isPlaying()
+
     override fun play() {
+        fadingOut = false
         if (fadeEnabled() && !exo.isPlaying) {
             anim?.cancel()
             mix.fade = 0f
@@ -85,12 +92,15 @@ class LumenPlayer(
 
     override fun pause() {
         if (fadeEnabled() && exo.isPlaying) {
+            fadingOut = true
             fadeTo(0f, 260) {
+                fadingOut = false
                 super.pause()
                 mix.fade = 1f
             }
         } else {
             anim?.cancel()
+            fadingOut = false
             super.pause()
             mix.fade = 1f
         }

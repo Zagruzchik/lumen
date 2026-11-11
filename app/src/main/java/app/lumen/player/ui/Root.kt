@@ -860,6 +860,19 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                 ),
             )
         }
+        val crash by vm.crashReport.collectAsStateWithLifecycle()
+        AnimatedVisibility(crash != null, enter = fadeIn(tween(260)), exit = fadeOut(tween(220))) {
+            var kept by remember { mutableStateOf("") }
+            crash?.let { kept = it }
+            app.lumen.player.ui.screens.CrashSheet(
+                kept,
+                onClose = { vm.dismissCrash() },
+                sheetModifier = Modifier.animateEnterExit(
+                    enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 360f)) { it },
+                    exit = slideOutVertically(tween(240)) { it },
+                ),
+            )
+        }
         val updSheet by vm.updateSheet.collectAsStateWithLifecycle()
         AnimatedVisibility(updSheet, enter = fadeIn(tween(260)), exit = fadeOut(tween(220))) {
             app.lumen.player.ui.screens.UpdateSheet(

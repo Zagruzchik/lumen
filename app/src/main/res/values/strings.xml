@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="sc_continue">Продолжить</string>
+    <string name="screen_lock_service_label">Lumen — гашение экрана</string>
+    <string name="screen_lock_service_desc">Нужна только для одного: двойной тап по экрану блокировки Lumen гасит экран, как кнопка питания. Служба ничего не читает с экрана и не отслеживает.</string>
     <string name="sc_loved">Самое любимое</string>
     <string name="sc_shuffle">Перемешать всё</string>
     <string name="tile_label">Lumen</string>

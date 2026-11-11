@@ -70,19 +70,23 @@ import kotlin.math.roundToInt
 
 /** Разрешения для поиска телефонов рядом. */
 fun nearbyPermissions(): Array<String> = when {
+    // Сервисы Google для поиска рядом требуют геолокацию и на новых Android тоже.
     Build.VERSION.SDK_INT >= 33 -> arrayOf(
         Manifest.permission.BLUETOOTH_SCAN,
         Manifest.permission.BLUETOOTH_ADVERTISE,
         Manifest.permission.BLUETOOTH_CONNECT,
         Manifest.permission.NEARBY_WIFI_DEVICES,
+        Manifest.permission.ACCESS_COARSE_LOCATION,
+        Manifest.permission.ACCESS_FINE_LOCATION,
     )
     Build.VERSION.SDK_INT >= 31 -> arrayOf(
         Manifest.permission.BLUETOOTH_SCAN,
         Manifest.permission.BLUETOOTH_ADVERTISE,
         Manifest.permission.BLUETOOTH_CONNECT,
+        Manifest.permission.ACCESS_COARSE_LOCATION,
         Manifest.permission.ACCESS_FINE_LOCATION,
     )
-    else -> arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+    else -> arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION)
 }
 
 /**
@@ -103,7 +107,10 @@ fun ShareSheet(
 
     val perms = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { res ->
         if (res.values.all { it }) vm.shareGo()
-        else vm.shareFail("Без разрешения «Устройства поблизости» Lumen не найдёт второй телефон. Разреши его и попробуй снова")
+        else vm.shareFail(
+            "Без разрешений «Устройства поблизости» и «Геолокация» (точная) Lumen не найдёт второй телефон. " +
+                "Разреши их в «О приложении» → «Разрешения» и попробуй снова"
+        )
     }
     // Как только окно перешло к поиску — проверяем разрешения и стартуем.
     val searching = st is ShareUi.Searching

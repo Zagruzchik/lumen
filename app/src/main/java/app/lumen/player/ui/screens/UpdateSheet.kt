@@ -42,7 +42,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -117,7 +119,9 @@ fun UpdateSheet(vm: MainViewModel, onClose: () -> Unit, sheetModifier: Modifier 
                 UpdateOrb(accent, st is UpdateUi.Downloading || st is UpdateUi.Installing)
                 Spacer(Modifier.width(16.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("Вышло обновление", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+                    val mandatory by vm.updateMandatory.collectAsStateWithLifecycle()
+                    Text(if (mandatory) "Срочное исправление" else "Вышло обновление", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+                    if (mandatory) Text("Его нужно установить — без него Lumen может работать с ошибками", fontSize = 13.sp, color = accent)
                     Text(
                         buildString {
                             append("${vm.versionName} → ${rel?.versionName ?: "…"}")
@@ -304,6 +308,85 @@ fun WhatsNewSheet(notes: String, version: String, onClose: () -> Unit, sheetModi
             }
             Spacer(Modifier.height(16.dp))
             PillButton("Отлично", null, onClose, Modifier.fillMaxWidth())
+        }
+    }
+}
+
+
+/** «Lumen закрылся из-за ошибки»: отчёт можно скопировать или отправить разработчику. */
+@Composable
+fun CrashSheet(report: String, onClose: () -> Unit, sheetModifier: Modifier = Modifier) {
+    val ctx = LocalContext.current
+    val accent = LocalAccent.current
+    var open by remember { mutableStateOf(false) }
+    BackHandler { onClose() }
+    Box(Modifier.fillMaxSize()) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color(0x99000000))
+                .clickable(remember { MutableInteractionSource() }, null) { onClose() }
+        )
+        Column(
+            sheetModifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(10.dp)
+                .navigationBarsPadding()
+                .clip(RoundedCornerShape(32.dp))
+                .background(app.lumen.player.ui.theme.LT.sheetBrush())
+                .border(1.dp, LC.ink(0x26), RoundedCornerShape(32.dp))
+                .clickable(remember { MutableInteractionSource() }, null) {}
+                .padding(22.dp),
+        ) {
+            Text("Lumen закрылся из-за ошибки", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Прости! Очередь, на которой это случилось, сброшена, чтобы ошибка не повторялась. " +
+                    "Lumen уже проверяет, нет ли обновления с исправлением. Отправь отчёт разработчику — так баг починят быстрее.",
+                fontSize = 14.sp,
+                color = LC.Dim,
+                lineHeight = 19.sp,
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                if (open) "Скрыть подробности" else "Показать подробности",
+                fontSize = 13.sp,
+                color = accent,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { open = !open }.padding(vertical = 4.dp),
+            )
+            androidx.compose.animation.AnimatedVisibility(open) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp)
+                        .heightIn(max = 220.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(LC.ink(0x10))
+                        .verticalScroll(rememberScrollState())
+                        .padding(10.dp)
+                ) {
+                    Text(report, fontSize = 11.sp, color = LC.Dim, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, lineHeight = 14.sp)
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                PillButton("Скопировать", null, {
+                    val cm = ctx.getSystemService(android.content.ClipboardManager::class.java)
+                    cm?.setPrimaryClip(android.content.ClipData.newPlainText("Lumen crash", report))
+                    android.widget.Toast.makeText(ctx, "Отчёт скопирован", android.widget.Toast.LENGTH_SHORT).show()
+                }, Modifier.weight(1f), primary = false)
+                PillButton("Отправить", LIcons.Share, {
+                    val i = android.content.Intent(android.content.Intent.ACTION_SEND)
+                        .setType("text/plain")
+                        .putExtra(android.content.Intent.EXTRA_SUBJECT, "Lumen: отчёт о вылете")
+                        .putExtra(android.content.Intent.EXTRA_TEXT, report)
+                    runCatching { ctx.startActivity(android.content.Intent.createChooser(i, "Отправить отчёт")) }
+                }, Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(10.dp))
+            PillButton("Понятно", null, onClose, Modifier.fillMaxWidth(), primary = false)
         }
     }
 }
