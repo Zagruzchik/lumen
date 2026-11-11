@@ -80,6 +80,29 @@ class PlayerConnection(private val context: Context) {
 
     val position: Long get() = controller?.currentPosition ?: 0L
 
+    // Что нажал пользователь: держим это состояние на кнопке ~1,2 с, пока плеер догоняет,
+    // чтобы значок не прыгал «пауза → играет → пауза».
+    private var wanted: Boolean? = null
+    private var wantedUntil = 0L
+
+    /** «Играет» для кнопки: намерение играть, а не «звук идёт прямо сейчас» (как в стандартных плеерах). */
+    private fun shownPlaying(c: Player): Boolean {
+        val real = c.playWhenReady &&
+            c.playbackState != Player.STATE_IDLE &&
+            c.playbackState != Player.STATE_ENDED &&
+            c.playbackSuppressionReason == Player.PLAYBACK_SUPPRESSION_REASON_NONE
+        val w = wanted ?: return real
+        if (android.os.SystemClock.uptimeMillis() < wantedUntil && real != w) return w
+        wanted = null
+        return real
+    }
+
+    private fun want(playing: Boolean) {
+        wanted = playing
+        wantedUntil = android.os.SystemClock.uptimeMillis() + 1200
+        _state.value = _state.value.copy(isPlaying = playing)
+    }
+
     private fun refresh(queueChanged: Boolean) {
         val c = controller ?: return
         val old = _state.value
@@ -107,7 +130,7 @@ class PlayerConnection(private val context: Context) {
             title = md.title?.toString().orEmpty(),
             artist = md.artist?.toString().orEmpty(),
             album = md.albumTitle?.toString().orEmpty(),
-            isPlaying = c.isPlaying,
+            isPlaying = shownPlaying(c),
             durationMs = c.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: 0L,
             shuffle = c.shuffleModeEnabled,
             repeat = c.repeatMode,
@@ -157,17 +180,28 @@ class PlayerConnection(private val context: Context) {
 
     fun toggle() {
         val c = controller ?: return
-        if (c.isPlaying) {
+        if (shownPlaying(c)) {
+            want(false)
             c.pause()
         } else {
+            want(true)
             if (c.playbackState == Player.STATE_IDLE) c.prepare()
             if (c.playbackState == Player.STATE_ENDED) c.seekToDefaultPosition(0)
             c.play()
         }
     }
 
-    fun play() = controller?.play()
-    fun pause() = controller?.pause()
+    fun play() {
+        val c = controller ?: return
+        want(true)
+        c.play()
+    }
+
+    fun pause() {
+        val c = controller ?: return
+        want(false)
+        c.pause()
+    }
     fun next() = controller?.seekToNext()
     fun previous() = controller?.seekToPrevious()
     /** Пауза ровно в конце текущего трека (без затухания посреди песни). */

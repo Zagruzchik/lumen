@@ -191,8 +191,8 @@ class PlaybackService : MediaLibraryService() {
         crossfader = Crossfader(
             this, player, applicationContext.graph.prefs, mixer,
             endOf = { id -> trims[id]?.endMs ?: -1L },
-            startOf = { id -> trims[id]?.startMs ?: 0L },
             blocked = { abUri != null },
+            autoEq = applicationContext.graph.autoEq,
         ).also { it.start() }
         scope.launch {
             applicationContext.graph.dao.trims().collect { list -> trims = list.associateBy { it.uri } }
