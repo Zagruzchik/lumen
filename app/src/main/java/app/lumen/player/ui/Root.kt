@@ -819,6 +819,16 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                 Text(lastToast, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             }
         }
+        // ---------- обязательный вход в аккаунт ----------
+        val authSt by vm.syncState.collectAsStateWithLifecycle()
+        AnimatedVisibility(
+            authSt.email == null || authSt.needNewPassword,
+            enter = fadeIn(tween(300)),
+            exit = fadeOut(tween(450)) + androidx.compose.animation.scaleOut(tween(450), targetScale = 1.04f),
+        ) {
+            app.lumen.player.ui.screens.AuthGate(vm)
+        }
+
         // ---------- поделиться / получить ----------
         val shareSt by vm.shareUi.collectAsStateWithLifecycle()
         var lastShare by remember { mutableStateOf<app.lumen.player.data.ShareUi>(app.lumen.player.data.ShareUi.Idle) }
