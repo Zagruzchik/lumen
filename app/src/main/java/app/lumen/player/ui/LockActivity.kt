@@ -28,6 +28,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -184,7 +185,7 @@ private fun LockScreen(conn: PlayerConnection, onUnlock: () -> Unit) {
                 .background(app.lumen.player.ui.theme.ThemeStore.current.background)
                 // Двойной тап в любом месте, кроме строк текста, — погасить экран.
                 .pointerInput(Unit) {
-                    androidx.compose.foundation.gestures.detectTapGestures(onDoubleTap = {
+                    detectTapGestures(onDoubleTap = {
                         haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                         if (!app.lumen.player.playback.ScreenLockService.lock()) {
                             lockHint = true
