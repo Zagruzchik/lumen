@@ -13,8 +13,8 @@ android {
         applicationId = "app.lumen.player"
         minSdk = 26
         targetSdk = 35
-        versionCode = 64
-        versionName = "0.27.10"
+        versionCode = 65
+        versionName = "0.27.11"
     }
 
     signingConfigs {
