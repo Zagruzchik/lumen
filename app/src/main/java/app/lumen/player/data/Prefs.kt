@@ -132,6 +132,10 @@ class Prefs(context: Context) {
         get() = sp.getString("searchHistory", "")!!.split('\n').filter { it.isNotBlank() }
         set(v) = sp.edit().putString("searchHistory", v.joinToString("\n")).apply()
 
+    var hiddenArtists: Set<String>
+        get() = sp.getStringSet("hiddenArtists", emptySet())?.toSet() ?: emptySet()
+        set(v) = sp.edit().putStringSet("hiddenArtists", v).apply()
+
     var hiddenRecs: Set<String>
         get() = sp.getStringSet("hiddenRecs", emptySet())?.toSet() ?: emptySet()
         set(v) = sp.edit().putStringSet("hiddenRecs", v).apply()

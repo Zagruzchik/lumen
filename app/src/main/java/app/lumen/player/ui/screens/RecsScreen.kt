@@ -225,9 +225,9 @@ fun RecsScreen(vm: MainViewModel, bottomPad: Dp) {
                                 LocalRecBusy provides busyRec,
                             ) {
                                 when (section.style) {
-                                    RecSection.STYLE_BIG -> BigTile(rec) { vm.hideRec(rec) }
-                                    RecSection.STYLE_ARTISTS -> ArtistTile(rec) { vm.hideRec(rec) }
-                                    else -> TrackTile(rec) { vm.hideRec(rec) }
+                                    RecSection.STYLE_BIG -> BigTile(rec, { vm.hideRec(rec) }, { vm.hideArtist(rec) })
+                                    RecSection.STYLE_ARTISTS -> ArtistTile(rec, { vm.hideRec(rec) }, { vm.hideArtist(rec) })
+                                    else -> TrackTile(rec, { vm.hideRec(rec) }, { vm.hideArtist(rec) })
                                 }
                             }
                         }
@@ -310,7 +310,7 @@ private val LocalRecBusy = androidx.compose.runtime.compositionLocalOf<String?> 
 /** Общая механика плитки: пружинит на нажатии, тап — играть (или поиск), удержание — меню вариантов. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun TileShell(rec: RecItem, onHide: () -> Unit, content: @Composable (pressScale: Float) -> Unit) {
+private fun TileShell(rec: RecItem, onHide: () -> Unit, onHideArtist: () -> Unit, content: @Composable (pressScale: Float) -> Unit) {
     val ctx = LocalContext.current
     val haptic = LocalHapticFeedback.current
     val clipboard = LocalClipboardManager.current
@@ -368,13 +368,17 @@ private fun TileShell(rec: RecItem, onHide: () -> Unit, content: @Composable (pr
                 menu = false
                 onHide()
             })
+            DropdownMenuItem(text = { Text("Не показывать исполнителя") }, leadingIcon = { Icon(LIcons.Person, null, Modifier.size(20.dp)) }, onClick = {
+                menu = false
+                onHideArtist()
+            })
         }
     }
 }
 
 @Composable
-private fun TrackTile(rec: RecItem, onHide: () -> Unit) {
-    TileShell(rec, onHide) { press ->
+private fun TrackTile(rec: RecItem, onHide: () -> Unit, onHideArtist: () -> Unit) {
+    TileShell(rec, onHide, onHideArtist) { press ->
         Column(
             Modifier
                 .width(150.dp)
@@ -404,8 +408,8 @@ private fun TrackTile(rec: RecItem, onHide: () -> Unit) {
 }
 
 @Composable
-private fun BigTile(rec: RecItem, onHide: () -> Unit) {
-    TileShell(rec, onHide) { press ->
+private fun BigTile(rec: RecItem, onHide: () -> Unit, onHideArtist: () -> Unit) {
+    TileShell(rec, onHide, onHideArtist) { press ->
         Box(
             Modifier
                 .size(width = 240.dp, height = 240.dp)
@@ -435,8 +439,8 @@ private fun BigTile(rec: RecItem, onHide: () -> Unit) {
 }
 
 @Composable
-private fun ArtistTile(rec: RecItem, onHide: () -> Unit) {
-    TileShell(rec, onHide) { press ->
+private fun ArtistTile(rec: RecItem, onHide: () -> Unit, onHideArtist: () -> Unit) {
+    TileShell(rec, onHide, onHideArtist) { press ->
         Column(
             Modifier
                 .width(112.dp)

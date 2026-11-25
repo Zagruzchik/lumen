@@ -5,7 +5,9 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.LruCache
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -71,8 +73,18 @@ class RecommendationsRepository(
     fun cached(): RecsState? = runCatching {
         if (!cacheFile.exists()) return null
         val root = JSONObject(cacheFile.readText())
-        RecsState(sections = parseSections(root.getJSONArray("sections")), updatedAt = root.optLong("updatedAt"))
+        val hidden = prefs.hiddenRecs
+        val hiddenArtists = prefs.hiddenArtists
+        val sections = parseSections(root.getJSONArray("sections")).map { sec ->
+            sec.copy(items = sec.items.filter { it.key !in hidden && artistKey(artistOf(it)) !in hiddenArtists })
+        }.filter { it.items.isNotEmpty() }
+        RecsState(sections = sections, updatedAt = root.optLong("updatedAt"))
     }.getOrNull()
+
+    /** Ключ исполнителя для «не показывать исполнителя». */
+    fun artistKey(name: String): String = norm(name)
+
+    private fun artistOf(item: RecItem) = if (item.kind == RecItem.KIND_ARTIST) item.title else item.artist
 
     suspend fun build(onProgress: (List<RecSection>) -> Unit): RecsState = withContext(Dispatchers.IO) {
         val local = dao.allTracksOnce()
@@ -80,9 +92,14 @@ class RecommendationsRepository(
         val localAlbums = local.mapTo(HashSet()) { key(it.albumArtist, it.album) }
         val localArtists = local.flatMapTo(HashSet()) { listOf(norm(it.artist), norm(it.albumArtist)) }
         val hidden = prefs.hiddenRecs
+        val hiddenArtists = prefs.hiddenArtists
         val seen = HashSet<String>()
+        val perArtist = HashMap<String, Int>()
+
         fun fresh(item: RecItem): Boolean {
-            if (item.key in hidden || !seen.add(item.key)) return false
+            if (item.key in hidden) return false
+            if (artistKey(artistOf(item)) in hiddenArtists) return false
+            if (!seen.add(item.key)) return false
             return when (item.kind) {
                 RecItem.KIND_TRACK -> key(item.artist, item.title) !in localTracks
                 RecItem.KIND_ALBUM -> key(item.artist, item.title) !in localAlbums
@@ -90,84 +107,101 @@ class RecommendationsRepository(
             }
         }
 
+        /** Не больше [cap] вещей одного исполнителя: лента не превращается в один альбом. */
+        fun room(artist: String, cap: Int, counts: HashMap<String, Int> = perArtist): Boolean {
+            val k = norm(artist)
+            val n = counts[k] ?: 0
+            if (n >= cap) return false
+            counts[k] = n + 1
+            return true
+        }
+
+        // Сетевые запросы идут параллельно, но не больше четырёх сразу.
+        val gate = Semaphore(4)
+        suspend fun <T> net(block: () -> T): T = gate.withPermit { withContext(Dispatchers.IO) { block() } }
+        suspend fun many(paths: List<String>): List<JSONArray> = coroutineScope {
+            paths.map { p -> async { net { getArray(p) } } }.awaitAll()
+        }
+
         // Опорные исполнители: по времени прослушивания, затем любимое, затем самые большие в библиотеке.
         val seeds = LinkedHashSet<String>()
         dao.topArtists(8).forEach { seeds += it.name }
         local.groupingBy { it.artist }.eachCount().entries.sortedByDescending { it.value }.take(10).forEach { seeds += it.key }
-        val seedList = seeds.filter { it != UNKNOWN_ARTIST && it.isNotBlank() }.take(8)
+        val seedList = seeds.filter { it != UNKNOWN_ARTIST && it.isNotBlank() && artistKey(it) !in hiddenArtists }.take(8)
 
         val sections = ArrayList<RecSection>()
         fun publish() = onProgress(sections.toList())
 
         val seedIds = LinkedHashMap<String, Long>()
-        for (s in seedList) {
-            val id = searchArtistId(s) ?: continue
-            seedIds[s] = id
-            delay(60)
-        }
+        coroutineScope {
+            seedList.map { s -> async { s to net { searchArtistId(s) } } }.awaitAll()
+        }.forEach { (s, id) -> if (id != null) seedIds[s] = id }
 
         // 1. «Если нравится X» — хиты похожих исполнителей.
-        for ((name, id) in seedIds.entries.take(3)) {
-            val related = getArray("/artist/$id/related?limit=8")
+        val top3 = seedIds.entries.take(3).toList()
+        val relatedOfTop = many(top3.map { "/artist/${it.value}/related?limit=8" })
+        for ((idx, entry) in top3.withIndex()) {
+            val name = entry.key
+            val related = relatedOfTop[idx]
+            val candidates = (0 until related.length()).map { related.getJSONObject(it) }
+                .filter { norm(it.optString("name")) !in localArtists && artistKey(it.optString("name")) !in hiddenArtists }
+                .take(10)
+            val tops = many(candidates.map { "/artist/${it.optLong("id")}/top?limit=3" })
             val items = ArrayList<RecItem>()
-            for (i in 0 until related.length()) {
-                if (items.size >= 10) break
-                val ra = related.getJSONObject(i)
-                if (norm(ra.optString("name")) in localArtists) continue
-                val top = getArray("/artist/${ra.optLong("id")}/top?limit=3")
+            for (top in tops) {
                 for (j in 0 until top.length()) {
-                    val t = top.getJSONObject(j)
-                    val item = RecItem(
-                        RecItem.KIND_TRACK,
-                        t.optString("title_short").ifBlank { t.optString("title") },
-                        t.optJSONObject("artist")?.optString("name").orEmpty(),
-                        t.optJSONObject("album")?.optString("cover_xl").orEmpty()
-                            .ifBlank { t.optJSONObject("album")?.optString("cover_big").orEmpty() },
-                        "похоже на $name",
-                    )
-                    if (fresh(item)) {
+                    val item = trackItem(top.getJSONObject(j), "похоже на $name")
+                    if (fresh(item) && room(item.artist, 2)) {
                         items += item
                         break
                     }
                 }
-                delay(60)
             }
             if (items.isNotEmpty()) {
-                sections += RecSection("Если нравится $name", "Хиты похожих исполнителей", RecSection.STYLE_TILES, items)
+                sections += RecSection("Если нравится $name", "Хиты похожих исполнителей", RecSection.STYLE_TILES, items.take(10))
                 publish()
             }
         }
 
-        // 2. Похожие исполнители, которых нет в библиотеке.
+        // 2. Похожие исполнители. Кого называют несколько твоих любимых — тот выше в списке.
         run {
-            val artists = ArrayList<RecItem>()
-            for ((name, id) in seedIds.entries.take(5)) {
-                val related = getArray("/artist/$id/related?limit=6")
-                for (i in 0 until related.length()) {
-                    val ra = related.getJSONObject(i)
-                    val item = RecItem(
+            val top5 = seedIds.entries.take(5).toList()
+            val relatedOf = many(top5.map { "/artist/${it.value}/related?limit=6" })
+            val votes = LinkedHashMap<String, Pair<JSONObject, MutableList<String>>>()
+            relatedOf.forEachIndexed { idx, arr ->
+                for (i in 0 until arr.length()) {
+                    val ra = arr.getJSONObject(i)
+                    val k = norm(ra.optString("name"))
+                    if (k.isEmpty()) continue
+                    votes.getOrPut(k) { ra to mutableListOf() }.second += top5[idx].key
+                }
+            }
+            val artists = votes.values
+                .sortedByDescending { it.second.size }
+                .mapNotNull { (ra, from) ->
+                    val reason = if (from.size > 1) "как ${from[0]} и ещё ${from.size - 1}" else "как ${from[0]}"
+                    RecItem(
                         RecItem.KIND_ARTIST,
                         ra.optString("name"),
                         "",
                         ra.optString("picture_xl").ifBlank { ra.optString("picture_big") },
-                        "как $name",
-                    )
-                    if (fresh(item)) artists += item
+                        reason,
+                    ).takeIf { fresh(it) }
                 }
-                delay(60)
-            }
             if (artists.isNotEmpty()) {
                 sections += RecSection("Исполнители для тебя", "Похожи на тех, кого ты слушаешь", RecSection.STYLE_ARTISTS, artists.take(16))
                 publish()
             }
         }
 
-        // 3. Новые релизы твоих исполнителей.
+        // 3. Новые релизы твоих исполнителей: не больше двух альбомов одного исполнителя.
         run {
             val yearAgo = java.time.LocalDate.now().minusDays(400).toString()
+            val top8 = seedIds.entries.take(8).toList()
+            val albumsOf = many(top8.map { "/artist/${it.value}/albums?limit=40" })
             val albums = ArrayList<Pair<String, RecItem>>()
-            for ((name, id) in seedIds.entries.take(8)) {
-                val arr = getArray("/artist/$id/albums?limit=40")
+            top8.forEachIndexed { idx, entry ->
+                val arr = albumsOf[idx]
                 for (i in 0 until arr.length()) {
                     val a = arr.getJSONObject(i)
                     val date = a.optString("release_date")
@@ -175,68 +209,53 @@ class RecommendationsRepository(
                     val item = RecItem(
                         RecItem.KIND_ALBUM,
                         a.optString("title"),
-                        name,
+                        entry.key,
                         a.optString("cover_xl").ifBlank { a.optString("cover_big") },
                         "${typeName(a.optString("record_type"))} · ${date.take(4)}",
                     )
                     if (fresh(item)) albums += date to item
                 }
-                delay(60)
             }
-            if (albums.isNotEmpty()) {
-                sections += RecSection(
-                    "Новое у твоих исполнителей",
-                    "Свежие релизы, которых нет в библиотеке",
-                    RecSection.STYLE_BIG,
-                    albums.sortedByDescending { it.first }.map { it.second }.take(14),
-                )
+            val albumCount = HashMap<String, Int>()
+            val picked = albums.sortedByDescending { it.first }.map { it.second }
+                .filter { room(it.artist, 2, albumCount) }
+                .take(14)
+            if (picked.isNotEmpty()) {
+                sections += RecSection("Новое у твоих исполнителей", "Свежие релизы, которых нет в библиотеке", RecSection.STYLE_BIG, picked)
                 publish()
             }
         }
 
         // 4. Хиты любимых исполнителей, которых у тебя нет.
         run {
+            val top6 = seedIds.entries.take(6).toList()
+            val topsOf = many(top6.map { "/artist/${it.value}/top?limit=10" })
             val items = ArrayList<RecItem>()
-            for ((name, id) in seedIds.entries.take(6)) {
-                val top = getArray("/artist/$id/top?limit=10")
+            top6.forEachIndexed { idx, entry ->
+                val top = topsOf[idx]
                 var added = 0
                 for (j in 0 until top.length()) {
-                    if (added >= 3) break
-                    val t = top.getJSONObject(j)
-                    val item = RecItem(
-                        RecItem.KIND_TRACK,
-                        t.optString("title_short").ifBlank { t.optString("title") },
-                        t.optJSONObject("artist")?.optString("name") ?: name,
-                        t.optJSONObject("album")?.optString("cover_xl").orEmpty(),
-                        "хит $name",
-                    )
-                    if (fresh(item)) {
+                    if (added >= 2) break
+                    val item = trackItem(top.getJSONObject(j), "хит ${entry.key}", fallbackArtist = entry.key)
+                    if (fresh(item) && room(item.artist, 3)) {
                         items += item
                         added++
                     }
                 }
-                delay(60)
             }
             if (items.isNotEmpty()) {
-                sections += RecSection("Хиты, которых нет у тебя", "Самое популярное у твоих исполнителей", RecSection.STYLE_TILES, items)
+                sections += RecSection("Хиты, которых нет у тебя", "Самое популярное у твоих исполнителей", RecSection.STYLE_TILES, items.take(16))
                 publish()
             }
         }
 
-        // 5. Сейчас в тренде.
+        // 5. Сейчас в тренде: в чарте не больше двух треков одного исполнителя.
         run {
             val chart = getArray("/chart/0/tracks?limit=40")
             val items = ArrayList<RecItem>()
             for (i in 0 until chart.length()) {
-                val t = chart.getJSONObject(i)
-                val item = RecItem(
-                    RecItem.KIND_TRACK,
-                    t.optString("title_short").ifBlank { t.optString("title") },
-                    t.optJSONObject("artist")?.optString("name").orEmpty(),
-                    t.optJSONObject("album")?.optString("cover_xl").orEmpty(),
-                    "#${i + 1} в чарте",
-                )
-                if (fresh(item)) items += item
+                val item = trackItem(chart.getJSONObject(i), "#${i + 1} в чарте")
+                if (fresh(item) && room(item.artist, 2)) items += item
             }
             if (items.isNotEmpty()) {
                 sections += RecSection("Сейчас в тренде", "Мировой чарт Deezer", RecSection.STYLE_TILES, items.take(20))
@@ -248,6 +267,15 @@ class RecommendationsRepository(
         if (sections.isNotEmpty()) save(state)
         state
     }
+
+    private fun trackItem(t: JSONObject, reason: String, fallbackArtist: String = "") = RecItem(
+        RecItem.KIND_TRACK,
+        t.optString("title_short").ifBlank { t.optString("title") },
+        t.optJSONObject("artist")?.optString("name")?.ifBlank { null } ?: fallbackArtist,
+        t.optJSONObject("album")?.optString("cover_xl").orEmpty()
+            .ifBlank { t.optJSONObject("album")?.optString("cover_big").orEmpty() },
+        reason,
+    )
 
     private fun typeName(t: String) = when (t) {
         "single" -> "Сингл"

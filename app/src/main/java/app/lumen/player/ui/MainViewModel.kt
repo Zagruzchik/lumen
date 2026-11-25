@@ -2446,6 +2446,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
+    /** Скрыть исполнителя целиком: его треки, альбомы и похожие больше не появятся. */
+    fun hideArtist(item: RecItem) {
+        val name = if (item.kind == RecItem.KIND_ARTIST) item.title else item.artist
+        val k = g.recs.artistKey(name)
+        g.prefs.hiddenArtists = g.prefs.hiddenArtists + k
+        recs.value = recs.value.copy(
+            sections = recs.value.sections.map { s ->
+                s.copy(items = s.items.filter { g.recs.artistKey(if (it.kind == RecItem.KIND_ARTIST) it.title else it.artist) != k })
+            }.filter { it.items.isNotEmpty() }
+        )
+    }
+
     fun album(key: String) = dao.album(key)
     fun albumTracks(key: String) = dao.albumTracks(key)
     fun artistTracks(name: String) = tracks.map { list ->
