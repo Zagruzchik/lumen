@@ -34,6 +34,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -136,7 +138,7 @@ fun RecsScreen(vm: MainViewModel, bottomPad: Dp) {
         item {
             Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("Для тебя", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
+                    Text("Для тебя", fontSize = 32.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.5).sp)
                     Text(
                         when {
                             state.loading -> "Подбираю музыку…"
@@ -194,9 +196,21 @@ fun RecsScreen(vm: MainViewModel, bottomPad: Dp) {
 
         state.sections.forEach { section ->
             item(key = "h:" + section.title) {
-                Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 6.dp)) {
-                    Text(section.title, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(section.subtitle, fontSize = 13.sp, color = LC.Dim)
+                Row(
+                    Modifier.padding(start = 20.dp, end = 20.dp, top = 22.dp, bottom = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        Modifier
+                            .size(width = 4.dp, height = 30.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(Brush.verticalGradient(listOf(accent, accent.copy(alpha = 0.25f)))),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(section.title, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(section.subtitle, fontSize = 13.sp, color = LC.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                 }
             }
             item(key = "r:" + section.title) {
@@ -370,30 +384,21 @@ private fun TrackTile(rec: RecItem, onHide: () -> Unit) {
                 }
         ) {
             Box {
-                RemoteCover(rec.cover, rec.key, RoundedCornerShape(20.dp), Modifier.size(150.dp))
+                RemoteCover(rec.cover, rec.key, RoundedCornerShape(22.dp), Modifier.size(150.dp))
                 Box(
                     Modifier
                         .matchParentSizeCompat(150.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent, Color(0x99000000))))
+                        .clip(RoundedCornerShape(22.dp))
+                        .border(1.dp, LC.ink(0x1A), RoundedCornerShape(22.dp))
+                        .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent, Color(0xB3000000))))
                 )
-                Icon(
-                    LIcons.Search,
-                    null,
-                    Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(10.dp)
-                        .size(30.dp)
-                        .clip(CircleShape)
-                        .background(Color(0x66000000))
-                        .padding(7.dp),
-                    tint = Color.White,
-                )
+                PlayDot(Modifier.align(Alignment.BottomEnd).padding(10.dp))
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(9.dp))
             Text(rec.title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(rec.artist, fontSize = 12.sp, color = LC.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(rec.reason, fontSize = 11.sp, color = LocalAccent.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(5.dp))
+            ReasonChip(rec.reason)
         }
     }
 }
@@ -420,7 +425,8 @@ private fun BigTile(rec: RecItem, onHide: () -> Unit) {
                     .border(1.dp, LC.ink(0x33), RoundedCornerShape(18.dp))
                     .padding(horizontal = 14.dp, vertical = 10.dp)
             ) {
-                Text(rec.reason.uppercase(), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, color = LocalAccent.current)
+                ReasonChip(rec.reason)
+                Spacer(Modifier.height(6.dp))
                 Text(rec.title, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(rec.artist, fontSize = 12.sp, color = Color.White.copy(alpha = 0.75f), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
@@ -440,17 +446,59 @@ private fun ArtistTile(rec: RecItem, onHide: () -> Unit) {
                 },
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Box(Modifier.size(112.dp).clip(CircleShape).border(2.dp, LocalAccent.current.copy(alpha = 0.6f), CircleShape).padding(4.dp)) {
-                RemoteCover(rec.cover, rec.key, CircleShape, Modifier.fillMaxSize())
+            Box(
+                Modifier
+                    .size(116.dp)
+                    .clip(CircleShape)
+                    .background(Brush.sweepGradient(listOf(LocalAccent.current, Color(0x00FFFFFF), LocalAccent.current)))
+                    .padding(3.dp)
+                    .clip(CircleShape)
+                    .background(LC.Bg),
+            ) {
+                RemoteCover(rec.cover, rec.key, CircleShape, Modifier.fillMaxSize().padding(3.dp))
             }
-            Spacer(Modifier.height(8.dp))
-            Text(rec.title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
-            Text(rec.reason, fontSize = 11.sp, color = LC.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(10.dp))
+            Text(rec.title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(4.dp))
+            ReasonChip(rec.reason)
         }
     }
 }
 
 private fun Modifier.matchParentSizeCompat(side: Dp): Modifier = this.size(side)
+
+/** Тег причины рекомендации: «Потому что слушаешь …». */
+@Composable
+private fun ReasonChip(text: String, modifier: Modifier = Modifier) {
+    val accent = LocalAccent.current
+    Text(
+        text,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = accent,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = modifier
+            .clip(RoundedCornerShape(50))
+            .background(accent.copy(alpha = 0.16f))
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    )
+}
+
+/** Кружок «играть» поверх обложки. */
+@Composable
+private fun PlayDot(modifier: Modifier = Modifier) {
+    Box(
+        modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(LocalAccent.current)
+            .border(1.dp, Color.White.copy(alpha = 0.35f), CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(LIcons.Play, null, Modifier.size(18.dp), tint = Color.White)
+    }
+}
 
 @Composable
 private fun SkeletonRow() {
@@ -493,6 +541,10 @@ private fun NowMixTile(vm: MainViewModel) {
             .clickable(interaction, null) { vm.playMix(m) }
             .padding(20.dp),
     ) {
+        Canvas(Modifier.matchParentSize()) {
+            drawCircle(Color.White.copy(alpha = 0.14f), radius = size.height * 0.75f, center = Offset(size.width * 0.95f, -size.height * 0.15f))
+            drawCircle(Color.White.copy(alpha = 0.08f), radius = size.height * 0.5f, center = Offset(size.width * 0.8f, size.height * 1.05f))
+        }
         Column(Modifier.align(Alignment.CenterStart)) {
             Text("СЕЙЧАС ПОДОЙДЁТ", fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp, color = Color.White.copy(alpha = 0.75f))
             Text(m.title, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
@@ -536,6 +588,12 @@ private fun MixTile(m: app.lumen.player.data.MoodMix, busy: Boolean, onClick: ()
             .clickable(interaction, null, onClick = onClick)
             .padding(14.dp),
     ) {
+        Icon(
+            LIcons.Note,
+            null,
+            Modifier.align(Alignment.TopEnd).size(34.dp),
+            tint = Color.White.copy(alpha = 0.22f),
+        )
         Column(Modifier.align(Alignment.BottomStart)) {
             Text(m.title, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, maxLines = 1)
             Text(m.subtitle, fontSize = 11.sp, color = Color.White.copy(alpha = 0.78f), maxLines = 2, lineHeight = 13.sp)

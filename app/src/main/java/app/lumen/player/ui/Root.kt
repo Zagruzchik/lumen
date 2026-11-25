@@ -541,7 +541,15 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                 }
             }
 
-            Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
+            // Истории «Твой месяц» на весь экран — мини-плеер и нижнее меню под ними не нужны.
+            val storyOpen = stack.last() == Dest.Wrapped
+            AnimatedVisibility(
+                visible = !storyOpen,
+                modifier = Modifier.align(Alignment.BottomCenter),
+                enter = fadeIn(tween(200)),
+                exit = fadeOut(tween(160)),
+            ) {
+            Column(Modifier.fillMaxWidth()) {
                 AnimatedVisibility(hasCurrent, enter = fadeIn() + slideInVertically { it }, exit = fadeOut()) {
                     MiniPlayer(
                         vm = vm,
@@ -564,6 +572,7 @@ private fun MainScaffold(vm: MainViewModel, colors: CoverColors) {
                     onSelect = { nav.tab(it, null) },
                     modifier = Modifier.graphicsLayer { translationY = expand.value.coerceIn(0f, 1f) * size.height },
                 )
+            }
             }
         }
 

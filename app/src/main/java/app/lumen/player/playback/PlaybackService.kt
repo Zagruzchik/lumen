@@ -505,7 +505,9 @@ class PlaybackService : MediaLibraryService() {
             }
         }
         // Очередь подходит к концу — подкладываем похожие треки заранее, чтобы не было тишины.
-        if (g.prefs.smartQueue && p.repeatMode == Player.REPEAT_MODE_OFF &&
+        // Поток из сети (последний трек онлайновый) продолжаем только сетью, библиотеку не трогаем.
+        val tailOnline = p.mediaItemCount > 0 && app.lumen.player.data.Online.isOnline(p.getMediaItemAt(p.mediaItemCount - 1).mediaId)
+        if ((g.prefs.smartQueue || tailOnline) && p.repeatMode == Player.REPEAT_MODE_OFF &&
             p.currentMediaItemIndex >= p.mediaItemCount - 2 && !appending
         ) {
             appending = true
@@ -513,8 +515,18 @@ class PlaybackService : MediaLibraryService() {
                 try {
                     val ids = List(p.mediaItemCount) { p.getMediaItemAt(it).mediaId }
                     val more = kotlinx.coroutines.withContext(Dispatchers.IO) {
-                        val seeds = g.dao.byUris(ids.takeLast(3))
-                        app.lumen.player.data.Similar.pick(g.dao, seeds, ids.toSet(), 15)
+                        if (tailOnline) {
+                            val seed = g.dao.byUris(ids.takeLast(1)).firstOrNull() ?: return@withContext emptyList()
+                            val fresh = app.lumen.player.data.Online.related(seed, 15)
+                                .map { app.lumen.player.data.Online.toEntity(it) }
+                                .filter { it.uri !in ids }
+                                .distinctBy { it.uri }
+                            if (fresh.isNotEmpty()) g.dao.insertTracksIgnore(fresh)
+                            fresh
+                        } else {
+                            val seeds = g.dao.byUris(ids.takeLast(3))
+                            app.lumen.player.data.Similar.pick(g.dao, seeds, ids.toSet(), 15)
+                        }
                     }
                     if (more.isNotEmpty()) {
                         val items = more.map { it.toMediaItem() }

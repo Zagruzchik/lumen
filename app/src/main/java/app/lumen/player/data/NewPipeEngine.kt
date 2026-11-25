@@ -366,6 +366,18 @@ object NewPipeEngine {
         return ResolvedStream(best.content, best.deliveryMethod == DeliveryMethod.HLS, headersFor(best.content), best.format?.suffix ?: "m4a", best.averageBitrate)
     }
 
+    /** Что сервис сам предлагает под треком (блок «похожее» на странице) — только треки. */
+    fun related(uri: String, limit: Int): List<OnlineTrack> {
+        ensureInit()
+        val (src, id) = Online.parse(uri) ?: return emptyList()
+        val info = StreamInfo.getInfo(service(src), urlOf(src, id))
+        return info.relatedItems.filterIsInstance<StreamInfoItem>()
+            .filter { it.duration != 0L }
+            .map { toTrack(src, it) }
+            .filter { it.id.isNotBlank() }
+            .take(limit)
+    }
+
     // ---------- ссылки и плейлисты ----------
 
     fun open(url: String): Pair<OnlineTrack?, OnlinePlaylist?> {

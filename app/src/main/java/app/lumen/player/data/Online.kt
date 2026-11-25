@@ -228,6 +228,17 @@ object Online {
         (0 until a.length()).map { track(a.getJSONObject(it), source) }.filter { it.id.isNotBlank() }
     }
 
+    /** Продолжение потока под треком: похожее из сети, без библиотеки. */
+    suspend fun related(t: TrackEntity, limit: Int = 30): List<OnlineTrack> = withContext(Dispatchers.IO) {
+        val (src, id) = parse(t.uri) ?: return@withContext emptyList()
+        if (builtin) {
+            val r = runCatching { NewPipeEngine.related(t.uri, limit) }.getOrNull().orEmpty()
+            if (r.isNotEmpty()) return@withContext r
+        }
+        // Запасной путь (свой сервер или пустой ответ): поиск по исполнителю и названию.
+        search("${t.artist} ${t.title}", src, limit).filterNot { it.id == id }
+    }
+
     /** Подборка по запросу: готовые плейлисты YouTube Music, потом SoundCloud, в крайнем случае — поиск треков. */
     suspend fun mix(query: String, source: String, max: Int): List<OnlineTrack> = withContext(Dispatchers.IO) {
         if (builtin) {

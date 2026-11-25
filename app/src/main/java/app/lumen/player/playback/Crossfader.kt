@@ -86,10 +86,11 @@ class Crossfader(
         // Включаем заранее (вывод звука опережает то, что слышно, меньше чем на секунду).
         if (armedFor != item.mediaId && left in (ms + 1_500L)..(ms + 20_000L)) {
             armedFor = item.mediaId
+            // Песня затихает за последние ms, следующая нарастает за такое же время.
             sink.arm(
                 stream = sink.streamIndex,
                 cutUs = (dur - ms) * 1000L,
-                endUs = if (cut in 1 until full) cut * 1000L else Long.MAX_VALUE,
+                fadeUs = ms * 1000L,
             )
         }
     }

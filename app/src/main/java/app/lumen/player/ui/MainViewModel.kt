@@ -2169,10 +2169,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Трек из сети: играет сразу, а в очередь за ним ставится поток похожих треков из сети.
+     * Библиотеку в очередь не подмешиваем.
+     */
     fun playNet(list: List<TrackEntity>, index: Int) {
+        val picked = list.getOrNull(index) ?: return
         viewModelScope.launch {
-            saveOnlineTracks(list)
-            playFromSearch(list, index)
+            saveOnlineTracks(listOf(picked))
+            playFromSearch(listOf(picked), 0)
+            val more = withContext(Dispatchers.IO) {
+                runCatching { Online.related(picked, 30) }.getOrNull().orEmpty()
+                    .map { Online.toEntity(it) }
+                    .filter { it.uri != picked.uri }
+                    .distinctBy { it.uri }
+            }
+            if (more.isEmpty()) return@launch
+            saveOnlineTracks(more)
+            // Пока тянули поток, пользователь мог выбрать другой трек — тогда очередь не трогаем.
+            if (conn.state.value.currentId != picked.uri) return@launch
+            more.forEach { conn.enqueue(it) }
         }
     }
 

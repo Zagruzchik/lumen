@@ -13,21 +13,20 @@ import kotlin.math.pow
 import kotlin.math.sin
 
 /**
- * Кроссфейд внутри одного проигрывателя — без второго плеера и без синхронизации.
+ * Плавный переход между песнями внутри одного потока звука.
  *
- * Плеер декодирует песни подряд (бесшовно). Когда старая песня доходит до точки начала перехода,
- * её оставшиеся секунды не отправляются в динамик, а складываются в память — декодер пробегает
- * их за доли секунды, и сразу начинается следующая песня. Её звук на выходе смешивается с
- * сохранённым хвостом: хвост затихает, новая нарастает. Один поток звука, точность до сэмпла.
+ * Ничего не вырезается и не копится в памяти: каждый сэмпл уходит на выход в своё время.
+ * Последние [fadeUs] старой песни плавно затихают, первые [fadeUs] новой — плавно нарастают.
+ * Поэтому часы плеера и звук не расходятся, заикания и скачков позиции быть не должно.
  */
 @OptIn(UnstableApi::class)
 class CrossfadeSink(sink: AudioSink) : ForwardingAudioSink(sink) {
 
     // ---------- задаётся с главного потока ----------
-    @Volatile private var armedStream = -1
-    @Volatile private var armedCutUs = 0L
-    @Volatile private var armedEndUs = Long.MAX_VALUE
-    /** Мягкость кривой (как в настройках): 1 — равномощная, 0 — резче. */
+    @Volatile private var fadeOutStream = -1
+    @Volatile private var cutUs = 0L
+    @Volatile private var fadeUs = 0L
+    /** Мягкость кривой (как в настройках): 1 — плавнее, 0 — резче. */
     @Volatile var softness = 1f
 
     /** Номер текущей песни на выходе (растёт при каждой смене песни в потоке). */
@@ -41,29 +40,25 @@ class CrossfadeSink(sink: AudioSink) : ForwardingAudioSink(sink) {
     private var channels = 0
     private var encoding = C.ENCODING_INVALID
 
-    private var capturing = false
-    private val chunks = ArrayList<FloatArray>()
-    private var tailRate = 0
-    private var tailChannels = 0
-    private var tailSamples = 0
-
-    private var mixing = false
-    private var tail: FloatArray? = null
-    private var tailFramesOut = 0 // длина хвоста в кадрах выходной частоты
-    private var mixPos = 0
+    private var fadeOutActive = false
+    private var fadeInStream = -1
 
     private var lastIn: ByteBuffer? = null
     private var lastOut: ByteBuffer? = null
 
-    /** Подготовить переход: на песне [stream] с позиции [cutUs] (время внутри песни) до [endUs]. */
-    fun arm(stream: Int, cutUs: Long, endUs: Long) {
-        armedCutUs = cutUs
-        armedEndUs = endUs
-        armedStream = stream
+    /**
+     * Подготовить затухание: песня [stream] начнёт затухать с позиции [cutUs] (время внутри песни)
+     * и затихнет через [fadeUs]. Следующая песня нарастёт за такое же время.
+     */
+    fun arm(stream: Int, cutUs: Long, fadeUs: Long) {
+        this.cutUs = cutUs
+        this.fadeUs = fadeUs.coerceAtLeast(1L)
+        fadeOutStream = stream
     }
 
     fun disarm() {
-        armedStream = -1
+        // Если затухание уже началось — досказываем его, иначе звук резко вернётся на полную громкость.
+        if (!fadeOutActive) fadeOutStream = -1
     }
 
     override fun configure(inputFormat: Format, specifiedBufferSize: Int, outputChannels: IntArray?) {
@@ -97,75 +92,31 @@ class CrossfadeSink(sink: AudioSink) : ForwardingAudioSink(sink) {
         if (boundary) {
             boundary = false
             streamIndex++
-            if (capturing) startMix()
+            // Старая песня успела затихнуть — новая начинает нарастать.
+            if (fadeOutActive) {
+                fadeOutActive = false
+                fadeInStream = streamIndex
+            }
         }
-        if (!pcm() || channels <= 0) return super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
+        val fadeOutHere = fadeOutStream == streamIndex
+        val fadeInHere = fadeInStream == streamIndex
+        if (!pcm() || channels <= 0 || (!fadeOutHere && !fadeInHere)) {
+            return super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
+        }
 
-        // 1. Хвост старой песни: копим в память вместо вывода.
-        if (!capturing && !mixing && armedStream == streamIndex && buffer !== lastIn) {
-            val mediaUs = presentationTimeUs - streamOffsetUs
-            if (mediaUs >= armedCutUs) {
-                armedStream = -1
-                capturing = true
-                chunks.clear()
-                tailRate = rate
-                tailChannels = channels
-                tailSamples = 0
-            }
+        // Один и тот же буфер может прийти повторно, если вывод был занят: тогда берём уже готовую копию.
+        if (buffer !== lastIn) {
+            lastIn = buffer
+            lastOut = faded(buffer, presentationTimeUs - streamOffsetUs, fadeOutHere, fadeInHere)
         }
-        if (capturing) {
-            val mediaUs = presentationTimeUs - streamOffsetUs
-            // За концом обрезки — просто выбрасываем; лимит памяти — 40 с.
-            if (mediaUs < armedEndUs && tailSamples < tailRate * tailChannels * 40) {
-                val f = readFloats(buffer)
-                chunks += f
-                tailSamples += f.size
-            }
+        val out = lastOut ?: return super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
+        val ok = super.handleBuffer(out, presentationTimeUs, encodedAccessUnitCount)
+        if (ok) {
             buffer.position(buffer.limit())
-            return true
+            lastIn = null
+            lastOut = null
         }
-
-        // 2. Начало новой песни: подмешиваем затихающий хвост.
-        if (mixing) {
-            if (buffer !== lastIn) {
-                lastIn = buffer
-                lastOut = mixed(buffer)
-            }
-            val out = lastOut ?: return super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
-            val ok = super.handleBuffer(out, presentationTimeUs, encodedAccessUnitCount)
-            if (ok) {
-                buffer.position(buffer.limit())
-                lastIn = null
-                lastOut = null
-                if (mixPos >= tailFramesOut) {
-                    mixing = false
-                    tail = null
-                }
-            }
-            return ok
-        }
-        return super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
-    }
-
-    /** Хвост собран, пошла следующая песня — готовим смешивание. */
-    private fun startMix() {
-        capturing = false
-        val all = FloatArray(tailSamples)
-        var o = 0
-        for (c in chunks) {
-            System.arraycopy(c, 0, all, o, c.size)
-            o += c.size
-        }
-        chunks.clear()
-        val frames = if (tailChannels > 0) all.size / tailChannels else 0
-        if (frames <= 0) return
-        tail = all
-        mixPos = 0
-        // Длина хвоста в кадрах новой песни (частоты могут отличаться).
-        tailFramesOut = (frames.toLong() * rate / tailRate.coerceAtLeast(1)).toInt().coerceAtLeast(1)
-        mixing = true
-        lastIn = null
-        lastOut = null
+        return ok
     }
 
     private fun curve(x: Float): Float {
@@ -176,39 +127,29 @@ class CrossfadeSink(sink: AudioSink) : ForwardingAudioSink(sink) {
         return sharp + (smooth - sharp) * s
     }
 
-    private fun tailAt(frameOut: Int, ch: Int): Float {
-        val t = tail ?: return 0f
-        val tc = tailChannels
-        val c = if (tc == 1) 0 else ch % tc
-        val pos = frameOut.toDouble() * tailRate / rate
-        val i = pos.toInt()
-        val frac = (pos - i).toFloat()
-        val total = t.size / tc
-        if (i >= total) return 0f
-        val a = t[i * tc + c]
-        val b = if (i + 1 < total) t[(i + 1) * tc + c] else a
-        return a + (b - a) * frac
-    }
-
-    private fun mixed(input: ByteBuffer): ByteBuffer {
+    /** Копия буфера с громкостью по времени внутри песни. */
+    private fun faded(input: ByteBuffer, baseUs: Long, outHere: Boolean, inHere: Boolean): ByteBuffer {
         val src = input.duplicate().order(ByteOrder.LITTLE_ENDIAN)
         val bps = bytesPerSample()
         val n = src.remaining() / bps
         val out = ByteBuffer.allocateDirect(src.remaining()).order(ByteOrder.LITTLE_ENDIAN)
         val ch = channels
+        val fade = fadeUs
+        val cut = cutUs
         var p = src.position()
         for (s in 0 until n) {
-            val frame = mixPos + s / ch
-            val c = s % ch
-            val x = read(src, p)
-            val y = if (frame < tailFramesOut) {
-                val k = frame.toFloat() / tailFramesOut
-                x * curve(k) + tailAt(frame, c) * curve(1f - k)
-            } else x
-            write(out, y)
+            val frame = (s / ch).toLong()
+            val t = baseUs + frame * 1_000_000L / rate
+            var g = 1f
+            if (outHere && t >= cut) {
+                fadeOutActive = true
+                g = 1f - curve((t - cut).toFloat() / fade)
+            } else if (inHere && t < fade) {
+                g = curve(t.toFloat() / fade)
+            }
+            write(out, read(src, p) * g)
             p += bps
         }
-        mixPos += n / ch
         out.flip()
         return out
     }
@@ -232,43 +173,27 @@ class CrossfadeSink(sink: AudioSink) : ForwardingAudioSink(sink) {
                 b.put((i and 0xFF).toByte()); b.put(((i shr 8) and 0xFF).toByte()); b.put(((i shr 16) and 0xFF).toByte())
             }
             C.ENCODING_PCM_32BIT -> b.putInt((x.toDouble() * 2147483647.0).toInt())
-            else -> b.putFloat(v)
+            else -> b.putFloat(x)
         }
-    }
-
-    private fun readFloats(buffer: ByteBuffer): FloatArray {
-        val src = buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
-        val bps = bytesPerSample()
-        val n = src.remaining() / bps
-        val f = FloatArray(n)
-        var p = src.position()
-        for (i in 0 until n) {
-            f[i] = read(src, p)
-            p += bps
-        }
-        return f
     }
 
     private fun clear() {
-        capturing = false
-        mixing = false
-        chunks.clear()
-        tail = null
+        fadeOutStream = -1
+        fadeOutActive = false
+        fadeInStream = -1
+        boundary = false
         lastIn = null
         lastOut = null
-        boundary = false
     }
 
     override fun flush() {
-        // Перемотка/смена очереди: всё, что копили или смешивали, больше не нужно.
+        // Перемотка/смена очереди: затухание и нарастание больше не нужны.
         clear()
-        armedStream = -1
         super.flush()
     }
 
     override fun reset() {
         clear()
-        armedStream = -1
         super.reset()
     }
 
